@@ -41,18 +41,22 @@ def validate_result(stage,result,a):
 
 
 def prerequisites(stage,a):
-    if stage in ('sources','outline','write') and not a['brief']['topic']:
-        raise ValueError('请先选择一个选题，或在创作设置中填写指定主题')
-    if stage=='write' and (not a['outline'] or a['stages']['outline']=='stale'):
-        raise ValueError('请先确认当前大纲；已有大纲需要更新时，可编辑后点击确认')
-    if stage in ('outline','write') and a['evidence'] and a['stages']['sources']=='stale' and not (stage=='outline' and providers.settings()['search']['enabled']):
-        raise ValueError('采用的素材已变化，请先重新分析素材，避免沿用过期证据')
-    if stage in ('review','visual','layout','layout_advice','revise') and not a['content'].strip():
+    from .flow_state import ready
+    state=ready(a).get(stage)
+    if state and not state['allowed']: raise ValueError(state['reason'])
+    if stage in ('layout_advice','revise') and not a['content'].strip():
         raise ValueError('请先写作或导入正文')
 
 
 def start(article_id,request):
     a=store.get_article(article_id)
+    if request.resume_job_id:
+        original=store.job(request.resume_job_id)
+        from .flow_state import job_view
+        if original['article_id']!=article_id or job_view(original)['status']!='needs_input' or original['stage']!=request.stage:
+            raise ValueError('此任务不能从该环节恢复')
+        for existing in store.jobs(article_id):
+            if existing['request'].get('resume_job_id')==request.resume_job_id: return existing
     if a['revision']!=request.revision: raise store.Conflict('文章已更新，请等待保存完成后重试')
     if request.stage not in [*STAGES,'revise','image','layout_advice','research']: raise ValueError('未知环节')
     prerequisites(request.stage,a)
@@ -67,6 +71,7 @@ def cancel(id):
 
 
 async def call(job_id,stage,a,request):
+    store.update_job(job_id,current_step='generation',message='正在生成'+LABELS.get(stage,stage)+'结果')
     s=providers.service_for(stage); text=''; last=0
     async def emit(delta):
         nonlocal text,last
@@ -165,17 +170,23 @@ async def run(job_id):
         store.update_job(job_id,status='running')
         while True:
             prerequisites(stage,a)
-            store.update_job(job_id,stage=stage,message='正在'+LABELS.get(stage,{'revise':'修改选段','image':'生成图片','layout_advice':'分析排版'}.get(stage,stage)),partial='')
+            store.update_job(job_id,stage=stage,target_stage=j['request']['stage'],message='正在'+LABELS.get(stage,{'revise':'修改选段','image':'生成图片','layout_advice':'分析排版'}.get(stage,stage)),partial='',result=None)
             store.event(job_id,'stage',stage=stage)
             if stage in ('topic','sources','outline','review','research'):
                 a,pending=await research.gather(a,job_id,stage,req.get('instruction','') if stage in ('sources','research') else '')
                 if pending:
-                    store.update_job(job_id,status='completed',ended=store.now(),message='资料已保留；关键证据仍有缺口或冲突，请到素材查看')
-                    break
+                    store.update_job(job_id,status='needs_input',ended=store.now(),message='资料核对暂停，尚未完成'+LABELS.get(stage,stage)+'；请处理待核实问题',blocked_stage=stage)
+                    return
                 if stage in ('outline','review') and a['stages']['sources']=='stale':
                     evidence=await call(job_id,'sources',a,req);a=apply_result(a,'sources',evidence,req)
             if stage=='research':
-                store.update_job(job_id,status='completed',ended=store.now(),message='资料检索与整理已完成');break
+                if req.get('continuation_job_id'):
+                    original=store.job(req['continuation_job_id']);target=original['stage']
+                    if a['auto'].get(target):
+                        stage=target;req={**original['request'],'resume_job_id':original['id']}
+                        store.update_job(job_id,resumed_from=original['id'])
+                        continue
+                store.update_job(job_id,status='completed',ended=store.now(),message='资料检索与整理已完成');return
             if stage=='layout':
                 rendering.render(a)
                 def layout_ready(v):
@@ -211,7 +222,7 @@ async def run(job_id):
             stage=STAGES[idx]
             if stage=='visual' and not a['visual']['enabled']: stage='layout'
             req={**req,'instruction':'','section_id':'','selected_text':''}
-        store.update_job(job_id,status='completed',ended=store.now(),message='已完成，等待你查看' if stage not in STAGES or not a['auto'].get(stage) else '本次流程已完成或已到达需要处理的环节')
+        store.update_job(job_id,status='needs_input' if a['stages'].get(stage)=='needs_input' else 'completed',ended=store.now(),message='需要你确认当前结果' if a['stages'].get(stage)=='needs_input' else '已完成，等待你查看' if stage not in STAGES or not a['auto'].get(stage) else '本次流程已完成或已到达需要处理的环节')
     except asyncio.CancelledError:
         store.update_job(job_id,status='cancelled',ended=store.now(),message='已停止；内容已保留，已发出的请求可能计费')
     except store.Conflict as exc:

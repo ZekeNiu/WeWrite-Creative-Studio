@@ -121,7 +121,7 @@ def test_full_pipeline_three_columns(client,model,column):
 
 def test_manual_topic_selection_and_auto_boundary(client,model):
     a=new(client,topic='');j=run(client,a,'topic')
-    assert j['status']=='completed'
+    assert j['status']=='needs_input'
     a=client.get('/api/articles/'+a['id']).json();assert a['stages']['topic']=='needs_input' and not a['content']
     a=client.post('/api/articles/'+a['id']+'/topic',headers=H,json={'revision':a['revision'],'title':a['topics'][2]['title']}).json()
     assert a['brief']['topic']=='可靠的选题 3'
@@ -271,7 +271,7 @@ def test_automatic_review_bounded_to_two_passes(client,model,monkeypatch):
         return text,{'model':'qa','status':'completed','estimated_cost':None}
     monkeypatch.setattr(providers,'generate',always_bad)
     j=run(client,a,'review')
-    assert j['status']=='completed' and len(counter)==2
+    assert j['status']=='needs_input' and len(counter)==2
     a=client.get('/api/articles/'+a['id']).json()
     assert a['stages']['review']=='needs_input' and a['stages']['layout']=='idle'
 

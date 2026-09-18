@@ -186,19 +186,19 @@ def test_pubmed_parses_abstract_as_abstract(monkeypatch):
     assert rows[0]['status']=='excerpt_only'  # Fulltext is verified only after reading.
 
 
-def test_conflicting_evidence_pauses_without_changing_draft(client,network,monkeypatch):
+def test_missing_core_evidence_pauses_without_changing_draft(client,network,monkeypatch):
     original=providers.generate
     async def conflicting(s,system,prompt,emit=None):
         text,usage=await original(s,system,prompt,emit)
         if json.loads(prompt)['schema']['title']=='ResearchNotes':
-            value=json.loads(text);value['conflicts']=['两份研究在人群范围上存在矛盾'];text=json.dumps(value)
+            value=json.loads(text);value['gaps']=['核心人群无法确定，无法回答任务'];text=json.dumps(value)
         return text,usage
     monkeypatch.setattr(providers,'generate',conflicting)
     a=article(client);a=store.save_article(a['id'],a['revision'],lambda v:v.update(content='保留的正文'),'fixture')
     j=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json={'stage':'review','revision':a['revision']}).json()
-    assert wait(client,j)['status']=='completed'
+    assert wait(client,j)['status']=='needs_input'
     a=client.get('/api/articles/'+a['id']).json()
-    assert a['content']=='保留的正文' and a['stages']['review']=='needs_input' and a['research']['conflicts']
+    assert a['content']=='保留的正文' and a['stages']['review']=='needs_input' and a['research']['gaps']
 
 
 def test_restart_marks_search_interrupted_without_replay(client):
@@ -243,7 +243,7 @@ def test_irrelevant_search_results_not_adopted(client,network,monkeypatch):
         return await original(s,system,prompt,emit)
     monkeypatch.setattr(providers,'generate',reject)
     a=article(client);j=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json={'stage':'research','revision':a['revision']}).json()
-    assert wait(client,j)['status']=='completed'
+    assert wait(client,j)['status']=='needs_input'
     a=client.get('/api/articles/'+a['id']).json()
     assert a['sources']==[] and a['research']['pending'] and a['research']['gaps']
 

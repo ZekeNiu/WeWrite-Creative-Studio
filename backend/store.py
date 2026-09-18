@@ -67,7 +67,8 @@ def get_article(id):
         row = db.execute('SELECT data FROM articles WHERE id=?', (id,)).fetchone()
         if not row:
             raise KeyError('找不到这篇文章')
-        return json.loads(row['data'])
+        from .flow_state import present
+        return present(json.loads(row['data']))
 
 
 def list_articles():
@@ -88,7 +89,8 @@ def create_article(brief=None, auto=None, diagnostic=False):
     if diagnostic: a['diagnostic']=True
     with connection() as db:
         db.execute('INSERT INTO articles VALUES(?,?)',(a['id'],encode(a)))
-    return a
+    from .flow_state import present
+    return present(a)
 
 
 class Conflict(Exception):
@@ -103,16 +105,22 @@ def save_article(id, expected_revision, mutate, label, invalidate=None):
         if a['revision'] != expected_revision:
             raise Conflict('文章已有更新，为避免覆盖，未应用本次修改。请先查看最新版本。')
         db.execute('INSERT INTO versions VALUES(?,?,?,?,?)',(uid(),id,now(),label,encode(a)))
-        previous_sources=encode(a['sources'])
+        from .flow_state import material_sources
+        previous_sources=encode(material_sources(a))
+        old_source_ids={s['id'] for s in a['sources']}
         previous_research=encode(a.get('research'))
         previous_brief=encode([a['brief'],a['title']])
         previous_content=a['content']
         mutate(a)
+        for source in a['sources']:
+            if source['id'] not in old_source_ids and a.get('pending_issue_attachments'):
+                source['issue_ids']=list(a['pending_issue_attachments'])
+        if {s['id'] for s in a['sources']}-old_source_ids: a.pop('pending_issue_attachments',None)
         if a.get('research') and encode(a['research'])==previous_research:
-            if (encode(a['sources'])!=previous_sources or encode([a['brief'],a['title']])!=previous_brief
+            if (encode(material_sources(a))!=previous_sources or encode([a['brief'],a['title']])!=previous_brief
                     or (a['research'].get('stage')=='review' and a['content']!=previous_content)):
                 a['research']['stale']=True
-        if encode(a['sources'])!=previous_sources:
+        if encode(material_sources(a))!=previous_sources:
             a['current_stage']='sources'
             if a['evidence'] and a['stages']['sources']!='needs_input': a['stages']['sources']='stale'
         if invalidate is not None:
@@ -122,7 +130,8 @@ def save_article(id, expected_revision, mutate, label, invalidate=None):
                     a['stages'][s]='stale'
         a['revision']+=1; a['updated']=now()
         db.execute('UPDATE articles SET data=? WHERE id=?',(encode(a),id))
-        return a
+        from .flow_state import present
+        return present(a)
 
 
 def versions(id):

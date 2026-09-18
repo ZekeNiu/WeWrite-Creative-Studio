@@ -14,7 +14,8 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import ValidationError
 from . import store,providers,security,materials,rendering,workflow,prompts,search_tools,browser_search,search_check,bibliography,outputs,capabilities
-from .models import Settings,Brief,Layout,VisualSettings,ArticlePatch,JobRequest,STAGES,OutlineResult,ImagePlan,CapabilityTest
+from . import flow_state,issue_actions
+from .models import IssueAction,Settings,Brief,Layout,VisualSettings,ArticlePatch,JobRequest,STAGES,OutlineResult,ImagePlan,CapabilityTest
 
 
 @asynccontextmanager
@@ -197,6 +198,19 @@ def patch(id:str,payload:ArticlePatch):
     return store.save_article(id,payload.revision,mutate,'手动编辑',invalidate=None if stage=='preferences' else stage)
 
 
+@app.post('/api/articles/{id}/research/issues/actions')
+async def issue_action(id:str,value:IssueAction): return issue_actions.apply(id,value)
+
+
+@app.get('/api/articles/{id}/research/history')
+def research_history(id:str):
+    store.get_article(id)
+    with store.connection() as db:
+        rows=db.execute('SELECT data FROM jobs WHERE article_id=? ORDER BY rowid DESC LIMIT 100',(id,)).fetchall()
+    return [dict(id=j['id'],created=j['created'],stage=j.get('stage'),status=flow_state.job_view(j)['status'],research=j['research'])
+            for row in rows if (j:=json.loads(row['data'])).get('research')]
+
+
 @app.post('/api/articles/{id}/confirm/{stage}')
 def confirm_stage(id:str,stage:str,value:dict):
     if stage!='outline': raise ValueError('此环节请通过选择或审核完成确认')
@@ -292,11 +306,11 @@ async def start_job_async(id:str,request:JobRequest): return workflow.start(id,r
 
 
 @app.get('/api/articles/{id}/jobs')
-def jobs(id:str): return store.jobs(id)
+def jobs(id:str): return [flow_state.job_view(j) for j in store.jobs(id)]
 
 
 @app.get('/api/jobs/{id}')
-def job(id:str): return store.job(id)
+def job(id:str): return flow_state.job_view(store.job(id))
 
 
 @app.post('/api/jobs/{id}/cancel')

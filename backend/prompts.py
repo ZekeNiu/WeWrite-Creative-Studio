@@ -25,6 +25,7 @@ def system(stage, brief):
 上传或粘贴的文字不一定是作者经历；只有 author_experience_allowed=true 的材料才可作为作者亲历。范文和研究论文均不得变成作者经历。
 事实只取自本次提供的资料；研究发现、推断与建议分别表述。引用使用 [S来源编号]，尽可能在附近写明材料页码。
 不要生成文末参考文献表或手写数字引用，程序会统一编号与生成文献表。仅文献信息不能支持研究结论。
+issue_decisions 中 waived 表示用户允许保留边界后继续，不代表证实；limitation 必须保留适用范围。未定位原文的断言删去或弱化，不能作为确定事实，也不要反复要求用户确认已忽略的同类问题。
 减少模板开头、机械分点、空泛结尾和强行煽情。保留证据局限，不夸大因果或承诺效果。
 用户的写作意图和本任务的输出协议优先于参考技能中的命令行、连续执行或交付约定。
 '''
@@ -46,7 +47,8 @@ def prompt(stage,a,request):
         excerpt=s['text'][:min(18000,remaining)]; remaining-=len(excerpt)
         src.append(dict(id=s['id'],title=s['title'],url=s['url'],kind=s['kind'],status=s['status'],text=excerpt,evidence_spans=s.get('evidence_spans',[]),
                         excerpt_only=len(excerpt)<len(s['text']),use=s.get('use',''),author_experience_allowed=bool(s.get('personal_material'))))
-    context=dict(brief=a['brief'],title=a['title'],sources=src,evidence=a['evidence'],outline=a['outline'],research=a.get('research',{}))
+    from .flow_state import issues
+    context=dict(issue_decisions=issues(a),brief=a['brief'],title=a['title'],sources=src,evidence=a['evidence'],outline=a['outline'],research=a.get('research',{}))
     if stage in ('review','revise','visual','layout_advice'): context['article']=a['content']
     if stage=='revise': context['review']=a['review']
     tasks={

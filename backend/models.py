@@ -191,12 +191,20 @@ class EvidenceSpan(BaseModel):
     boundary: str = ''
 
 
+class ResearchIssue(BaseModel):
+    text: str
+    kind: Literal['blocking','limitation'] = 'blocking'
+    source_ids: list[str] = Field(default_factory=list)
+    claim: str = ''
+
+
 class ResearchNotes(BaseModel):
     summary: str
     evidence: list[EvidenceSpan] = Field(default_factory=list, max_length=40)
     gaps: list[str] = Field(default_factory=list, max_length=8)
     conflicts: list[str] = Field(default_factory=list, max_length=8)
     followup_queries: list[str] = Field(default_factory=list, max_length=4)
+    issues: list[ResearchIssue] = Field(default_factory=list, max_length=24)
 
 
 class SearchSelection(BaseModel):
@@ -240,6 +248,17 @@ class JobRequest(BaseModel):
     section_id: str = ''
     image_id: str = ''
     chain: bool = True
+    issue_ids: list[str] = Field(default_factory=list, max_length=40)
+    resume_job_id: str = ''
+    action_id: str = ''
+    continuation_job_id: str = ''
+
+
+class IssueAction(BaseModel):
+    revision: int
+    issue_ids: list[str] = Field(min_length=1,max_length=40)
+    action: Literal['verify','waive','undo','attach']
+    action_id: str = Field(min_length=1,max_length=80)
 
 
 SCHEMAS = {'topic': TopicsResult, 'sources': EvidenceResult, 'outline': OutlineResult,
