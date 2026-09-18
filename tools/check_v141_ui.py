@@ -15,10 +15,13 @@ with sync_playwright() as p:
     expect(page.get_by_role('button',name='生成初稿',exact=True)).to_be_disabled()
     page.get_by_role('button',name='前往素材',exact=True).click()
     issue=page.locator('.research-issue').first
+    issue.get_by_role('button',name='展开问题',exact=True).click()
     issue.get_by_role('button',name='忽略并继续',exact=True).click()
+    page.get_by_role('button',name='已处理 · 1',exact=True).click()
     issue.get_by_role('button',name='撤销忽略',exact=True).wait_for()
     page.get_by_role('button',name='继续生成大纲',exact=True).wait_for()
     issue.get_by_role('button',name='撤销忽略',exact=True).click()
+    page.get_by_role('button',name='需要处理 · 1',exact=True).click()
     issue.get_by_role('button',name='补充资料',exact=True).click()
     page.get_by_role('dialog').get_by_role('button',name='粘贴文字',exact=True).click()
     page.get_by_role('textbox',name='素材名称',exact=True).fill('验收补充')

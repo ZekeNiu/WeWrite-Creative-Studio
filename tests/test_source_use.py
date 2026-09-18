@@ -1,5 +1,6 @@
 import copy
 import json
+import asyncio
 from backend import store,materials,source_use,prompts,research,providers,workflow
 from tests.test_studio import client,model,new,patch,run,H
 
@@ -78,3 +79,20 @@ def test_old_results_and_legacy_manual_use(client):
     a=patch(client,a,{'sources':a['sources']},'sources')
     a=workflow.apply_result(a,'sources',{'summary':'旧版结果','claims':[],'gaps':[]},{})
     assert a['sources'][0]['use']=='旧版用途' and 'ai_use' not in a['sources'][0]
+
+
+def test_research_notes_produce_use_without_extra_call(client,model,monkeypatch):
+    a=seeded(client);calls=[]
+    from backend.models import ResearchPlan,ResearchNotes
+    async def structured(a,stage,instruction,schema,job_id,candidates=None):
+        calls.append(schema.__name__)
+        if schema is ResearchPlan:return ResearchPlan(needed=False,queries=[],questions=[]).model_dump()
+        assert schema is ResearchNotes
+        return ResearchNotes(summary='已核对',evidence=[dict(source_id=a['sources'][0]['id'],quote='研究只适用于给定条件。',claim='有适用范围')],source_uses=[dict(source_id=s['id'],text='说明适用范围') for s in a['sources']]).model_dump()
+    monkeypatch.setattr(research,'structured',structured)
+    cfg=store.get_settings();cfg['search']['enabled']=True;store.set_settings(cfg)
+    j=store.create_job(a['id'],{'stage':'sources','revision':a['revision']})
+    result,pending=asyncio.run(research.gather(a,j['id'],'sources'))
+    assert not pending and calls==['ResearchPlan','ResearchNotes']
+    assert all(s['ai_use_current'] for s in result['sources'])
+    assert not result['research']['stale']

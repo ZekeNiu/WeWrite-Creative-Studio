@@ -30,6 +30,7 @@ with sync_playwright() as p:
 
     page.get_by_role('button',name='查找并整理资料',exact=True).click()
     complete(1)
+    page.get_by_role('tab',name='资料整理结果',exact=True).click()
     page.get_by_role('heading',name='资料整理结果',exact=True).wait_for()
     assert not page.get_by_text('补充学术检索与文献导入',exact=True).count()
     for width,height in [(1366,768),(1280,800)]:
@@ -69,7 +70,9 @@ with sync_playwright() as p:
     nav(1)
     page.locator('.source-actions input[type=file]').set_input_files({'name':'fixture.bib','mimeType':'text/plain',
         'buffer':b'@article{demo,title={Fixture import},author={Smith, Alex},year={2025},journal={Fixture Journal}}'})
+    page.get_by_role('tab',name='本篇素材').click()
     page.get_by_role('button',name='Fixture import',exact=True).wait_for()
+    page.get_by_role('tab',name='资料整理结果',exact=True).click()
     page.get_by_text('材料或主题已改变，请重新整理。历史结果仍保留，但不会作为当前结论展示。',exact=True).wait_for()
     assert not errors,errors
     report=dict(simulated=True,manual_workflow=True,unsaved_edit_export=True,archive_reuse=True,archive_endpoint=True,
