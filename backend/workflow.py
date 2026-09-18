@@ -7,6 +7,7 @@ from PIL import Image
 from pydantic import ValidationError
 from . import store, providers, prompts, materials, rendering, research
 from .models import STAGES, LABELS, SCHEMAS
+from .structured_output import parse as parse_structured
 
 TASKS: dict[str,asyncio.Task]={}
 
@@ -15,7 +16,7 @@ def parse(stage,text):
     if stage not in SCHEMAS: return text.strip().removeprefix('```markdown\n').removesuffix('```').strip()
     cleaned=text.strip()
     if cleaned.startswith('```'): cleaned=re.sub(r'^```(?:json)?\s*|\s*```$','',cleaned)
-    try: return SCHEMAS[stage].model_validate_json(cleaned).model_dump()
+    try: return parse_structured(cleaned,SCHEMAS[stage])
     except (ValidationError,ValueError): raise ValueError('模型结果不符合本环节的数据格式，原始结果已保留。可换模型或重新生成。') from None
 
 
@@ -50,6 +51,11 @@ def prerequisites(stage,a):
 
 def start(article_id,request):
     a=store.get_article(article_id)
+    if request.continuation_job_id:
+        original=store.job(request.continuation_job_id)
+        from .flow_state import job_view
+        if request.stage!='research' or original['article_id']!=article_id or job_view(original)['status']!='needs_input':
+            raise ValueError('核实任务不能恢复其他文章或已结束的任务')
     if request.resume_job_id:
         original=store.job(request.resume_job_id)
         from .flow_state import job_view
@@ -71,7 +77,7 @@ def cancel(id):
 
 
 async def call(job_id,stage,a,request):
-    store.update_job(job_id,current_step='generation',message='正在生成'+LABELS.get(stage,stage)+'结果')
+    store.update_job(job_id,current_step='generation',generation_revision=a['revision'],message='正在生成'+LABELS.get(stage,stage)+'结果')
     s=providers.service_for(stage); text=''; last=0
     async def emit(delta):
         nonlocal text,last
@@ -109,6 +115,7 @@ def apply_result(a,stage,result,request):
                 if section is None: raise ValueError('模型没有返回指定章节，大纲保持不变')
                 v['outline']['sections']=[section if x['id']==section['id'] else x for x in v['outline']['sections']]
             else: v['outline']=result
+            if v.get('research'): v['research']['outline_key']=research.digest(v['outline'])
         elif stage=='write': v['content']=result
         elif stage=='review':
             from wewrite.commands.humanness_score import score_article
@@ -173,13 +180,19 @@ async def run(job_id):
             store.update_job(job_id,stage=stage,target_stage=j['request']['stage'],message='正在'+LABELS.get(stage,{'revise':'修改选段','image':'生成图片','layout_advice':'分析排版'}.get(stage,stage)),partial='',result=None)
             store.event(job_id,'stage',stage=stage)
             if stage in ('topic','sources','outline','review','research'):
-                a,pending=await research.gather(a,job_id,stage,req.get('instruction','') if stage in ('sources','research') else '')
+                a,pending=await research.gather(a,job_id,stage,req.get('instruction','') if stage in ('sources','research','outline') else '')
                 if pending:
                     store.update_job(job_id,status='needs_input',ended=store.now(),message='资料核对暂停，尚未完成'+LABELS.get(stage,stage)+'；请处理待核实问题',blocked_stage=stage)
                     return
                 if stage in ('outline','review') and a['stages']['sources']=='stale':
                     evidence=await call(job_id,'sources',a,req);a=apply_result(a,'sources',evidence,req)
             if stage=='research':
+                # A successful explicit verification is usable material work, not an idle stage.
+                notes=a.get('research',{})
+                claims=[dict(id='C'+research.digest([e['source_id'],e['claim']])[:10],text=e['claim'],type='fact',
+                    source_ids=[e['source_id']],status='bounded' if e.get('boundary') else 'supported',
+                    boundary=e.get('boundary',''),evidence=[e]) for e in notes.get('evidence',[])]
+                a=apply_result(a,'sources',dict(summary=notes.get('summary',''),claims=claims,gaps=[]),req)
                 if req.get('continuation_job_id'):
                     original=store.job(req['continuation_job_id']);target=original['stage']
                     if a['auto'].get(target):

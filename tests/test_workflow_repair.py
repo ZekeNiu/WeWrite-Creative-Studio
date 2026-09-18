@@ -96,3 +96,64 @@ def test_limitation_does_not_block_or_count_as_verified(client):
 def test_new_success_not_relabelled_due_to_limitations():
     j={'status':'completed','result':None,'research':{'stats':{'version':1},'notes':{'conflicts':['limit']}}}
     assert flow_state.job_view(j)['status']=='completed'
+
+
+def test_selective_verification_cannot_silently_drop_other_blockers(client):
+    a=paused_article(client)
+    j=store.create_job(a['id'],{'stage':'research','issue_ids':[a['research']['issues'][0]['id']]})
+    w=research.Research(a,j['id'],'research')
+    w.notes={'summary':'model omitted issue','issues':[],'evidence':[],'gaps':[],'conflicts':[]}
+    assert not w.sufficient()
+    old=a['research']['issues'][0]
+    w.notes['issues']=[dict(old,status='resolved',resolution='claimed success',source_ids=['S1'])]
+    assert not w.sufficient()  # No located original evidence.
+    w.notes['evidence']=[{'source_id':'S1','claim':'范围已明确'}]
+    assert w.sufficient()
+
+
+def test_statistics_keep_previous_stage_and_count_existing_only(client):
+    a=new(client);j=store.create_job(a['id'],{'stage':'research'})
+    store.update_job(j['id'],research={'stats':{'version':1,'search_requests':3,'page_attempts':4},'calls':5,'pages':4})
+    w=research.Research(a,j['id'],'sources')
+    assert w.stats['search_requests']==3 and w.stats['page_attempts']==4
+    assert w.stats['metadata_requests']==0 and w.stats['existing_checked']==0
+
+
+def test_verify_action_is_idempotent_and_cancel_preserves_article(client,model,monkeypatch):
+    async def waiting(*args): await asyncio.sleep(30)
+    monkeypatch.setattr(research,'gather',waiting)
+    a=paused_article(client)
+    first=act_issue(client,a,'verify','same-click');second=act_issue(client,a,'verify','same-click')
+    assert first.status_code==second.status_code==200
+    assert first.json()['job']['id']==second.json()['job']['id']
+    jid=first.json()['job']['id']
+    client.post('/api/jobs/'+jid+'/cancel',headers=H)
+    from tests.test_studio import wait
+    assert wait(client,first.json()['job'])['status']=='cancelled'
+    assert store.get_article(a['id'])['revision']==a['revision']
+
+
+def test_single_structured_result_accepts_preamble_but_not_ambiguity():
+    import json
+    value=json.dumps({'topics':[{'title':'示例选题','angle':'角度','reason':'原因'}]})
+    assert workflow.parse('topic','Model output follows:\n```json\n'+value+'\n```')['topics'][0]['title']=='示例选题'
+    with pytest.raises(ValueError): workflow.parse('topic',value+'\n'+value)
+    with pytest.raises(ValueError): workflow.parse('topic',value[:-3])
+    with pytest.raises(ValueError): workflow.parse('topic','{"unrelated":"object"}')
+
+
+def test_bounded_continue_resumes_original_auto_chain(client,model):
+    a=paused_article(client);jid=a['research']['job_id']
+    store.update_job(jid,request={**store.job(jid)['request'],'chain':True})
+    a=patch(client,a,{'auto':{**a['auto'],'outline':True,'write':False}},'preferences')
+    result=act_issue(client,a,'waive');assert result.status_code==200,result.text
+    from tests.test_studio import wait
+    assert wait(client,result.json()['job'])['status']=='completed'
+    a=store.get_article(a['id'])
+    assert a['outline']['sections'] and a['content'] and not a['review']
+
+
+def test_continuation_cannot_use_another_article(client,model):
+    first=paused_article(client);second=new(client)
+    r=client.post('/api/articles/'+second['id']+'/jobs',headers=H,json={'revision':second['revision'],'stage':'research','continuation_job_id':first['research']['job_id']})
+    assert r.status_code==400

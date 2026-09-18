@@ -192,10 +192,13 @@ class EvidenceSpan(BaseModel):
 
 
 class ResearchIssue(BaseModel):
+    id: str = ''
     text: str
     kind: Literal['blocking','limitation'] = 'blocking'
     source_ids: list[str] = Field(default_factory=list)
     claim: str = ''
+    status: Literal['open','resolved'] = 'open'
+    resolution: str = ''
 
 
 class ResearchNotes(BaseModel):
