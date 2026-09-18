@@ -1,0 +1,31 @@
+.venv/
+node_modules/
+data/
+__pycache__/
+.pytest_cache/
+.playwright-cli/
+output/
+*.log
+# Private local records and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.sqlite*
+*.db
+*.db-*
+task_plan.md
+findings.md
+progress.md
+*验收.md
+验收说明.md
+# Reproducible caches; dist is intentionally shipped for the desktop launcher.
+*.tsbuildinfo
+*.pyc
+*.pyo
+*.egg-info/
+vendor/**/build/
+.cache/

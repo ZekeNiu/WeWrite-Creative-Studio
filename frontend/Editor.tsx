@@ -1,0 +1,53 @@
+import {useEffect,useRef,useState} from 'react';
+import {useEditor,EditorContent} from '@tiptap/react';
+import {Node} from '@tiptap/core';
+import {Plugin} from '@tiptap/pm/state';
+import type {Source} from './types';
+import {Modal} from './ui';
+import {api} from './api';
+import ReferenceDetails from './ReferenceDetails';
+import StarterKit from '@tiptap/starter-kit';
+import Placeholder from '@tiptap/extension-placeholder';
+import {TableKit} from '@tiptap/extension-table';
+import Image from '@tiptap/extension-image';
+import TurndownService from 'turndown';
+import {gfm} from 'turndown-plugin-gfm';
+import {marked} from 'marked';
+import DOMPurify from 'dompurify';
+import {Bold,Italic,List,ListOrdered,Quote,Undo2,Redo2,Heading2,Code2,Sparkles} from 'lucide-react';
+
+const td=new TurndownService({headingStyle:'atx',codeBlockStyle:'fenced',bulletListMarker:'-'});td.use(gfm);
+td.addRule('source-citation',{filter:node=>node.nodeName==='SPAN'&&node.hasAttribute('data-source-id'),replacement:(_text,node)=>'['+(node as HTMLElement).getAttribute('data-source-id')+']'});
+const Citation=Node.create({name:'sourceCitation',group:'inline',inline:true,atom:true,
+ addOptions(){return {getSources:()=>[] as Source[]}},
+ addProseMirrorPlugins(){const getSources=this.options.getSources;return [new Plugin({appendTransaction:(_trs,_old,state)=>{const order:string[]=[];const tr=state.tr;let changed=false;state.doc.descendants((node,pos)=>{if(node.type.name!=='sourceCitation')return;const ids=String(node.attrs.sourceId).split(/\s*[,，;；]\s*/);const labels=ids.map(id=>{if(!getSources().some((s:Source)=>s.id===id))return '?';if(!order.includes(id))order.push(id);return String(order.indexOf(id)+1)}).filter((x,i,a)=>a.indexOf(x)===i).join(',');if(labels!==node.attrs.label){tr.setNodeMarkup(pos,undefined,{...node.attrs,label:labels});changed=true}});return changed?tr.setMeta('addToHistory',false):null}})]},
+ addAttributes(){return {sourceId:{default:'',parseHTML:e=>e.getAttribute('data-source-id')},label:{default:'',parseHTML:e=>e.getAttribute('data-label')},title:{default:'',parseHTML:e=>e.getAttribute('title')}}},
+ parseHTML(){return [{tag:'span[data-source-id]'}]},
+ renderHTML({node}){return ['span',{'data-source-id':node.attrs.sourceId,'data-label':node.attrs.label,class:'source-citation',title:node.attrs.title},'['+node.attrs.label+']']}});
+export default function Editor({content,onSave,registerFlush,onSelection,highlight='',words,sources,onSourceSave,onLookup}:{content:string;onSave:(s:string)=>Promise<unknown>;registerFlush:(fn:()=>Promise<void>)=>void;onSelection:(s:string)=>void;highlight?:string;words:number;sources:Source[];onSourceSave:(s:Source)=>Promise<unknown>;onLookup:(sid:string,doi:string)=>Promise<unknown>}){
+ const sourcesRef=useRef(sources);sourcesRef.current=sources;
+ const [picker,setPicker]=useState(false);const [inspect,setInspect]=useState('');const [references,setReferences]=useState<any[]>([]);const insertion=useRef<{from:number;to:number}|null>(null);
+ function toHtml(text:string){const order:string[]=[];const html=DOMPurify.sanitize(marked.parse(text,{async:false}) as string);const doc=new DOMParser().parseFromString(html,'text/html');const walker=doc.createTreeWalker(doc.body,NodeFilter.SHOW_TEXT);const nodes:Text[]=[];while(walker.nextNode())nodes.push(walker.currentNode as Text);
+   for(const node of nodes){const text=node.textContent||'';const matches=[...text.matchAll(/\[(S[a-zA-Z0-9]+(?:\s*[,，;；]\s*S[a-zA-Z0-9]+)*)\]/g)];if(!matches.length)continue;let offset=0;const fragment=doc.createDocumentFragment();for(const m of matches){fragment.append(text.slice(offset,m.index));const span=doc.createElement('span');const ids=m[1].split(/\s*[,，;；]\s*/);const labels=ids.map(id=>{if(!sourcesRef.current.some(s=>s.id===id))return '?';if(!order.includes(id))order.push(id);return String(order.indexOf(id)+1)}).filter((x,i,a)=>a.indexOf(x)===i).join(',');span.setAttribute('data-source-id',m[1]);span.setAttribute('data-label',labels);span.setAttribute('title','点击查看引用详情');span.textContent='['+labels+']';fragment.append(span);offset=m.index!+m[0].length}fragment.append(text.slice(offset));node.replaceWith(fragment)}return doc.body.innerHTML}
+ const [status,setStatus]=useState('已保存');const [count,setCount]=useState(content.replace(/\s/g,'').length);const [rawMode,setRawMode]=useState(false);const [raw,setRaw]=useState(content);
+ const dirty=useRef(false);const latest=useRef(content);const timer=useRef<ReturnType<typeof setTimeout>|null>(null);const saveRef=useRef(onSave);saveRef.current=onSave;
+ const selectionRef=useRef(onSelection);selectionRef.current=onSelection;
+ const saving=useRef<Promise<unknown>>(Promise.resolve());
+ const flush=async()=>{if(timer.current)clearTimeout(timer.current);if(dirty.current){const text=latest.current;dirty.current=false;setStatus('保存中…');saving.current=saveRef.current(text).then(()=>setStatus(dirty.current?'有修改':'已保存')).catch(e=>{dirty.current=true;setStatus('保存失败，请重试');throw e})}await saving.current};
+ const change=(text:string)=>{latest.current=text;dirty.current=true;setRaw(text);setCount(text.replace(/\s/g,'').length);setStatus('有修改');if(timer.current)clearTimeout(timer.current);timer.current=setTimeout(()=>{void flush().catch(()=>{})},800)};
+ const editor=useEditor({extensions:[StarterKit,Placeholder.configure({placeholder:'在这里写下你的观点，或让 AI 按大纲生成初稿…'}),TableKit,Image,Citation.configure({getSources:()=>sourcesRef.current})],content:toHtml(content),
+   onUpdate:({editor})=>change(td.turndown(editor.getHTML())),
+   onSelectionUpdate:({editor})=>{const {from,to}=editor.state.selection;if(from===to)return;const text=editor.state.doc.textBetween(from,to,'\n\n');let original=text;
+     if(!latest.current.includes(text)){const range=window.getSelection()?.rangeCount?window.getSelection()!.getRangeAt(0):null;if(range){const div=document.createElement('div');div.appendChild(range.cloneContents());original=td.turndown(div.innerHTML)}}selectionRef.current(original)},
+   editorProps:{handleClickOn:(_view,_pos,node)=>{if(node.type.name==='sourceCitation'){setInspect(String(node.attrs.sourceId).split(/[,，;；]/)[0]);return true}return false},attributes:{class:'prose-editor','aria-label':'文章正文'}}});
+ useEffect(()=>{registerFlush(flush)},[registerFlush,content]);
+ useEffect(()=>{if(!dirty.current&&content!==latest.current){latest.current=content;setRaw(content);setCount(content.replace(/\s/g,'').length);editor?.commands.setContent(toHtml(content),{emitUpdate:false})}},[content,editor]);
+ useEffect(()=>{const warn=(e:BeforeUnloadEvent)=>{if(dirty.current){e.preventDefault();e.returnValue=''}};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn)},[]);
+ useEffect(()=>{let cancelled=false;const timer=setTimeout(()=>{void api('/references/preview','POST',{content:raw,sources}).then(r=>{if(!cancelled)setReferences(r.references)}).catch(()=>{})},400);return()=>{cancelled=true;clearTimeout(timer)}},[raw,sources]);
+ useEffect(()=>{if(editor)editor.view.dispatch(editor.state.tr)},[sources,editor]);
+ useEffect(()=>{if(!highlight||!editor)return;let found=false;editor.state.doc.descendants((node,pos)=>{if(found||!node.isText)return;const i=node.text?.indexOf(highlight)??-1;if(i>=0){editor.commands.setTextSelection({from:pos+i,to:pos+i+highlight.length});editor.commands.focus();found=true}})},[highlight,editor]);
+ useEffect(()=>()=>{if(timer.current)clearTimeout(timer.current);if(dirty.current)void saveRef.current(latest.current).catch(()=>{})},[]);
+ if(!editor)return null;
+ const controls=[{icon:Bold,label:'加粗',active:editor.isActive('bold'),run:()=>editor.chain().focus().toggleBold().run()},{icon:Italic,label:'斜体',active:editor.isActive('italic'),run:()=>editor.chain().focus().toggleItalic().run()},{icon:Heading2,label:'小标题',active:editor.isActive('heading',{level:2}),run:()=>editor.chain().focus().toggleHeading({level:2}).run()},{icon:List,label:'项目列表',run:()=>editor.chain().focus().toggleBulletList().run()},{icon:ListOrdered,label:'编号列表',run:()=>editor.chain().focus().toggleOrderedList().run()},{icon:Quote,label:'引用',run:()=>editor.chain().focus().toggleBlockquote().run()},{icon:Undo2,label:'撤销',run:()=>editor.chain().focus().undo().run()},{icon:Redo2,label:'重做',run:()=>editor.chain().focus().redo().run()}];
+ return <div className="editor-shell"><div className="editor-toolbar"><div className="row">{controls.map(c=><button key={c.label} title={c.label} aria-label={c.label} disabled={rawMode} className={'icon-button '+(c.active?'active':'')} onClick={c.run}><c.icon size={17}/></button>)}</div><button className="text-button" disabled={rawMode} onMouseDown={e=>e.preventDefault()} onClick={()=>{insertion.current={from:editor.state.selection.from,to:editor.state.selection.to};setPicker(true)}}>插入引用</button><button className={'icon-button '+(rawMode?'active':'')} title="Markdown 源文" onClick={()=>{if(rawMode)editor.commands.setContent(toHtml(latest.current),{emitUpdate:false});setRawMode(!rawMode)}}><Code2 size={17}/></button></div>{rawMode?<textarea className="raw-editor" aria-label="Markdown 正文" value={raw} onChange={e=>change(e.target.value)}/>:<EditorContent editor={editor}/>}<div className="editor-bottom"><span>{count} 字 <span className="muted">/ 目标 {words} 字{count>0?' · '+Math.round((count-words)/words*100)+'%':''}</span></span><button className="text-button" onClick={()=>void flush().catch(()=>{})}>{status}</button></div><p className="editor-tip"><Sparkles size={13}/>选中文字，在右侧提出修改要求。AI 建议会先展示对比。</p>{references.length>0&&<section className="editor-references"><h3>参考文献</h3>{references.map(r=><p key={r.id}><button className="text-button" onClick={()=>setInspect(r.id)}>[{r.number}] {r.text}</button></p>)}</section>}{/\[\d+(?:[,，-]\d+)*\]/.test(raw)&&<p className="notice amber">发现普通数字引用。请选择正文中的旧编号，再点击“插入引用”关联素材；不会自动猜测对应关系。</p>}{picker&&<Modal title="选择要引用的素材" onClose={()=>setPicker(false)}><p className="muted">引用将插入当前光标位置；若选中了旧数字编号，会替换选中内容。</p>{sources.map(s=><div className="source-peek" key={s.id}><strong>{s.title}</strong><p>{s.summary||'仅文献信息，尚不能支持具体研究结论'}</p><div className="row"><button className="button secondary" onClick={()=>{const range=insertion.current||editor.state.selection;editor.chain().focus().insertContentAt(range,{type:'sourceCitation',attrs:{sourceId:s.id,label:'?',title:s.title}}).run();setPicker(false)}}>引用此素材</button><button className="text-button" onClick={()=>setInspect(s.id)}>查看证据与信息</button></div></div>)}{!sources.length&&<p>请先在素材环节添加文献或资料。</p>}</Modal>}{inspect&&sources.find(s=>s.id===inspect)&&<ReferenceDetails key={inspect} source={sources.find(s=>s.id===inspect)!} onClose={()=>setInspect('')} onSave={onSourceSave} onLookup={doi=>onLookup(inspect,doi)}/>}</div>
+}
