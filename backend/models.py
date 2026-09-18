@@ -210,6 +210,16 @@ class ResearchNotes(BaseModel):
     issues: list[ResearchIssue] = Field(default_factory=list, max_length=24)
 
 
+class ScopeDecision(BaseModel):
+    id: str
+    kind: Literal['blocking','limitation']
+    reason: str
+
+
+class IssueScope(BaseModel):
+    decisions: list[ScopeDecision] = Field(default_factory=list,max_length=40)
+
+
 class SearchSelection(BaseModel):
     urls: list[str] = Field(default_factory=list, max_length=8)
     reason: str = ''

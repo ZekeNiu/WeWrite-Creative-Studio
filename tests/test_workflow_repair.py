@@ -157,3 +157,19 @@ def test_continuation_cannot_use_another_article(client,model):
     first=paused_article(client);second=new(client)
     r=client.post('/api/articles/'+second['id']+'/jobs',headers=H,json={'revision':second['revision'],'stage':'research','continuation_job_id':first['research']['job_id']})
     assert r.status_code==400
+
+
+def test_scope_review_bounds_added_requirements_without_claiming_truth(client,monkeypatch):
+    a=new(client);j=store.create_job(a['id'],{'stage':'sources'})
+    w=research.Research(a,j['id'],'sources')
+    w.notes={'summary':'资料已读','gaps':['缺少实验证明核对顺序最优'],'conflicts':[],
+             'evidence':[{'source_id':'S1','claim':'核对来源有帮助'}],'issues':[]}
+    async def scope(a,stage,instruction,schema,job,candidates=None):
+        assert not a['sources'] and '用户' in instruction
+        return {'decisions':[{'id':candidates[0]['id'],'kind':'limitation','reason':'这是流程建议，不声称最优；不需增加实验证明'}]}
+    monkeypatch.setattr(research,'structured',scope)
+    asyncio.run(w.check_scope())
+    assert w.sufficient() and w.issues()[0]['kind']=='limitation' and w.issues()[0]['status']=='open'
+    w.notes['evidence']=[];w.notes['issues']=[];w.notes['gaps']=['没有任何可定位依据']
+    asyncio.run(w.check_scope())
+    assert not w.sufficient()
