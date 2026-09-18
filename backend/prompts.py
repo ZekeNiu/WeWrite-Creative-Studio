@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from .models import SCHEMAS
 from .store import ROOT
+from .source_use import effective
 
 SKILLS=ROOT/'vendor/wewrite/skills'
 PERSONAS={
@@ -46,7 +47,7 @@ def prompt(stage,a,request):
         if not s['selected'] or remaining<=0: continue
         excerpt=s['text'][:min(18000,remaining)]; remaining-=len(excerpt)
         src.append(dict(id=s['id'],title=s['title'],url=s['url'],kind=s['kind'],status=s['status'],text=excerpt,evidence_spans=s.get('evidence_spans',[]),
-                        excerpt_only=len(excerpt)<len(s['text']),use=s.get('use',''),author_experience_allowed=bool(s.get('personal_material'))))
+                        excerpt_only=len(excerpt)<len(s['text']),use=effective(a,s),author_experience_allowed=bool(s.get('personal_material'))))
     from .flow_state import issues
     context=dict(issue_decisions=issues(a),brief=a['brief'],title=a['title'],sources=src,evidence=a['evidence'],outline=a['outline'],research=a.get('research',{}))
     if stage in ('review','revise','visual','layout_advice'): context['article']=a['content']
@@ -62,6 +63,7 @@ def prompt(stage,a,request):
       'layout_advice':'给出不超过 5 条具体排版建议，针对当前正文的层级、节奏、图片位置。仅给建议，不重写正文、不生成图片。'
     }
     task=tasks[stage]
+    if stage=='sources': task+=' 同时用 source_uses 为本次实际读到的素材各给一句针对本文的用途（300字以内），不是重复摘要，也不代表证实。仅文献信息只作查找线索；不得推定作者亲历。人工指定用途优先，保留其约束。'
     if request.get('section_id'):
         task+=' 仅重做指定 section_id 对应的章节，返回完整大纲但其他章节必须原样保留。'
     value={'任务':task,'本次要求':request.get('instruction',''),'选段':request.get('selected_text',''),

@@ -58,10 +58,16 @@ class Claim(BaseModel):
     evidence: list[dict] = []
 
 
+class SourceUse(BaseModel):
+    source_id: str
+    text: str = Field(max_length=300)
+
+
 class EvidenceResult(BaseModel):
     summary: str
     claims: list[Claim]
     gaps: list[str] = []
+    source_uses: list[SourceUse] = Field(default_factory=list,max_length=200)
 
 
 class Section(BaseModel):
@@ -203,6 +209,7 @@ class ResearchIssue(BaseModel):
 
 class ResearchNotes(BaseModel):
     summary: str
+    source_uses: list[SourceUse] = Field(default_factory=list,max_length=200)
     evidence: list[EvidenceSpan] = Field(default_factory=list, max_length=40)
     gaps: list[str] = Field(default_factory=list, max_length=8)
     conflicts: list[str] = Field(default_factory=list, max_length=8)

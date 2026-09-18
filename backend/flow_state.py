@@ -53,6 +53,8 @@ def ready(a):
 
 
 def present(a):
+    from .source_use import current
+    for s in a['sources']: s['ai_use_current']=current(a,s)
     a['workflow']=ready(a)
     if a.get('research'): a['research']['issues']=issues(a)
     return a

@@ -46,11 +46,12 @@ def digest(value):
 
 
 def context(a,stage):
+    from .source_use import effective
     remaining=65000; sources=[]
     for s in sorted(a['sources'],key=lambda s:s.get('kind')!='user'):
         if not s['selected'] or not s.get('text') or remaining<=0: continue
         text=s['text'][:min(12000,remaining)];remaining-=len(text)
-        sources.append({k:s.get(k) for k in ('id','title','url','status','use','published_date') } | {'text':text})
+        sources.append({k:s.get(k) for k in ('id','title','url','status','published_date') } | {'text':text,'use':effective(a,s),'author_experience_allowed':bool(s.get('personal_material'))})
     return {'brief':a['brief'],'stage':stage,'sources':sources,'outline':a['outline'],
             'article':a['content'] if stage=='review' else '', 'evidence':a['evidence'],
             'issue_decisions':flow_state.issues(a)}
@@ -349,6 +350,7 @@ class Research:
         key=digest([context(self.a,self.stage),self.requirements,self.questions])
         if self.notes_key==key: return
         self.update('正在核对关键结论与原文证据')
+        self.use_read_ids={s['id'] for s in context(self.a,self.stage)['sources']}
         self.notes=validate_spans(await structured(self.a,self.stage,
             '整理核心发现及原文支持关系；evidence.quote 必须逐字复制来源中的连续片段，claim 写支持的判断，boundary 写适用范围。'
             '核对当前任务需要的全部关键问题；只列阻碍继续写作的实质 gaps 和 conflicts，不为凑篇数补查。'
@@ -361,6 +363,7 @@ class Research:
             '对已 waived 的同类问题遵守保留边界或省略断言，不重复要求确认；不能把忽略当成证实。'
             'quote 保留原文语言，不翻译、不改写、不拼接；无法定位的具体断言应删除或弱化。'
             '有 blocking 时 followup_queries 给出可执行定向查询；没有时为空。'
+            '同时用 source_uses 为本次实际读取的素材给出一句针对本文的写作用途，不重复摘要，不代表证实；仅文献信息只作查找线索。人工用途优先；只有 author_experience_allowed=true 的材料可作作者亲历，不得自行推定授权。'
             '本次补充要求：'+self.requirements+'；需要覆盖的问题：'+json.dumps(self.questions,ensure_ascii=False),ResearchNotes,self.job_id),self.a['sources'])
         if not self.notes['evidence'] and not self.notes['gaps']:
             self.notes['gaps'].append('尚未取得可定位的原文证据，请补充材料或继续检索。')
@@ -512,6 +515,8 @@ class Research:
             src['evidence_spans']=[e for e in self.notes['evidence'] if e['source_id']==src['id']]
             if src['evidence_spans']:
                 src['summary']='；'.join(e['claim']+('（'+e['boundary']+'）' if e.get('boundary') else '') for e in src['evidence_spans'])[:360]
+        from .source_use import apply
+        apply(self.a,self.notes.get('source_uses',[]),getattr(self,'use_read_ids',set()))
         if self.policy_issue and not self.sufficient(): self.notes['gaps'].append(self.policy_issue)
         pending=not self.sufficient()
         if pending and not self.notes['gaps'] and not self.notes['conflicts']:
