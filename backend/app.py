@@ -62,7 +62,7 @@ async def conflict(request,exc): return JSONResponse({'detail':str(exc)},409)
 
 
 @app.get('/api/health')
-def health(): return {'app':'wewrite-studio','version':'1.4.3','upstream':'4.2.1','workspace':str(store.ROOT)}
+def health(): return {'app':'wewrite-studio','version':'1.4.4','upstream':'4.2.1','workspace':str(store.ROOT)}
 
 
 @app.get('/api/meta')
@@ -362,7 +362,11 @@ def apply_suggestion(id:str,sid:str,value:dict):
 
 
 @app.post('/api/articles/{id}/images/upload')
-async def upload_image(id:str,file:UploadFile=File(),revision:int=Form(),role:str=Form('article')):
+async def upload_image(id:str,file:UploadFile=File(),revision:int=Form(),role:str=Form('article'),plan_id:str=Form('')):
+    article=store.get_article(id)
+    if article['revision']!=revision: raise store.Conflict('文章已有更新，为避免覆盖，未应用本次修改。请先查看最新版本。')
+    plan=next((p for p in article['image_plans'] if p['id']==plan_id),None) if plan_id else None
+    if plan_id and plan is None: raise ValueError('配图方案已改变，请刷新后重新选择上传位置')
     blob=await file.read(30*1024*1024+1)
     if len(blob)>30*1024*1024: raise ValueError('图片不能超过 30 MB')
     try:
@@ -372,7 +376,13 @@ async def upload_image(id:str,file:UploadFile=File(),revision:int=Form(),role:st
     filename=store.uid()+'.png'; p=store.article_dir(id)/'assets'; p.mkdir(exist_ok=True)
     image.convert('RGB').save(p/filename,'PNG')
     item=dict(id=store.uid(),filename=filename,role='cover' if role=='cover' else 'article',caption='',after_heading='',selected=True,created=store.now())
-    return store.save_article(id,revision,lambda a:a['images'].append(item),'上传图片',invalidate='visual')
+    if plan:
+        item.update(plan_id=plan_id,role=plan['role'],caption=plan.get('caption',''),after_heading=plan.get('after_heading',''))
+    try:
+        return store.save_article(id,revision,lambda a:a['images'].append(item),'上传图片',invalidate='visual')
+    except Exception:
+        (p/filename).unlink(missing_ok=True)
+        raise
 
 
 @app.get('/api/articles/{id}/assets/{filename}')
