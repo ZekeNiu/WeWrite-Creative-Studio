@@ -218,7 +218,8 @@ async def run(job_id):
                 if stage=='visual' and a['auto']['visual']:
                     for plan in a['image_plans']: a=await visuals.acquire(a,job_id,plan)
             if stage in ('image','visual') and (stage=='image' or a['auto']['visual']):
-                unresolved=[p for p in a['image_plans'] if (stage!='image' or p['id']==req['image_id']) and not any(i.get('selected') and i.get('plan_id')==p['id'] for i in a['images'])]
+                unresolved=[p for p in a['image_plans'] if (stage!='image' or p['id']==req['image_id']) and not any(i.get('selected') and i.get('plan_id')==p['id'] and
+                    (i.get('plan_key')==visuals.digest([p,a['visual']['size']]) or (visuals.origin(i)=='upload' and i.get('context_key')==p.get('context_key'))) for i in a['images'])]
                 if unresolved:
                     message=store.job(job_id).get('message','')
                     store.update_job(job_id,status='needs_input',ended=store.now(),message='配图候选已保留，仍有位置需要选图、确认使用依据或上传。'+message,blocked_stage='visual')
