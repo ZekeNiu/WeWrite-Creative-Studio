@@ -40,3 +40,5 @@ npm run build
 ## 上游
 
 本项目包含固定版本 WeWrite 4.2.1，见 [上游版本](vendor/wewrite/UPSTREAM_REVISION) 和 [上游 MIT 许可证](vendor/wewrite/LICENSE)。
+
+素材页面支持整理结果／素材列表页签、每页 10 条、折叠及筛选后的批量采用。AI 整理时自动给出用途，人工指定优先；个人经历仍需明确授权。

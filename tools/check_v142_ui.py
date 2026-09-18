@@ -28,6 +28,14 @@ with sync_playwright() as p:
         assert len(writes)==before and article(n)['revision']==a['revision']
     open_case(100)
     expect(page.get_by_role('tabpanel',name='资料整理结果',exact=True)).to_be_visible()
+    results=page.get_by_role('tabpanel',name='资料整理结果',exact=True)
+    results.get_by_role('checkbox',name='全选当前页待处理项').check()
+    results.get_by_role('button',name='忽略所选并保留边界（10）',exact=True).click()
+    results.get_by_role('button',name='已处理 · 11',exact=True).click()
+    assert sum(x['status']=='waived' for x in article(100)['research']['issues'])==10
+    handled=results.locator('.research-issue').first
+    handled.get_by_role('button',name='展开问题').click();handled.get_by_role('button',name='撤销忽略').click()
+    results.get_by_role('button',name='需要处理 · 16',exact=True).click()
     page.get_by_role('tab',name='本篇素材').click();panel=page.get_by_role('tabpanel',name='本篇素材',exact=True)
     panel.get_by_role('textbox',name='搜索本篇素材').fill('匹配材料');expect(panel).to_contain_text('共 30 条')
     before=article(100);panel.get_by_role('button',name='全部不采用',exact=True).click()
@@ -71,7 +79,10 @@ with sync_playwright() as p:
     page.get_by_role('button',name='添加素材',exact=True).click();page.get_by_role('button',name='返回对应核实问题').click()
     expect(results.locator('.research-issue').filter(has_text='第 11 项').get_by_role('button',name='忽略并继续')).to_be_disabled()
     assert len(article(100)['sources'])==101
+    page.get_by_role('tab',name='本篇素材').click()
+    page.locator('.stage-nav').nth(3).click();page.locator('.stage-nav').nth(1).click()
+    expect(page.get_by_role('tabpanel',name='本篇素材',exact=True)).to_be_visible()
     assert not errors,errors
     browser.close()
-report=dict(simulated=True,counts=[0,1,30,100],view_only_no_writes=True,batch_scope=True,duplicate_protection=True,conflict_preserved=True,manual_use=True,issue_pagination=True,supplement_return=True,layouts=[1366,1280],console_errors=errors)
+report=dict(simulated=True,counts=[0,1,30,100],view_only_no_writes=True,batch_scope=True,duplicate_protection=True,conflict_preserved=True,manual_use=True,issue_pagination=True,batch_ignore_and_undo=True,supplement_return=True,layouts=[1366,1280],console_errors=errors)
 Path('output/diagnostics/ui-v142.json').write_text(json.dumps(report,indent=2),'utf-8');print(json.dumps(report))

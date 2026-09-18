@@ -21,14 +21,14 @@ export function Topics({a,save,act,update,run,busy}:Common){
  <details className="hotspots"><summary>看看公开热点</summary><p className="muted">热点提供灵感，不代表事实已核实，也不等同于你所在领域的阅读需求。</p><button className="button secondary" disabled={loading} onClick={()=>{setLoading(true);void act(async()=>setHot(await api('/hotspots'))).finally(()=>setLoading(false))}}>{loading?<Busy text="正在读取热点"/>:'读取公开热点'}</button>{hot&&(hot.items?.length?<div className="hotspot-list">{hot.items.map((h:any,i:number)=><button key={i} onClick={()=>setTopic(h.title)}><span>{i+1}</span>{h.title}<small>{h.source}</small></button>)}</div>:<p className="muted">暂未读取到公开热点，可手动填写主题或生成常青选题。</p>)}</details></>
 }
 
-export function Sources({a,save,act,update,run,busy,onJob,focusToken=0}:Common&{focusToken?:number}){
+export function Sources({a,save,act,update,run,busy,onJob,focusToken=0,onFocusHandled}:Common&{focusToken?:number;onFocusHandled?:()=>void}){
  const viewKey="materials-tab:"+a.id;
  const [tab,setTab]=useState(()=>readView(viewKey,{tab:a.research?.pending?"results":"materials"}).tab);
  const [summaryOpen,setSummaryOpen]=useState(false);
  const [focus,setFocus]=useState<{token:number;id?:string}>({token:0});const [supplied,setSupplied]=useState(false);const [attachmentIds,setAttachmentIds]=useState<string[]>(()=>readView("materials-supply:"+a.id,{ids:[] as string[]}).ids);
  const selectTab=(tab:string)=>{setTab(tab);remember(viewKey,{tab})};
  const locate=(id?:string)=>{selectTab("results");setFocus({token:Date.now(),id})};
- useEffect(()=>{if(focusToken)locate()},[focusToken]);
+ useEffect(()=>{if(focusToken){locate();onFocusHandled?.()}},[focusToken]);
  const [mode,setMode]=useState('');const [title,setTitle]=useState('');const [text,setText]=useState('');const [url,setUrl]=useState('');const [query,setQuery]=useState('');const [inspect,setInspect]=useState<string|null>(null);const file=useRef<HTMLInputElement>(null);
  async function upload(f:File){const body=new FormData();body.append('file',f);body.append('revision',String(a.revision));await act(async()=>{update(await api('/articles/'+a.id+'/sources/file','POST',body));setSupplied(attachmentIds.length>0)})}
  const selected=a.sources.filter(s=>s.selected).length;
