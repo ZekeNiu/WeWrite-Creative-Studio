@@ -62,7 +62,7 @@ async def conflict(request,exc): return JSONResponse({'detail':str(exc)},409)
 
 
 @app.get('/api/health')
-def health(): return {'app':'wewrite-studio','version':'1.4.2','upstream':'4.2.1','workspace':str(store.ROOT)}
+def health(): return {'app':'wewrite-studio','version':'1.4.3','upstream':'4.2.1','workspace':str(store.ROOT)}
 
 
 @app.get('/api/meta')
