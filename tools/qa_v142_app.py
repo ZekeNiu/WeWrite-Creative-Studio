@@ -3,7 +3,7 @@ import os
 import json
 from pathlib import Path
 os.environ['WEWRITE_STUDIO_DATA']=str(Path('output/test-workspaces/qa-v142').resolve())
-from backend import store,providers,materials,source_use
+from backend import store,providers,materials
 from backend.models import Settings
 from tools.qa_research_app import app,generate as normal_generate
 store.init()
@@ -15,7 +15,6 @@ async def generate(s,system,prompt,emit=None):
     v=json.loads(prompt)
     if v.get('schema',{}).get('title') in ('ResearchNotes','EvidenceResult'):
         result=json.loads(raw);ctx=v.get('context') or v.get('资料与当前内容',{})
-        result['source_uses']=[dict(source_id=x['id'],text='用于解释材料的适用范围') for x in ctx['sources']]
         raw=json.dumps(result,ensure_ascii=False)
     if emit:await emit(raw)
     return raw,usage
@@ -31,7 +30,10 @@ for n in (0,1,30,100):
     if j:store.update_job(j['id'],status='needs_input',stage='outline',message='资料核对暂停，请处理待核实问题')
     def seed(v):
         v['sources']=sources
-        source_use.apply(v,[dict(source_id=s['id'],text='提供写作边界与例子') for s in sources],{s['id'] for s in sources})
+        for s in sources:s['ai_use']={'text':'旧版用途，不应展示或传入模型','input_key':'legacy'}
+        if sources:
+            v['evidence']={'summary':'模拟整理结果','claims':[dict(id='C1',text='材料有适用条件',source_ids=[sources[1 if n>1 else 0]['id']],status='bounded',boundary='仅限案例')]}
+            v['outline']={'sections':[dict(id='sec1',title='证据的适用条件',claim_ids=['C1'])]}
         if issues:v['research']=dict(stage='outline',job_id=j['id'],summary='整理结果摘要。'*80,pending=True,stale=False,issues=issues,gaps=[],conflicts=[],log=[])
     a=store.save_article(a['id'],a['revision'],seed,'Synthetic UI fixture');fixtures[str(n)]=a['id']
 (store.DATA/'materials-fixtures.json').write_text(json.dumps(fixtures),'utf-8')

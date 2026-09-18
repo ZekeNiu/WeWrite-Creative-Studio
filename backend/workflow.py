@@ -5,7 +5,7 @@ import re
 import time
 from PIL import Image
 from pydantic import ValidationError
-from . import store, providers, prompts, materials, rendering, research, source_use
+from . import store, providers, prompts, materials, rendering, research
 from .models import STAGES, LABELS, SCHEMAS
 from .structured_output import parse as parse_structured
 
@@ -109,9 +109,7 @@ def apply_result(a,stage,result,request):
                 v['title']=result['topics'][0]['title']; v['brief']['topic']=v['title']
             else: v['stages']['topic']='needs_input'
         elif stage=='sources':
-            v['evidence']=result
-            sent=json.loads(prompts.prompt('sources',a,request))['资料与当前内容']['sources']
-            source_use.apply(v,result.get('source_uses',[]),{s['id'] for s in sent})
+            v['evidence']=prompts.clean_context(result)
         elif stage=='outline':
             if request.get('section_id') and v['outline']:
                 section=next((x for x in result['sections'] if x['id']==request['section_id']),None)

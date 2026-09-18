@@ -53,9 +53,11 @@ with sync_playwright() as p:
     first=panel.locator('.source-card').first;first.get_by_role('checkbox').click()
     page.get_by_text('模拟版本冲突',exact=True).wait_for();expect(first.get_by_role('checkbox')).to_be_checked()
     # Manual override, reset, and explicit experience authorization.
-    first=panel.locator('.source-card').nth(1);first.locator('.source-title').click();field=first.get_by_role('textbox',name='这份素材的用途')
-    field.fill('人工指定的用途');field.press('Tab');expect(first).to_contain_text('人工指定：人工指定的用途')
-    first.get_by_role('button',name='恢复 AI 判断').click();expect(first).to_contain_text('AI 判断')
+    first=panel.locator('.source-card').nth(1);first.locator('.source-title').click();field=first.get_by_role('textbox',name='使用要求（可选）')
+    field.fill('人工指定的用途');field.press('Tab');expect(first).to_contain_text('有使用要求')
+    first.locator('.material-relations summary').click();expect(first).to_contain_text('证据的适用条件')
+    first.get_by_role('button',name='清空使用要求').click();expect(field).to_have_value('')
+    assert '旧版用途' not in panel.inner_text() and 'AI 判断' not in panel.inner_text()
     assert not article(100)['sources'][0]['personal_material']
     page.locator('.toast button').click()
     first.locator('.source-title').click()
