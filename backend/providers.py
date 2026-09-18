@@ -52,6 +52,7 @@ def effective_service(kind,cfg=None):
 
 
 def save_settings(value: Settings):
+    value=Settings.model_validate(value.model_dump())
     old=settings(); previous={s['id']:s for s in old['services']}
     ids=set()
     for s in value.services:
@@ -71,6 +72,19 @@ def save_settings(value: Settings):
     store.set_settings(value.model_dump(exclude_none=True))
     for removed in set(previous)-ids: store.put_secret(removed,None)
     return settings()
+
+
+def migrate_settings():
+    raw=store.get_settings()
+    if not raw: return
+    value=Settings.model_validate(raw).model_dump(exclude_none=True)
+    search=value['search'];sid=search['native_service_id'] or value['default_service']
+    service=next((s for s in value['services'] if s['id']==sid),None)
+    if service:
+        model=search['native_model'] or service['model']
+        if not any(p['service_id']==sid and p['model']==model for p in value['model_connections']):
+            value['model_connections'].append(dict(service_id=sid,model=model,search_protocol=search['native_protocol']))
+    if value!=raw: store.set_settings(value)
 
 
 def service_for(stage, override=None):

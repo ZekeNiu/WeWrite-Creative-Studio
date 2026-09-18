@@ -104,7 +104,14 @@ def save_article(id, expected_revision, mutate, label, invalidate=None):
             raise Conflict('文章已有更新，为避免覆盖，未应用本次修改。请先查看最新版本。')
         db.execute('INSERT INTO versions VALUES(?,?,?,?,?)',(uid(),id,now(),label,encode(a)))
         previous_sources=encode(a['sources'])
+        previous_research=encode(a.get('research'))
+        previous_brief=encode([a['brief'],a['title']])
+        previous_content=a['content']
         mutate(a)
+        if a.get('research') and encode(a['research'])==previous_research:
+            if (encode(a['sources'])!=previous_sources or encode([a['brief'],a['title']])!=previous_brief
+                    or (a['research'].get('stage')=='review' and a['content']!=previous_content)):
+                a['research']['stale']=True
         if encode(a['sources'])!=previous_sources:
             a['current_stage']='sources'
             if a['evidence'] and a['stages']['sources']!='needs_input': a['stages']['sources']='stale'

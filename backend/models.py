@@ -1,5 +1,5 @@
 from typing import Literal
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 STAGES = ['topic', 'sources', 'outline', 'write', 'review', 'visual', 'layout']
 LABELS = dict(zip(STAGES, ['选题', '素材', '大纲', '写作', '审核修改', '配图', '排版导出']))
@@ -144,7 +144,7 @@ class Route(BaseModel):
 
 
 class SearchConfig(BaseModel):
-    preference: Literal['auto', 'native', 'tavily', 'browser'] = 'auto'
+    preference: Literal['native'] = 'native'
     allow_fallback: bool = True
     base_url: str = 'https://api.tavily.com'
     key: str | None = None
@@ -166,6 +166,14 @@ class SearchConfig(BaseModel):
     max_pages: int = Field(16, ge=1, le=60)
     max_rounds: int = Field(2, ge=0, le=4)
     budget: float | None = Field(None, ge=0)
+
+    @model_validator(mode='before')
+    @classmethod
+    def migrate_strategy(cls,value):
+        if isinstance(value,dict):
+            value=dict(value,preference='native')
+            value.setdefault('page_render_enabled',value.get('browser_enabled',True))
+        return value
 
 
 class ResearchPlan(BaseModel):

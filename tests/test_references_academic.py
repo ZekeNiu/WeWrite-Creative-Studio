@@ -101,7 +101,7 @@ def test_academic_attempts_crossdiscipline_and_specialist_before_reading(client,
     monkeypatch.setattr(academic,'openalex',lambda q:channel('openalex',q))
     monkeypatch.setattr(search_tools,'pubmed',lambda q:channel('pubmed',q))
     a=store.create_article({'column':'运动科学'});j=store.create_job(a['id'],{'stage':'research'})
-    w=research.Research(a,j['id'],'sources');w.cfg.update(academic_enabled=True,pubmed_enabled=True);w.target=1
+    w=research.Research(a,j['id'],'sources');w.cfg.update(academic_enabled=True,pubmed_enabled=True,browser_enabled=False);w.search_model=None
     asyncio.run(w.discover(['exercise']))
     assert calls==['openalex','pubmed'] and len(w.a['sources'])==1
     assert w.a['sources'][0]['discovery_channels']==['openalex','pubmed']
@@ -113,9 +113,9 @@ def test_openalex_rate_limit_crossref_fallback(client,network,monkeypatch):
     async def backup(q):called.append('crossref');return []
     monkeypatch.setattr(academic,'openalex',fail);monkeypatch.setattr(academic,'crossref',backup)
     a=store.create_article({'column':'历史'});j=store.create_job(a['id'],{'stage':'research'})
-    w=research.Research(a,j['id'],'sources');w.cfg.update(academic_enabled=True);w.target=1
+    w=research.Research(a,j['id'],'sources');w.cfg.update(academic_enabled=True,browser_enabled=False);w.search_model=None
     asyncio.run(w.discover(['history']))
-    assert called==['openalex','crossref'] and network==['google'] and w.added
+    assert called==['openalex','crossref'] and not network and not w.added
 
 
 def test_article_metadata_patch_and_version_restore(client):

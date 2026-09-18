@@ -65,9 +65,6 @@ async def run(job_id):
     job = store.job(job_id)
     a = store.get_article(job['article_id'])
     w = research.Research(a, job_id, 'sources')
-    # One relevant, readable original with a verified quote proves the connection.
-    # Normal writing retains the broader evidence collection target.
-    w.target = 1
     w.cfg['max_calls'] = min(w.cfg['max_calls'], 8)
     w.cfg['max_pages'] = min(w.cfg['max_pages'], 16)
     if job['request'].get('without_tavily'):
@@ -78,7 +75,7 @@ async def run(job_id):
     try:
         await w.discover([a['brief']['topic']])
         if not w.added:
-            raise ValueError('未找到与问题相关且可读取的来源。请查看渠道记录；可更换问题或完成浏览器验证后重试。')
+            raise ValueError('未找到与问题相关且可读取的来源。请查看渠道记录；可更换问题或补充原文后重试。')
         w.telemetry['phase'] = 'organizing'
         w.update('正在让 AI 整理已读取的原文，并逐字核对引用')
         notes = research.validate_spans(await research.structured(a, 'sources',

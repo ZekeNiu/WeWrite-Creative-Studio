@@ -57,6 +57,10 @@ def network(monkeypatch):
     monkeypatch.setattr(browser_search,'public_url',allowed)
     monkeypatch.setattr(browser_search,'search',search)
     monkeypatch.setattr(materials,'from_url',read)
+    async def unavailable_native(s,*args):
+        if s['protocol']=='gemini': return await search_tools.gemini(s,*args)
+        raise ValueError('fixture native unavailable')
+    monkeypatch.setattr(search_tools,'native',unavailable_native)
     monkeypatch.setattr(providers,'generate',model)
     return called
 
@@ -68,10 +72,10 @@ def test_no_tavily_automatic_research_and_cache(client,network,column):
     done=wait(client,j);assert done['status']=='completed',done
     a=client.get('/api/articles/'+a['id']).json()
     assert a['research']['summary'] and a['sources'][0]['evidence_spans'][0]['verification']=='quote_matched'
-    assert a['sources'][0]['status']=='retrieved' and network==['google','bing','baidu','duckduckgo']
+    assert a['sources'][0]['status']=='retrieved' and network==['google']
     assert providers.service_for('research')['model']=='analysis'
     j=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json={'stage':'research','revision':a['revision'],'chain':False}).json()
-    assert wait(client,j)['status']=='completed' and network==['google','bing','baidu','duckduckgo']
+    assert wait(client,j)['status']=='completed' and network==['google']
 
 
 @pytest.mark.parametrize('protocol',['responses','anthropic'])
@@ -103,7 +107,7 @@ def test_failed_native_falls_back_without_repeating(client,network,monkeypatch):
         await worker.discover(['first','second'])
         return worker
     w=asyncio.run(execute())
-    assert len(calls)==1 and 'bing' in network and w.added
+    assert len(calls)==1 and 'google' in network and w.added
     assert any(u['stage']=='search' and u['status']=='unknown' for u in store.usage(a['id']))
 
 
@@ -153,6 +157,7 @@ def test_image_test_uses_node_override_without_price(client,monkeypatch):
 def test_limits_and_cancel_preserve_original(client,network,monkeypatch):
     c=providers.settings();c['search'].update(max_calls=1,max_pages=1);providers.save_settings(Settings.model_validate(c))
     a=article(client);j=store.create_job(a['id'],{'stage':'research'});w=research.Research(a,j['id'],'sources')
+    w.search_model=None  # Exercise the free channel's call/page caps.
     asyncio.run(w.discover(['q1','q2','q3']));assert w.calls==1 and w.pages==1
     store.update_job(j['id'],status='completed')
     async def slow(*args,**kwargs):await asyncio.sleep(5)

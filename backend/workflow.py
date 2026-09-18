@@ -168,7 +168,7 @@ async def run(job_id):
             store.update_job(job_id,stage=stage,message='正在'+LABELS.get(stage,{'revise':'修改选段','image':'生成图片','layout_advice':'分析排版'}.get(stage,stage)),partial='')
             store.event(job_id,'stage',stage=stage)
             if stage in ('topic','sources','outline','review','research'):
-                a,pending=await research.gather(a,job_id,stage,req.get('instruction','') if stage=='research' else '')
+                a,pending=await research.gather(a,job_id,stage,req.get('instruction','') if stage in ('sources','research') else '')
                 if pending:
                     store.update_job(job_id,status='completed',ended=store.now(),message='资料已保留；关键证据仍有缺口或冲突，请到素材查看')
                     break

@@ -7,7 +7,6 @@ from . import store
 from .public_network import public_url
 
 LOCK=asyncio.Lock()
-INTERACTIVE=None
 
 
 async def guard(route,lightweight=True):
@@ -40,7 +39,6 @@ async def launch(headless=True):
 @asynccontextmanager
 async def browser():
     async with LOCK:
-        if INTERACTIVE: raise ValueError('检索浏览器正在等待验证，请完成后点击“继续检索”')
         driver,context=await launch()
         try: yield context
         finally:
@@ -132,24 +130,3 @@ async def read(url):
                 raise ValueError('网页需要验证或未取得正文')
             return data
     except BrowserTimeout: raise ValueError('网页读取超时') from None
-
-
-async def open_verification(url):
-    global INTERACTIVE
-    if not await public_url(url): raise ValueError('只能打开公开来源网页')
-    async with LOCK:
-        if INTERACTIVE: return
-        driver,context=await launch(False)
-        try:
-            page=await context.new_page(); await page.goto(url,wait_until='domcontentloaded',timeout=25000)
-            INTERACTIVE=(driver,context)
-        except Exception:
-            await context.close(); await driver.stop(); raise ValueError('验证窗口打开失败，请重试') from None
-
-
-async def close_verification():
-    global INTERACTIVE
-    async with LOCK:
-        if INTERACTIVE:
-            driver,context=INTERACTIVE; INTERACTIVE=None
-            await context.close(); await driver.stop()

@@ -20,10 +20,10 @@ from .models import Settings,Brief,Layout,VisualSettings,ArticlePatch,JobRequest
 @asynccontextmanager
 async def lifespan(app):
     store.init()
+    providers.migrate_settings()
     yield
     for t in list(workflow.TASKS.values()): t.cancel()
     if workflow.TASKS: await asyncio.gather(*list(workflow.TASKS.values()),return_exceptions=True)
-    await browser_search.close_verification()
 
 
 app=FastAPI(title='WeWrite 本地工作台',lifespan=lifespan,docs_url=None,redoc_url=None)
@@ -125,20 +125,6 @@ async def test_native(value:dict|None=None):
     service=get_service(sid)
     return await capabilities.test(sid,CapabilityTest(model=value.get('model') or search['native_model'] or service['model'],
         kind='search',protocol=value.get('protocol') or search['native_protocol']))
-
-
-@app.post('/api/jobs/{id}/browser/open')
-async def verify_browser(id:str,value:dict):
-    urls=store.job(id).get('research',{}).get('blocked_urls',[])
-    url=value.get('url') or next(iter(urls),'')
-    if url not in urls: raise ValueError('请从本任务未能读取的来源中选择')
-    await browser_search.open_verification(url)
-    return {'message':'验证窗口已打开；完成后点击“验证完成”并重新开始该环节'}
-
-
-@app.post('/api/browser/close')
-async def finish_browser():
-    await browser_search.close_verification();return {'message':'验证环境已保存，可继续检索'}
 
 
 @app.post('/api/search/test')

@@ -119,7 +119,7 @@ class Research:
         self.seen_queries={x['query'] for x in self.log if x.get('query')};self.notes={}
         self.blocked=list(prior.get('blocked_urls',[]));self.added=[];self.started=time.monotonic();self.search_model=None
         self.telemetry={'candidates':0,'relevant':0,'fulltext':0,'abstracts':0,'phase':'retrieval'}
-        self.target=3
+        self.notes_key=None
         self.academic_needed=True
         self.attempted=list(prior.get('strategy',{}).get('attempted',[]))
         self.used=list(prior.get('strategy',{}).get('used',[]))
@@ -134,14 +134,14 @@ class Research:
         store.event(self.job_id,'research',message=message,calls=self.calls,pages=self.pages)
 
     def strategy(self):
-        return dict(preference=self.cfg.get('preference','auto'),allow_fallback=self.cfg.get('allow_fallback',True),
+        return dict(preference='native',allow_fallback=self.cfg.get('allow_fallback',True),
             attempted=self.attempted,used=self.used,issue=self.policy_issue)
 
     def unavailable(self,group):
         if group=='native':
             s=self.search_model
             if not s: return '尚未配置联网模型'
-            if s['protocol']=='chat' or store.capability(providers.fingerprint(s,'search'))['status']!='tested': return '所选模型联网接入方式尚未验证，请先在能力测试中验证'
+            if s['protocol']=='chat': return '所选模型尚未配置联网接入方式，请在模型卡片中设置'
             if s['protocol']=='gemini' and self.cfg.get('budget') is not None: return 'Gemini 可能展开多条付费查询，无法保证当前金额硬限额'
             if not self.price_allowed(s.get('search_price') if s.get('currency')=='CNY' else None): return '模型搜索价格未知或超出预算'
         elif group=='tavily':
@@ -152,12 +152,7 @@ class Research:
         return ''
 
     def web_order(self):
-        preference=self.cfg.get('preference','auto');fallback=self.cfg.get('allow_fallback',True)
-        groups=['native','tavily','browser']
-        if preference!='auto': groups=[preference]+[g for g in groups if g!=preference]
-        if not fallback:
-            groups=([next((g for g in groups if not self.unavailable(g)),groups[0])] if preference=='auto' else [preference])
-        return groups
+        return ['native','tavily','browser'] if self.cfg.get('allow_fallback',True) else ['native']
 
     def price_allowed(self,price):
         if price==0: return True
@@ -171,7 +166,7 @@ class Research:
         if channel in self.disabled or self.calls>=self.cfg['max_calls']: return []
         s=self.search_model
         if channel=='native':
-            if not s or s['protocol']=='chat' or store.capability(providers.fingerprint(s,'search'))['status']!='tested': return []
+            if not s or s['protocol']=='chat': return []
             if s['protocol']=='gemini' and self.cfg.get('budget') is not None:
                 self.update('Gemini 可展开多条付费查询，金额硬限额下改用免费渠道',channel=channel);return []
             price=s.get('search_price') if s.get('currency')=='CNY' else None
@@ -196,6 +191,7 @@ class Research:
             if channel=='native':
                 rows,meta=await search_tools.native(s,query,1)
                 self.calls+=max(0,meta['calls']-1)
+                if rows: store.capability(providers.fingerprint(s,'search'),dict(status='tested',sources=rows,queries=meta.get('queries',[]),protocol=s['protocol'],message='实际任务已取得联网工具记录'))
                 usage=meta.get('usage',{})
                 store.add_usage(self.a['id'],stage='research',job_id=self.job_id,model=s['model'],service=s['name'],
                     input_tokens=usage.get('input_tokens'),output_tokens=usage.get('output_tokens'),estimated_cost=None,status='completed',currency=s['currency'])
@@ -214,6 +210,7 @@ class Research:
             # Never replay an unknown paid request within this job.
             store.update_usage(record['id'],status='unknown',estimated_cost=0 if price==0 else None,seconds=round(time.monotonic()-started,2))
             self.disabled.add(channel)
+            if channel=='native': store.capability(providers.fingerprint(s,'search'),dict(status='failed',message='实际任务联网调用未完成，请查看任务记录'))
             self.update(CHANNEL_NAMES.get(channel,channel)+' 未完成，已有资料保留',channel=channel,reason=str(exc) if isinstance(exc,ValueError) else '连接或解析失败')
             if channel in ('google','bing','baidu','duckduckgo'):
                 self.blocked.append(browser_search.search_url(query,channel))
@@ -256,7 +253,7 @@ class Research:
                             self.blocked.append(fullurl)
                             # Render dynamic HTML only; PDFs, login/paywalls and verification
                             # challenges move to another public copy instead of repeated access.
-                            if self.cfg['browser_enabled'] and not fullurl.lower().endswith('.pdf') and not any(k in str(exc) for k in ('验证','HTTP 401','HTTP 403','HTTP 429')):
+                            if self.cfg['page_render_enabled'] and not fullurl.lower().endswith('.pdf') and not any(k in str(exc) for k in ('验证','HTTP 401','HTTP 403','HTTP 429')):
                                 try:
                                     data=await browser_search.read(fullurl)
                                     text=data['text'][:200000]
@@ -272,7 +269,7 @@ class Research:
                 try: src=await materials.from_url(url)
                 except Exception:
                     try:
-                        if not self.cfg['browser_enabled']: raise ValueError('浏览器读取已关闭')
+                        if not self.cfg['page_render_enabled']: raise ValueError('动态网页读取已关闭')
                         data=await browser_search.read(url)
                         src=materials.source(data['title'],data['text'][:200000],data['url'],'web')
                     except Exception:
@@ -312,51 +309,54 @@ class Research:
         if duplicate(src,existing): return None
         return src
 
+    async def assess(self):
+        key=digest(context(self.a,self.stage))
+        if self.notes_key==key: return
+        self.update('正在核对关键结论与原文证据')
+        self.notes=validate_spans(await structured(self.a,self.stage,
+            '整理核心发现及原文支持关系；evidence.quote 必须逐字复制来源中的连续片段，claim 写支持的判断，boundary 写适用范围。'
+            '核对当前任务需要的全部关键问题；只列阻碍继续写作的实质 gaps 和 conflicts，不为凑篇数补查。'
+            '只读到摘要不得推断全文；没有实质缺口时 followup_queries 为空。',ResearchNotes,self.job_id),self.a['sources'])
+        if not self.notes['evidence'] and not self.notes['gaps']:
+            self.notes['gaps'].append('尚未取得可定位的原文证据，请补充材料或继续检索。')
+        self.notes_key=key
+
+    def sufficient(self):
+        return bool(self.notes.get('evidence')) and not self.notes.get('gaps') and not self.notes.get('conflicts')
+
     async def discover(self,queries):
         for query in queries:
-            domain=(self.a['brief']['domain']+' '+self.a['brief']['column']+' '+query).lower()
-            medical=any(x in domain for x in ('运动','健康','医学','health','sport','medical','exercise','clinical','cardiovascular'))
             if query in self.seen_queries: continue
             if self.calls>=self.cfg['max_calls'] or self.pages>=self.cfg['max_pages']: break
-            self.seen_queries.add(query)
-            self.query_readable=set()
-            groups=self.web_order();preference=self.cfg.get('preference','auto')
-            groups=(['academic']+groups if preference=='auto' else groups[:1]+['academic']+groups[1:])
-            readable=0
-            for group in groups:
-                if group=='academic':
-                    scholarly=[]
-                    if self.cfg['academic_enabled'] and self.academic_needed:
-                        scholarly=await self.channel('openalex',query)
-                        if not scholarly: scholarly=await self.channel('crossref',query)
-                        if medical and self.cfg['pubmed_enabled']: scholarly+=await self.channel('pubmed',query)
-                        if self.cfg['arxiv_enabled'] and (re.search(r'\b(?:ai|physics|computer)\b',domain) or any(k in domain for k in ('人工智能','machine learning','数学','物理'))):
-                            scholarly+=await self.channel('arxiv',query)
-                        count=len(scholarly);scholarly=academic.merge_records(scholarly)
-                        self.update(f'学术发现 {count} 条，合并后 {len(scholarly)} 篇；覆盖受渠道收录与限额约束',channel='academic')
-                    elif not self.cfg['academic_enabled'] and medical and self.cfg['pubmed_enabled']: scholarly=await self.channel('pubmed',query)
-                    channels=['academic']
-                else:
-                    if readable>=self.target: continue
-                    unavailable=self.unavailable(group)
-                    if unavailable:
-                        self.disabled.update(WEB_GROUPS[group])
-                        self.update('未使用 '+('浏览器' if group=='browser' else CHANNEL_NAMES[group])+'：'+unavailable,channel=group,skipped=True)
-                        if not self.cfg.get('allow_fallback',True) and preference!='auto':
-                            self.policy_issue=unavailable+'；自动切换已关闭，请调整设置后继续。'
-                            self.update(self.policy_issue)
-                        continue
-                    channels=WEB_GROUPS[group]
-                    if group!=next((g for g in groups if g!='academic'),group):
-                        self.update('前面的检索结果不足，正在切换到 '+('浏览器搜索' if group=='browser' else CHANNEL_NAMES[group]))
-                group_useful=0
-                for channel in channels:
-                    if readable>=self.target and group!='academic': break
-                    gained=await self.collect(scholarly if channel=='academic' else await self.channel(channel,query),query,channel)
-                    readable+=gained;group_useful+=gained
-                if group==preference and not self.cfg.get('allow_fallback',True):
-                    self.policy_issue='' if group_useful else '首选搜索方式未取得足够的可读资料；自动切换已关闭，请补充材料或调整设置。'
-                    if self.policy_issue: self.update(self.policy_issue)
+            self.seen_queries.add(query);self.query_readable=set()
+            for group in self.web_order():
+                unavailable=self.unavailable(group)
+                if unavailable:
+                    self.disabled.update(WEB_GROUPS[group])
+                    self.update('未使用 '+('网页搜索' if group=='browser' else CHANNEL_NAMES[group])+'：'+unavailable,channel=group,skipped=True)
+                    if group=='native' and not self.cfg.get('allow_fallback',True): self.policy_issue=unavailable+'；后备搜索已关闭。'
+                    continue
+                for channel in WEB_GROUPS[group]:
+                    rows=await self.channel(channel,query)
+                    if not rows: continue
+                    await self.collect(rows,query,channel)
+                    await self.assess()
+                    if self.sufficient(): self.policy_issue='';return
+            # Academic discovery is an explicit, conditional supplement, never a mandatory pass.
+            if self.academic_needed and self.cfg['academic_enabled']:
+                domain=(self.a['brief']['domain']+' '+self.a['brief']['column']+' '+query).lower()
+                medical=any(x in domain for x in ('运动','健康','医学','health','sport','medical','exercise','clinical','cardiovascular'))
+                scholarly=await self.channel('openalex',query)
+                if not scholarly: scholarly=await self.channel('crossref',query)
+                if medical and self.cfg['pubmed_enabled']: scholarly+=await self.channel('pubmed',query)
+                if self.cfg['arxiv_enabled'] and (re.search(r'\b(?:ai|physics|computer)\b',domain) or any(k in domain for k in ('人工智能','machine learning','数学','物理'))):
+                    scholarly+=await self.channel('arxiv',query)
+                if scholarly:
+                    await self.collect(academic.merge_records(scholarly),query,'academic')
+                    await self.assess()
+                    if self.sufficient(): self.policy_issue='';return
+            if not self.cfg.get('allow_fallback',True) and not self.policy_issue:
+                self.policy_issue='模型联网尚未取得足够依据；后备搜索已关闭，可补充材料或调整设置。'
 
     async def collect(self,rows,query,channel):
         readable=0
@@ -385,7 +385,6 @@ class Research:
             known=src or next((s for s in self.a['sources'] if s.get('selected') and academic.same(s,r)),None)
             if known and known['id'] not in self.query_readable and (known['status']=='retrieved' or (known['status']=='abstract_only' and not self.a.get('diagnostic'))):
                 readable+=1;self.query_readable.add(known['id'])
-            if self.a.get('diagnostic') and readable>=self.target: break
         self.update(f'已读取 {len(self.added)} 篇资料，正在筛选依据')
         return readable
 
@@ -402,12 +401,8 @@ class Research:
             queries=plan['queries'] or [self.a['brief']['topic'] or self.a['brief']['domain'] or self.a['brief']['column']]
             await self.discover(queries)
         for round_index in range(self.cfg['max_rounds']+1):
-            self.update('正在核对关键结论与原文证据')
-            self.notes=validate_spans(await structured(self.a,self.stage,
-                '整理核心发现及原文支持关系；evidence.quote 必须逐字复制来源中的连续片段，claim 写该片段支持的判断，boundary 写适用范围/局限。'
-                '列出阻碍当前主题继续写作的实质 gaps 和 conflicts，普通延伸阅读不算缺口；没有缺口时 followup_queries 为空。'
-                '只读到摘要时不得推断全文细节；不要把重复转载算作独立证据。',ResearchNotes,self.job_id),self.a['sources'])
-            if not self.notes['gaps'] and not self.notes['conflicts']: break
+            await self.assess()
+            if self.sufficient(): break
             if self.rounds>=self.cfg['max_rounds'] or self.calls>=self.cfg['max_calls'] or self.pages>=self.cfg['max_pages']: break
             queries=[q for q in self.notes['followup_queries'] if q not in self.seen_queries]
             if not queries: break
@@ -427,15 +422,15 @@ class Research:
 
 
 async def gather(a,job_id,stage,query=''):
-    if not providers.settings()['search']['enabled'] and stage!='research': return a,False
+    if not providers.settings()['search']['enabled'] and stage!='research' and not query: return a,False
     original=copy.deepcopy(a);worker=Research(copy.deepcopy(a),job_id,stage)
     search_signature=digest([worker.cfg,providers.fingerprint(worker.search_model,'search') if worker.search_model else None])
     # Repeated runs with identical inputs reuse completed evidence, not paid searches.
     key=digest([stage,a['brief'],a['content'] if stage=='review' else '',a['outline'],[(s['id'],s['selected'],s['text'],s.get('use','')) for s in a['sources']],query,search_signature])
     previous=a.get('research',{})
-    if previous.get('input_key')==key and not previous.get('pending') and time.time()-previous.get('timestamp',0)<3600: return a,False
+    if previous.get('input_key')==key and not previous.get('pending') and not previous.get('stale') and time.time()-previous.get('timestamp',0)<3600: return a,False
     pending=await worker.run(query)
-    result={'input_key':key,'timestamp':time.time(),'stage':stage,'pending':pending,'summary':worker.notes.get('summary',''),
+    result={'input_key':key,'timestamp':time.time(),'stage':stage,'pending':pending,'stale':False,'summary':worker.notes.get('summary',''),
             'gaps':worker.notes.get('gaps',[]),'conflicts':worker.notes.get('conflicts',[]),'evidence':worker.notes.get('evidence',[]),
             'calls':worker.calls,'pages':worker.pages,'rounds':worker.rounds,'log':worker.log,'blocked_urls':list(dict.fromkeys(worker.blocked)), 'job_id':job_id,'strategy':worker.strategy()}
     def change(v):
