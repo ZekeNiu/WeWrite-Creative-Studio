@@ -163,3 +163,23 @@ def test_page_render_independent_of_search_engines(client,network,monkeypatch):
     w=worker('native');w.cfg.update(browser_enabled=True,page_render_enabled=False)
     result=asyncio.run(w.read(dict(url='https://example.org/another',title='动态页')))
     assert len(seen)==1 and result['status']=='unreadable'
+
+
+def test_evidence_assessment_includes_supplemental_question(client,network,monkeypatch):
+    w=worker('native');seen=[];original=research.structured
+    async def structured(a,stage,instruction,schema,job_id,candidates=None):
+        seen.append(instruction)
+        return await original(a,stage,instruction,schema,job_id,candidates)
+    monkeypatch.setattr(research,'structured',structured)
+    asyncio.run(w.assess());count=len(seen)
+    asyncio.run(w.assess());assert len(seen)==count
+    w.requirements='补充运动禁忌';w.questions=['哪些人不适用？']
+    asyncio.run(w.assess())
+    assert len(seen)==count+1 and '补充运动禁忌' in seen[-1] and '哪些人不适用？' in seen[-1]
+
+
+def test_material_or_brief_edit_marks_saved_research_stale(client):
+    a=store.create_article({'topic':'原主题'})
+    a=store.save_article(a['id'],a['revision'],lambda x:x.update(research={'stage':'sources','stale':False,'summary':'历史结论'}),'fixture')
+    a=store.save_article(a['id'],a['revision'],lambda x:x.update(title='新主题'),'edit')
+    assert a['research']['stale'] and a['research']['summary']=='历史结论'
