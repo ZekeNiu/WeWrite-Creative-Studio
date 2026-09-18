@@ -52,6 +52,8 @@ def network(monkeypatch):
             result={'summary':'已核对适用条件','evidence':[{'source_id':src[0]['id'],'quote':'研究只适用于给定条件。','claim':'只能在研究范围内解释','boundary':'不能扩大因果'}] if src else [],
                     'gaps':[] if src else ['没有可用依据'],'conflicts':[],'followup_queries':[]}
         return json.dumps(result,ensure_ascii=False),{'model':s['model'],'service':s['name'],'estimated_cost':None,'status':'completed'}
+    from backend import public_network
+    monkeypatch.setattr(public_network,'public_url',allowed)
     monkeypatch.setattr(browser_search,'public_url',allowed)
     monkeypatch.setattr(browser_search,'search',search)
     monkeypatch.setattr(materials,'from_url',read)

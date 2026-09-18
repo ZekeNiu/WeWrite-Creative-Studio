@@ -13,8 +13,8 @@ from fastapi.responses import JSONResponse,FileResponse,Response,StreamingRespon
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import ValidationError
-from . import store,providers,security,materials,rendering,workflow,prompts,search_tools,browser_search,search_check,bibliography,outputs
-from .models import Settings,Brief,Layout,VisualSettings,ArticlePatch,JobRequest,STAGES,OutlineResult,ImagePlan
+from . import store,providers,security,materials,rendering,workflow,prompts,search_tools,browser_search,search_check,bibliography,outputs,capabilities
+from .models import Settings,Brief,Layout,VisualSettings,ArticlePatch,JobRequest,STAGES,OutlineResult,ImagePlan,CapabilityTest
 
 
 @asynccontextmanager
@@ -91,32 +91,22 @@ def get_service(id,require_model=True):
 async def model_list(id:str): return {'models':await providers.list_models(get_service(id,False))}
 
 
+@app.post('/api/services/{id}/capability-tests')
+async def test_capability(id:str,value:CapabilityTest):
+    return await capabilities.test(id,value)
+
+
 @app.post('/api/services/{id}/test')
 async def test_service(id:str):
-    s=get_service(id); s['max_tokens']=256
-    text,usage=await providers.generate(s,'你是连接测试助手。','请只回复：连接成功')
-    cfg=providers.settings()
-    for row in cfg['services']:
-        if row['id']==id: row['status']='tested'
-    store.set_settings(cfg)
-    store.capability(providers.fingerprint(s,'text'),{'status':'tested'})
-    return {'message':'文本调用成功','usage':usage,'reply':text[:100]}
+    s=get_service(id)
+    return await capabilities.test(id,CapabilityTest(model=s['model'],kind='text'))
 
 
 @app.post('/api/services/{id}/test-image')
 async def test_image(id:str):
     s=providers.effective_service('image')
     if id!=s['id']: raise ValueError('请在节点分工中选择图片服务，再测试实际图片节点')
-    blob=await providers.image_generate(s,'A single green leaf on an ivory background, minimal editorial illustration, no text','1024x1024')
-    img=Image.open(io.BytesIO(blob)); img.load()
-    dest=outputs.diagnostics()
-    filename=store.uid()+'.png';img.convert('RGB').save(dest/filename)
-    cfg=providers.settings()
-    for row in cfg['services']:
-        if row['id']==id: row['image_status']='tested'
-    store.set_settings(cfg)
-    store.capability(providers.fingerprint(s,'image'),{'status':'tested','image_url':'/api/connection-tests/'+filename})
-    return {'message':'收到实际图片，生图连接测试通过','width':img.width,'height':img.height,'image_url':'/api/connection-tests/'+filename}
+    return await capabilities.test(id,CapabilityTest(model=s['model'],kind='image'))
 
 
 @app.get('/api/connection-tests/{filename}')
@@ -130,22 +120,11 @@ def connection_image(filename:str):
 
 @app.post('/api/search/native/test')
 async def test_native(value:dict|None=None):
-    cfg=providers.settings()
-    if value:
-        protocol=value.get('protocol',cfg['search']['native_protocol'])
-        if protocol not in ('inherit','responses','anthropic','gemini'): raise ValueError('请选择一种联网接入方式')
-        cfg['search'].update(native_service_id=value.get('service_id',cfg['search']['native_service_id']),native_model=value.get('model',cfg['search']['native_model']),native_protocol=protocol)
-    s=providers.effective_service('search',cfg);key=providers.fingerprint(s,'search')
-    if s['protocol']=='chat':
-        return {'status':'unused','message':'当前接入方式未验证；可独立选择联网接入方式，或测试工作台搜索。'}
-    try:
-        rows,meta=await search_tools.native(s,'查找世界卫生组织身体活动指南的官方网页',1)
-        if not any([await browser_search.public_url(r['url']) for r in rows]): raise ValueError('搜索未返回可访问的公开来源')
-        store.capability(key,{'status':'tested','tested_at':store.now(),'protocol':s['protocol'],'sources':rows,'queries':meta.get('queries',[]),'usage':meta})
-        store.add_usage('connection-search',stage='search',model=s['model'],service=s['name'],status='completed',estimated_cost=None,calls=meta['calls'],seconds=meta['seconds'])
-        return {'message':f'取得真实搜索工具记录及 {len(rows)} 个来源，模型自带搜索已验证','sources':rows,'usage':meta}
-    except ValueError:
-        store.capability(key,{'status':'failed'});raise
+    value=value or {};cfg=providers.settings();search=cfg['search']
+    sid=value.get('service_id') or search['native_service_id'] or cfg['default_service']
+    service=get_service(sid)
+    return await capabilities.test(sid,CapabilityTest(model=value.get('model') or search['native_model'] or service['model'],
+        kind='search',protocol=value.get('protocol') or search['native_protocol']))
 
 
 @app.post('/api/jobs/{id}/browser/open')

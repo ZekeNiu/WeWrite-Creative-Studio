@@ -158,6 +158,7 @@ class SearchConfig(BaseModel):
     openalex_key: str | None = None
     openalex_key_set: bool = False
     browser_enabled: bool = True
+    page_render_enabled: bool = True
     pubmed_enabled: bool = True
     tavily_enabled: bool = False
     tavily_price: float | None = Field(None, ge=0)
@@ -195,11 +196,24 @@ class SearchSelection(BaseModel):
     reason: str = ''
 
 
+class ModelConnection(BaseModel):
+    service_id: str
+    model: str
+    search_protocol: Literal['inherit', 'responses', 'anthropic', 'gemini'] = 'inherit'
+
+
+class CapabilityTest(BaseModel):
+    model: str = Field(min_length=1)
+    kind: Literal['text', 'image', 'search']
+    protocol: Literal['inherit', 'responses', 'anthropic', 'gemini'] | None = None
+
+
 class Settings(BaseModel):
     services: list[Service] = []
     default_service: str = ''
     routes: dict[str, Route] = {}
     search: SearchConfig = SearchConfig()
+    model_connections: list['ModelConnection'] = Field(default_factory=list)
     default_auto: dict[str, bool] = {s: False for s in STAGES}
 
 

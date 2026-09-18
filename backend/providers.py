@@ -26,6 +26,8 @@ def settings():
                 value['route_capabilities'][kind].update(status='unused',reason='当前协议不使用模型自带搜索；工作台可独立检索')
         except ValueError:
             value['route_capabilities'][kind]={'status':'unconfigured'}
+    from .capabilities import cards
+    value['model_capabilities']=cards(value)
     return value
 
 
@@ -40,7 +42,10 @@ def effective_service(kind,cfg=None):
     s=next((dict(x) for x in cfg['services'] if x['id']==sid),None)
     if not s: raise ValueError('请先选择该能力使用的模型服务')
     s['model']=(route.get('native_model') if kind=='search' else route.get('model')) or s['model']
-    if kind=='search' and route.get('native_protocol','inherit')!='inherit': s['protocol']=route['native_protocol']
+    if kind=='search':
+        from .capabilities import search_protocol
+        protocol=search_protocol(cfg,s['id'],s['model'])
+        if protocol!='inherit': s['protocol']=protocol
     s['secret']=security.key(s['id'])
     if not s['secret'] or not s['model']: raise ValueError('请先填写 Key 和模型名称')
     return s

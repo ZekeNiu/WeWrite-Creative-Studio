@@ -12,3 +12,8 @@
 .search-check-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:16px 0}.search-check-steps>div{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid #e4e7e5;border-radius:10px}.search-evidence{padding:14px 0;border-top:1px solid #e4e7e5;overflow-wrap:anywhere}.search-evidence blockquote{margin:12px 0;padding:10px 14px;background:#f4f7f5;border-left:3px solid #53937d;font-size:13px}.search-check details p{overflow-wrap:anywhere}@media(max-width:650px){.search-check-steps{grid-template-columns:1fr}}
 
 .editor-references{padding:20px 28px;border-top:1px solid #e5e7eb;font-size:13px;line-height:1.7;overflow-wrap:anywhere}.editor-references .text-button{display:inline;text-align:left;font-weight:400;white-space:normal}.source-citation{cursor:pointer}.editor-toolbar{flex-wrap:wrap}.source-full{overflow-wrap:anywhere}
+/* Model cards keep each capability and its own result together. */
+.model-capabilities{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:18px 0}
+.model-capability{display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0;padding:12px;background:var(--bg,#f7f7f2);border-radius:10px}
+.model-capability p{overflow-wrap:anywhere;margin:0}.model-id{overflow-wrap:anywhere;font-weight:600}
+@media(max-width:760px){.model-capabilities{grid-template-columns:1fr}}
