@@ -1,11 +1,12 @@
 """UI acceptance against the isolated qa_v14_app server (port 8894)."""
 import io
 import json
+import os
 import zipfile
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 
-BASE='http://127.0.0.1:8894'
+BASE=os.environ.get('WEWRITE_QA_URL','http://127.0.0.1:8894')
 OUT=Path('output/diagnostics')
 OUT.mkdir(parents=True,exist_ok=True)
 (OUT/'screenshots').mkdir(exist_ok=True)

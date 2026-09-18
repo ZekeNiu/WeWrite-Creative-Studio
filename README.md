@@ -10,7 +10,9 @@ Windows 本地公众号创作工作台。支持选题、资料整理、大纲、
 
 默认先使用已有资料，再由模型联网查找缺失依据；必要时使用已启用的后备渠道。素材支持 PDF、Word、Markdown、TXT、BibTeX、RIS、网页和粘贴文字。
 
-完整操作说明见 [使用说明](使用说明.md)。
+完整操作说明见 [使用说明](使用说明.md)，版本记录见 [CHANGELOG](CHANGELOG.md)。
+
+工作流暂停时可逐项核实、补充材料或选择保留边界后继续；前置条件不足的生成操作会显示处理入口。
 
 ## 输出与数据
 
@@ -31,7 +33,7 @@ npm run build
 .venv/Scripts/python.exe -m pytest -q
 ```
 
-`dist/` 随源码提交以支持双击运行；修改前端后需重新构建。测试默认使用临时数据目录。`tools/qa_v14_app.py` 仅用于模拟界面验收，不由正式启动器加载。
+`dist/` 随源码提交以支持双击运行；修改前端后需重新构建。测试默认使用临时数据目录。`tools/qa_v14_app.py` 和 `tools/qa_v141_app.py` 仅用于模拟界面验收，不由正式启动器加载。
 
 旧输出整理：先执行 `.venv/Scripts/python.exe tools/organize_outputs.py` 查看清单，再附加 `--apply` 执行。只移动已知产物，不覆盖已有目标文件。
 

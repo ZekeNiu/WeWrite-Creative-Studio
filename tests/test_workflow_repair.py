@@ -38,6 +38,8 @@ def test_web_whitespace_match_is_original_not_paraphrase():
     assert actual['evidence'][0]['offset']==0
     actual=research.validate_spans({'gaps':[],'evidence':[{'source_id':'S1','quote':'The study proved causality.','claim':'causal'}]},[src])
     assert not actual['evidence']
+    actual=research.validate_spans({'gaps':[],'evidence':[{'source_id':'S1','quote':'The study found anassociation.','claim':'different words'}]},[src])
+    assert not actual['evidence']
 
 
 def paused_article(client):

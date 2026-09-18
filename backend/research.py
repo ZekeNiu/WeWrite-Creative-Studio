@@ -109,7 +109,11 @@ def pdf_match_text(text,extracted=True):
     breaks={m.start()+1 for m in re.finditer(r'[A-Za-z]-\s*\n\s*[a-z]',text)} if extracted else set()
     chars=[];positions=[]
     for i,c in enumerate(text):
-        if c.isspace() or i in breaks: continue
+        if c.isspace():
+            if not extracted and (not chars or chars[-1]!=' '):
+                chars.append(' ');positions.append(i)
+            continue
+        if i in breaks: continue
         value=ligatures.get(c,c) if extracted else c
         chars.extend(value);positions.extend([i]*len(value))
     return ''.join(chars),positions
