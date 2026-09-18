@@ -89,8 +89,8 @@ def migrate_settings():
 
 def service_for(stage, override=None):
     cfg=settings(); route=cfg.get('routes',{}).get(stage,{})
-    if stage in ('research','vision') and not route.get('service_id'):
-        inherited=cfg.get('routes',{}).get('sources' if stage=='research' else 'visual',{})
+    if stage=='research' and not route.get('service_id'):
+        inherited=cfg.get('routes',{}).get('sources',{})
         route={**inherited,**{k:v for k,v in route.items() if v}}
     sid=override or route.get('service_id') or cfg.get('default_service')
     s=next((s.copy() for s in cfg['services'] if s['id']==sid),None)
@@ -138,7 +138,7 @@ def extract_json_text(d, protocol):
     return d.get('output_text') or ''.join(c.get('text','') for x in d.get('output',[]) for c in x.get('content',[]) if c.get('type')=='output_text')
 
 
-async def generate(s, system, prompt, emit=None, images=None):
+async def generate(s, system, prompt, emit=None):
     protocol=s['protocol']; started=time.monotonic(); text=''; usage={}; completed=False; truncated=False
     common={'model':s['model'],'stream':True}
     if protocol=='chat':
@@ -147,15 +147,6 @@ async def generate(s, system, prompt, emit=None, images=None):
         path='responses'; body=dict(common,instructions=system,input=prompt,max_output_tokens=s.get('max_tokens',8000))
     else:
         path='messages'; body=dict(common,system=system,messages=[{'role':'user','content':prompt}],max_tokens=s.get('max_tokens',8000))
-    if images:
-        if len(images)>12: raise ValueError('单次最多检查 12 张候选图片')
-        encoded=[base64.b64encode(blob).decode('ascii') for blob in images]
-        if protocol=='chat':
-            body['messages'][-1]['content']=[{'type':'text','text':prompt}]+[{'type':'image_url','image_url':{'url':'data:image/png;base64,'+b}} for b in encoded]
-        elif protocol=='responses':
-            body['input']=[{'role':'user','content':[{'type':'input_text','text':prompt}]+[{'type':'input_image','image_url':'data:image/png;base64,'+b} for b in encoded]}]
-        else:
-            body['messages'][-1]['content']=[{'type':'text','text':prompt}]+[{'type':'image','source':{'type':'base64','media_type':'image/png','data':b}} for b in encoded]
     if s.get('temperature') is not None: body['temperature']=s['temperature']
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(240,connect=20)) as client:
@@ -220,7 +211,7 @@ async def list_models(s):
     except httpx.HTTPError: raise ValueError('读取模型列表失败；可以手动填写模型名称') from None
 
 
-async def image_generate(s, prompt, size, emit=None, usage_out=None):
+async def image_generate(s, prompt, size, emit=None):
     body={'model':s['model'],'prompt':prompt,'n':1,'size':size,'response_format':'b64_json','stream':True}
     final=None
     try:
@@ -237,10 +228,6 @@ async def image_generate(s, prompt, size, emit=None, usage_out=None):
                 else: final=json.loads(await r.aread())
             if not final: raise ValueError('图片流未返回最终图片，不会把中间预览当作成功')
             item=(final.get('data') or [final])[0]
-            if usage_out is not None:
-                usage=final.get('usage') or item.get('usage') or {}
-                for name in ('input_tokens','output_tokens','total_tokens','input_tokens_details','output_tokens_details'):
-                    if name in usage: usage_out[name]=usage[name]
             if item.get('b64_json'): return base64.b64decode(item['b64_json'],validate=True)
             if item.get('url'):
                 from .materials import fetch_bytes

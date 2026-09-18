@@ -28,7 +28,7 @@ async def search(query,engine='bing'):
 
 async def native(s,query,limit=1):return await search(query,'native'),{'calls':1,'seconds':.01,'usage':{'input_tokens':20,'output_tokens':30}}
 async def read(url):return materials.source('模拟原始研究','研究只适用于给定条件。'+url+'\n这是供界面验收使用的模拟材料。'*20,url,'web')
-async def image(s,*args,**kwargs):
+async def image(s,*args):
     out=io.BytesIO();Image.new('RGB',(256,256),'#91bba6').save(out,'PNG');return out.getvalue()
 async def public(url):return url.startswith('https://fixture.example.org/')
 providers.generate=generate

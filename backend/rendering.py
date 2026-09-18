@@ -7,7 +7,7 @@ from pathlib import Path
 import bleach
 from bleach.css_sanitizer import CSSSanitizer
 from bs4 import BeautifulSoup
-from . import store, bibliography, visuals
+from . import store, bibliography
 
 THEMES=store.ROOT/'vendor/wewrite/src/wewrite/toolkit/themes'
 THEME_LABELS={'bauhaus':'包豪斯','bold-green':'墨绿商务','bold-navy':'深蓝商务','bytedance':'清新科技',
@@ -37,34 +37,25 @@ def markdown(a, export=False):
     content,refs,unknown=bibliography.citations(a['content'],a['sources'])
     for im in a['images']:
         if not im.get('selected',True): continue
-        if not visuals.rights_ok(im) or visuals.location_error(a,im): continue
         url=f'images/{im["filename"]}' if export else f'/api/articles/{a["id"]}/assets/{im["filename"]}'
-        if not export and im.get('role')=='cover': url+=f'?cover=true&revision={a["revision"]}'
         caption=im.get('caption','').replace(']','')
         block=f'\n\n![{caption}]({url})\n\n'
         if caption: block+='*'+caption.replace('*','\\*')+'*\n\n'
-        if visuals.origin(im)=='web':
-            credit=' · '.join(str(x) for x in (im.get('author'),im.get('rights',{}).get('license')) if x)
-            source=im.get('source_url','')
-            if source: block+='图片来源：['+(credit or '原始页面').replace('[','').replace(']','')+']('+source.replace(')','%29')+')\n\n'
-            license_url=im.get('rights',{}).get('url','')
-            if license_url.startswith(('http://','https://')): block+='[使用条件]('+license_url.replace(')','%29')+')\n\n'
         heading=im.get('after_heading','')
         if im.get('role')=='cover': content=block+content
         elif heading:
             matches=list(re.finditer(r'^#{1,6}\s+(.+)$',content,re.M))
-            candidates=[i for i,m in enumerate(matches) if m.group(1).strip()==heading.strip()]
-            target=candidates[0] if len(candidates)==1 else next((i for i in candidates if i==im.get('section_index')),None)
+            target=next((i for i,m in enumerate(matches) if m.group(1).strip()==heading.strip()),None)
             if target is not None:
                 pos=matches[target+1].start() if target+1<len(matches) else len(content)
                 content=content[:pos]+block+content[pos:]
-            # Missing/ambiguous anchors are surfaced by visual_status and blocked at export.
+            else: content+=block
         else: content+=block
     if a['layout']['author']: content+='\n\n'+a['layout']['author']
     provenance=[]
     if any(u.get('stage') in ('write','revise','review') and u.get('status')=='completed' for u in store.usage(a['id'])):
         provenance.append('本文使用 AI 辅助创作或编辑。')
-    if any(visuals.origin(im)=='generated' and im.get('selected',True) for im in a['images']): provenance.append('部分配图由 AI 生成。')
+    if any(im.get('prompt') and im.get('selected',True) for im in a['images']): provenance.append('部分配图由 AI 生成。')
     if provenance: content+='\n\n'+''.join(provenance)
     if unknown: content+='\n\n引用待关联：'+', '.join(unknown)
     if refs:
@@ -90,20 +81,13 @@ def render(a, export=False):
 
 
 def export_zip(a):
-    visuals.export_guard(a)
     result=render(a,True); output=io.BytesIO()
     with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as z:
         z.writestr('文章.md',result['markdown']); z.writestr('排版.html',result['html'])
         z.writestr('来源清单.json',json.dumps(a['sources'],ensure_ascii=False,indent=2))
-        selected=[im for im in a['images'] if im.get('selected',True)]
-        z.writestr('图片来源清单.json',json.dumps([{k:im.get(k) for k in ('id','filename','role','caption','after_heading','origin','source_url','original_url','original_caption','author','rights','rights_basis','check','manual_approved')} for im in selected],ensure_ascii=False,indent=2))
         z.writestr('使用说明.txt','打开排版.html 查看完整排版。复制正文到公众号编辑器后，请按图示位置上传 images 中的本地图片。\n审核状态：'+a['stages']['review']+'\nAI 审核只作辅助，请最终核对正文与引用。')
         for im in a['images']:
             if im.get('selected',True):
                 p=store.article_dir(a['id'])/'assets'/im['filename']
-                if p.is_file():
-                    z.writestr('images/'+im['filename'],visuals.image_bytes(a,im,crop=im.get('role')=='cover'))
-                    if im.get('role')=='cover':
-                        z.writestr('封面.png',visuals.image_bytes(a,im,crop=True))
-                        z.write(p,'original-images/'+im['filename'])
+                if p.is_file(): z.write(p,'images/'+im['filename'])
     return output.getvalue()

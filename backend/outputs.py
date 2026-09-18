@@ -6,7 +6,6 @@ import re
 import tempfile
 import zipfile
 import io
-import time
 from datetime import datetime
 from pathlib import Path
 from . import store, rendering
@@ -57,12 +56,7 @@ def archive(a):
                     dest=p/name;dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(data)
                 (p/info['files']['zip']).write_bytes(package)
                 (p/'manifest.json').write_text(json.dumps(info,ensure_ascii=False,indent=2),'utf-8')
-                for attempt in range(3):
-                    try:
-                        p.rename(folder);break
-                    except PermissionError:
-                        if attempt==2: raise
-                        time.sleep(.1*(attempt+1))
+                p.rename(folder)
             return dict(info,path=str(folder))
         except OSError as exc:
             raise ValueError('文章归档失败，请检查输出目录权限和磁盘空间；已有版本未被覆盖') from exc

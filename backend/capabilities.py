@@ -38,14 +38,14 @@ def cards(cfg):
     for role in ROUTES:
         route=cfg['routes'].get(role,{})
         sid=route.get('service_id') or cfg['default_service']
-        if role in ('research','vision') and not route.get('service_id'):
-            inherited=cfg['routes'].get('sources' if role=='research' else 'visual',{});sid=inherited.get('service_id') or cfg['default_service']
+        if role=='research' and not route.get('service_id'):
+            inherited=cfg['routes'].get('sources',{});sid=inherited.get('service_id') or cfg['default_service']
             model=route.get('model') or inherited.get('model','')
         else: model=route.get('model','')
         add(sid,model,role)
     add(cfg['search']['native_service_id'] or cfg['default_service'],cfg['search']['native_model'],'search')
     for card in rows.values():
-        for kind in ('text','image','search','vision'):
+        for kind in ('text','image','search'):
             try:
                 s=resolve(cfg,card['service_id'],card['model'],kind)
                 value=store.capability(providers.fingerprint(s,kind))
@@ -72,8 +72,6 @@ async def test(sid,request):
             img=Image.open(io.BytesIO(blob));img.load();filename=store.uid()+'.png'
             img.convert('RGB').save(outputs.diagnostics()/filename)
             result=dict(message='收到实际图片，生图连接测试通过',width=img.width,height=img.height,image_url='/api/connection-tests/'+filename)
-        elif kind=='vision':
-            result=await vision_probe(s)
         else:
             rows,meta=await search_tools.native(s,'查找世界卫生组织身体活动指南的官方网页',1)
             if not any([await public_network.public_url(r['url']) for r in rows]): raise ValueError('搜索未返回公开来源')
@@ -94,22 +92,3 @@ async def test(sid,request):
         if s['secret']: message=message.replace(s['secret'],'[已隐藏]')
         store.capability(key,dict(status='failed',message=message,model=s['model'],protocol=s['protocol']))
         raise ValueError(message) from None
-
-
-async def vision_probe(s):
-    """Randomized visual information absent from the text prompt."""
-    import secrets
-    from PIL import ImageDraw
-    from .structured_output import parse
-    from pydantic import BaseModel
-    class Answer(BaseModel):
-        colors: list[str]
-    colors=secrets.SystemRandom().sample(['red','green','blue','yellow','purple','orange'],4)
-    pic=Image.new('RGB',(640,160),'white');draw=ImageDraw.Draw(pic)
-    for i,color in enumerate(colors): draw.rectangle((i*160+25,30,i*160+135,130),fill=color)
-    b=io.BytesIO();pic.save(b,'PNG')
-    raw,usage=await providers.generate({**s,'max_tokens':2048},'只观察实际图片，不猜测。',
-        '从左到右识别四个色块的颜色，使用常见英文颜色名，返回 JSON：{"colors":[...]}。',images=[b.getvalue()])
-    answer=parse(raw,Answer)
-    if [x.lower().strip() for x in answer['colors']]!=colors: raise ValueError('未正确识别实际图片；当前识图接入尚未验证')
-    return dict(message='已通过实际图片识别测试；不代表专业内容一定正确',usage=usage)

@@ -36,11 +36,7 @@ issue_decisions 中 waived 表示用户允许保留边界后继续，不代表�
     elif stage=='layout_advice': refs=['wewrite-publish/references/wechat-constraints.md']
     for rel in refs: common+='\n参考编辑规则：\n'+read(rel)
     persona=brief.get('persona','industry-observer')
-    if persona in PERSONAS and stage!='visual': common+='\n本次人格（示例仅参考句式，不得复用示例事实）：\n'+read(f'wewrite-write/personas/{persona}.yaml')
-    if stage=='visual':
-        common+='\n配图应随内容混合摄影、专业原图和概念图，不要求共享同一材质或镜头。避免发光肌肉、塑料皮肤、夸张特效、装饰性科技线条和伪研究图。动作、解剖、器械细节、研究图优先 search，找不到就留缺口。所有图先确定位置和解释目的，再写查询或提示词。'
-        common+=' image_type=equipment 仅用于必须准确展示的器械结构与操作细节，普通跑鞋、随身物品或训练场景属于 scene。search 的 query 必须是简短、具体的关键词，不要复制整段说明。'
-        common+=' 生成封面也不得在书本、屏幕或背景中放入虚构的解剖图、研究图表或动作教学图；可以用合上的书、训练环境和普通物品表达主题。'
+    if persona in PERSONAS: common+='\n本次人格（示例仅参考句式，不得复用示例事实）：\n'+read(f'wewrite-write/personas/{persona}.yaml')
     return common
 
 
@@ -63,9 +59,6 @@ def prompt(stage,a,request):
     context=dict(issue_decisions=issues(a),brief=a['brief'],title=a['title'],sources=src,evidence=a['evidence'],outline=a['outline'],research=a.get('research',{}))
     if stage in ('review','revise','visual','layout_advice'): context['article']=a['content']
     if stage=='revise': context['review']=a['review']
-    if stage=='visual':
-        from .visuals import sections
-        context.update(visual_settings=a['visual'],sections=sections(a),existing_images=[{k:i.get(k) for k in ('id','role','caption','selected','after_heading')} for i in a['images']])
     tasks={
       'topic':'生成 10 个有明确切入点的候选选题，按推荐程度排序。领域来自 domain，留空则采用 column。缺少实时资料时按常青选题处理，说明需要补证，不冒充热点。返回的 source_ids 只能用材料中的编号。',
       'sources':'分析用户选中的素材，整理事实、推断、观点与主张。每条事实关联支持它的来源；不能支持的标 unsupported。没有证据时列出缺口，不补造事实。',
@@ -73,7 +66,7 @@ def prompt(stage,a,request):
       'write':'按已确认大纲撰写完整 Markdown 正文，不重复一级标题。篇幅目标允许 ±15%。仅用有来源支持的事实；事实句就近标注 [S来源编号]，PDF 尽可能标页码；不得写出来源不支持的事实。无法支持的具体数字和引述省略。只输出正文，不包代码围栏。',
       'review':'审核当前稿件，检查任务对齐、事实与来源、研究边界、个人材料、深度和自然度。quote 必须逐字摘自正文且能唯一定位；suggestion 是可直接替换 quote 的文字。证据不足的问题列 blocker，不用记忆补证。无问题才 decision=pass。dimensions 只作辅助，不以分数替代判断。只提出修改，是否执行由界面决定。',
       'revise':'按用户要求修改指定选段；replacement 仅包含替换该选段的内容，不能擅自改写全文。没提供选段而指明全文时才返回全文替换。解释应简短。',
-      'visual':f'全篇目标 {a["visual"]["count"]} 张图片（含一张封面）。没有已采用封面时必须安排一张 cover，默认 generate；已有封面则保留，只安排剩余 article。每个位置填写 purpose（解释正文的什么）、image_type、requirements（动作/器械/内容要求）、method（generate/search/upload）、图注。先决定对应章节 after_heading 和 section_index；内文应引用 sections 中真实章节，无章节才留空。search 提供具体 query，不编图片地址；generate 的 prompt 必须包含该段落的内容、主体、构图、自然质感及禁止误导项。封面留出宽幅裁切安全区；正文专业图完整展示关键部位，不编造数据、解剖细节或真实事件。',
+      'visual':f'生成 {a["visual"]["count"]} 个可编辑配图方案，第一张 role=cover，其余 article。用图解释内容，不捏造数据或科研结果，不制作假研究图表。prompt 给出视觉主体、构图、色彩和文字要求。after_heading 必须引用正文中存在的章节标题或留空。',
       'layout_advice':'给出不超过 5 条具体排版建议，针对当前正文的层级、节奏、图片位置。仅给建议，不重写正文、不生成图片。'
     }
     task=tasks[stage]

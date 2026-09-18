@@ -62,7 +62,7 @@ async def conflict(request,exc): return JSONResponse({'detail':str(exc)},409)
 
 
 @app.get('/api/health')
-def health(): return {'app':'wewrite-studio','version':'1.5.0','upstream':'4.2.1','workspace':str(store.ROOT)}
+def health(): return {'app':'wewrite-studio','version':'1.4.3','upstream':'4.2.1','workspace':str(store.ROOT)}
 
 
 @app.get('/api/meta')
@@ -182,14 +182,7 @@ def patch(id:str,payload:ArticlePatch):
     for k in ('content','title'):
         if k in c and (not isinstance(c[k],str) or len(c[k])>500000): raise ValueError('文章内容格式或长度不正确')
     def mutate(a):
-        from . import visuals
-        if 'image_plans' in c:
-            planned={**a,**c}
-            for plan in c['image_plans']:
-                if visuals.location_error(planned,plan): raise ValueError(visuals.location_error(planned,plan))
-                plan['context_key']=visuals.digest(visuals.context(planned,plan))
-        if 'images' in c: c['images']=visuals.edit_images(a,c['images'])
-        for key,fields in [('sources',('selected','personal_material','use','title','bibliography'))]:
+        for key,fields in [('sources',('selected','personal_material','use','title','bibliography')),('images',('selected','caption','role','after_heading'))]:
             if key in c:
                 incoming={x['id']:x for x in c[key]}
                 if set(incoming)-{x['id'] for x in a[key]}: raise ValueError('不能引用未知素材')
@@ -369,12 +362,7 @@ def apply_suggestion(id:str,sid:str,value:dict):
 
 
 @app.post('/api/articles/{id}/images/upload')
-async def upload_image(id:str,file:UploadFile=File(),revision:int=Form(),role:str=Form('article'),plan_id:str=Form('')):
-    from . import visuals
-    a=store.get_article(id)
-    if a['revision']!=revision: raise store.Conflict('文章已有更新，请重试上传')
-    plan=next((p for p in a['image_plans'] if p['id']==plan_id),None)
-    if plan_id and not plan: raise ValueError('配图方案不存在')
+async def upload_image(id:str,file:UploadFile=File(),revision:int=Form(),role:str=Form('article')):
     blob=await file.read(30*1024*1024+1)
     if len(blob)>30*1024*1024: raise ValueError('图片不能超过 30 MB')
     try:
@@ -383,20 +371,14 @@ async def upload_image(id:str,file:UploadFile=File(),revision:int=Form(),role:st
     if image.width*image.height>40_000_000: raise ValueError('图片像素过大，请缩小后上传')
     filename=store.uid()+'.png'; p=store.article_dir(id)/'assets'; p.mkdir(exist_ok=True)
     image.convert('RGB').save(p/filename,'PNG')
-    item=dict(plan or {},id=store.uid(),filename=filename,role=(plan['role'] if plan else 'cover' if role=='cover' else 'article'),
-        caption=plan.get('caption','') if plan else '',after_heading=plan.get('after_heading','') if plan else '',selected=True,created=store.now(),origin='upload',plan_id=plan_id,crop_x=.5,crop_y=.5)
-    return visuals.append_images(a,[item])
+    item=dict(id=store.uid(),filename=filename,role='cover' if role=='cover' else 'article',caption='',after_heading='',selected=True,created=store.now())
+    return store.save_article(id,revision,lambda a:a['images'].append(item),'上传图片',invalidate='visual')
 
 
 @app.get('/api/articles/{id}/assets/{filename}')
-def asset(id:str,filename:str,cover:bool=False):
+def asset(id:str,filename:str):
     a=store.get_article(id)
-    item=next((x for x in a['images'] if x['filename']==filename and (not cover or x['role']=='cover')),None)
-    if not item: raise HTTPException(404)
-    if cover:
-        from . import visuals
-        from fastapi.responses import Response
-        return Response(visuals.image_bytes(a,item,crop=True),media_type='image/png')
+    if not any(x['filename']==filename for x in a['images']): raise HTTPException(404)
     return FileResponse(store.article_dir(id)/'assets'/filename,media_type='image/png')
 
 
@@ -457,15 +439,6 @@ def restore(id:str,value:dict): return store.restore(id,value['version'],value['
 
 @app.get('/api/articles/{id}/usage')
 def usage(id:str): return store.usage(id)
-
-
-from .visuals import BillConfirmation
-
-
-@app.post('/api/articles/{id}/usage/{usage_id}/settle')
-def settle_visual_bill(id:str,usage_id:str,value:BillConfirmation):
-    from .visuals import confirm_bill
-    return confirm_bill(id,usage_id,value)
 
 
 @app.post('/api/shutdown')
