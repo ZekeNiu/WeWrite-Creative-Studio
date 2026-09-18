@@ -17,3 +17,5 @@
 .model-capability{display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0;padding:12px;background:var(--bg,#f7f7f2);border-radius:10px}
 .model-capability p{overflow-wrap:anywhere;margin:0}.model-id{overflow-wrap:anywhere;font-weight:600}
 @media(max-width:760px){.model-capabilities{grid-template-columns:1fr}}
+
+.stage-nav.not-ready{opacity:.62}.stage-nav.not-ready.active{opacity:1}.research-issue{padding:16px 0;border-bottom:1px solid var(--line)}.research-issue p{overflow-wrap:anywhere}.research-history{margin-top:18px}.research-details button:disabled{opacity:.5;cursor:not-allowed}
