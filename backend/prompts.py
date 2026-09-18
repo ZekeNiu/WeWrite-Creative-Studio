@@ -39,6 +39,8 @@ issue_decisions 中 waived 表示用户允许保留边界后继续，不代表�
     if persona in PERSONAS and stage!='visual': common+='\n本次人格（示例仅参考句式，不得复用示例事实）：\n'+read(f'wewrite-write/personas/{persona}.yaml')
     if stage=='visual':
         common+='\n配图应随内容混合摄影、专业原图和概念图，不要求共享同一材质或镜头。避免发光肌肉、塑料皮肤、夸张特效、装饰性科技线条和伪研究图。动作、解剖、器械细节、研究图优先 search，找不到就留缺口。所有图先确定位置和解释目的，再写查询或提示词。'
+        common+=' image_type=equipment 仅用于必须准确展示的器械结构与操作细节，普通跑鞋、随身物品或训练场景属于 scene。search 的 query 必须是简短、具体的关键词，不要复制整段说明。'
+        common+=' 生成封面也不得在书本、屏幕或背景中放入虚构的解剖图、研究图表或动作教学图；可以用合上的书、训练环境和普通物品表达主题。'
     return common
 
 

@@ -220,7 +220,7 @@ async def list_models(s):
     except httpx.HTTPError: raise ValueError('读取模型列表失败；可以手动填写模型名称') from None
 
 
-async def image_generate(s, prompt, size, emit=None):
+async def image_generate(s, prompt, size, emit=None, usage_out=None):
     body={'model':s['model'],'prompt':prompt,'n':1,'size':size,'response_format':'b64_json','stream':True}
     final=None
     try:
@@ -237,6 +237,10 @@ async def image_generate(s, prompt, size, emit=None):
                 else: final=json.loads(await r.aread())
             if not final: raise ValueError('图片流未返回最终图片，不会把中间预览当作成功')
             item=(final.get('data') or [final])[0]
+            if usage_out is not None:
+                usage=final.get('usage') or item.get('usage') or {}
+                for name in ('input_tokens','output_tokens','total_tokens','input_tokens_details','output_tokens_details'):
+                    if name in usage: usage_out[name]=usage[name]
             if item.get('b64_json'): return base64.b64decode(item['b64_json'],validate=True)
             if item.get('url'):
                 from .materials import fetch_bytes

@@ -66,14 +66,15 @@ def test_image_cancel_during_check_keeps_file(visual,monkeypatch):
     assert any(u['stage']=='vision' and u['status']=='unknown' for u in store.usage(a['id']))
 
 
-def test_unknown_vision_price_does_not_call_or_adopt(visual,monkeypatch):
+def test_unknown_vision_price_records_usage_without_fake_cost(visual,monkeypatch):
     cfg=store.get_settings();cfg['services'][0]['input_price']=None;store.set_settings(cfg)
-    calls=[]
-    async def forbidden(*args,**kwargs):calls.append(1);raise AssertionError('must not call')
-    monkeypatch.setattr(providers,'generate',forbidden)
+    async def real_shape(s,system,prompt,**kw):
+        return json.dumps(dict(images=[dict(id=x['id'],suitable=True,reason='fixture') for x in json.loads(prompt)['images']])),dict(status='completed',estimated_cost=None,input_tokens=100,output_tokens=20)
+    monkeypatch.setattr(providers,'generate',real_shape)
     a=asyncio.run(visuals.acquire(visual,job(visual)['id'],visual['image_plans'][0]))
-    assert not calls and not a['images'][0]['selected']
-    assert '未知' in a['images'][0]['check']['reason']
+    record=next(u for u in store.usage(a['id']) if u['stage']=='vision')
+    assert record['estimated_cost'] is None and record['input_tokens']==100
+    assert a['images'][0]['selected']
 
 
 def test_rejected_picture_not_selected(visual,monkeypatch):
@@ -86,7 +87,7 @@ def test_rejected_picture_not_selected(visual,monkeypatch):
 
 def test_unknown_generation_is_reserved_and_not_replayed(visual,monkeypatch):
     calls=[]
-    async def fail(*args):calls.append(1);raise ValueError('unknown paid result')
+    async def fail(*args,**kw):calls.append(1);raise ValueError('unknown paid result')
     monkeypatch.setattr(providers,'image_generate',fail);j=job(visual)
     with pytest.raises(ValueError):asyncio.run(visuals.acquire(visual,j['id'],visual['image_plans'][0]))
     with pytest.raises(ValueError,match='结果未知'):asyncio.run(visuals.acquire(visual,j['id'],visual['image_plans'][0]))
@@ -166,6 +167,54 @@ def test_duplicate_job_key_before_revision_conflict(visual,client,monkeypatch):
     j=wait(client,r.json());a=patch(client,visual,dict(title='changed'))
     again=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json=payload)
     assert again.status_code==200 and again.json()['id']==j['id']
+
+
+def test_bill_confirmation_releases_only_verified_amount_and_keeps_history(visual,client):
+    a=visual;j=job(a)
+    unknown=store.add_usage(a['id'],stage='image',job_id=j['id'],reserved_cost=2,estimated_cost=None,status='unknown',model='fixture')
+    completed=store.add_usage(a['id'],stage='image',job_id=j['id'],reserved_cost=2,estimated_cost=2,status='completed',model='fixture')
+    assert visuals.budget(a)['reserved']==4
+    url=f'/api/articles/{a["id"]}/usage/{completed["id"]}/settle'
+    r=client.post(url,headers=H,json=dict(amount=.6,note='实际账单对应记录',billing_revision=0))
+    assert r.status_code==200 and r.json()['revision']==a['revision']
+    assert visuals.budget(a)['reserved']==pytest.approx(2.6)
+    records=store.usage(a['id']);paid=next(x for x in records if x['id']==completed['id'])
+    assert paid['billing_history'][0]['previous_reserved_cost']==2
+    assert next(x for x in records if x['id']==unknown['id'])['estimated_cost'] is None
+    assert client.post(url,headers=H,json=dict(amount=0,note='重复点击',billing_revision=0)).status_code==409
+    assert client.post(url,headers=H,json=dict(amount=-1,note='无效',billing_revision=1)).status_code==422
+    assert client.post(url,headers=H,json=dict(amount=0,note=' ',billing_revision=1)).status_code==400
+
+
+def test_budget_error_explains_unknown_reservations(visual):
+    a=visual;a['visual']['budget']=4
+    store.add_usage(a['id'],stage='image',reserved_cost=2,estimated_cost=None,status='unknown')
+    store.add_usage(a['id'],stage='image',reserved_cost=2,estimated_cost=2,status='completed')
+    with pytest.raises(ValueError,match='其中待核算预留 ¥2.00'):
+        visuals.reserve(a,job(a)['id'],'image',providers.service_for('image'),2)
+
+
+def test_unrelated_adult_sources_removed_before_download():
+    assert not visuals.usable_source(dict(url='https://www.xvideos.com/irrelevant',title='irrelevant'))
+    assert visuals.usable_source(dict(url='https://teachmeanatomy.info/example',title='Thigh anatomy'))
+
+
+def test_source_only_adoption_is_not_permission(visual):
+    visual['images']=[dict(id='web',filename='none.png',role='article',origin='web',selected=True,source_url='https://example.org',rights={'status':'unknown'})]
+    with pytest.raises(ValueError,match='使用依据'):visuals.export_guard(visual)
+
+
+def test_archive_transient_windows_lock_retries_without_model_call(visual,monkeypatch):
+    from backend import outputs
+    from pathlib import Path
+    original=Path.rename;calls=[]
+    def rename(path,target):
+        calls.append(1)
+        if len(calls)==1:raise PermissionError('transient scanner lock')
+        return original(path,target)
+    monkeypatch.setattr(Path,'rename',rename)
+    result=outputs.archive(visual)
+    assert Path(result['path']).is_dir() and len(calls)==2
 
 
 @pytest.mark.parametrize('protocol',['chat','responses','anthropic'])

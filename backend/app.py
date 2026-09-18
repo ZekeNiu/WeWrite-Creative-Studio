@@ -62,7 +62,7 @@ async def conflict(request,exc): return JSONResponse({'detail':str(exc)},409)
 
 
 @app.get('/api/health')
-def health(): return {'app':'wewrite-studio','version':'1.4.3','upstream':'4.2.1','workspace':str(store.ROOT)}
+def health(): return {'app':'wewrite-studio','version':'1.5.0','upstream':'4.2.1','workspace':str(store.ROOT)}
 
 
 @app.get('/api/meta')
@@ -457,6 +457,15 @@ def restore(id:str,value:dict): return store.restore(id,value['version'],value['
 
 @app.get('/api/articles/{id}/usage')
 def usage(id:str): return store.usage(id)
+
+
+from .visuals import BillConfirmation
+
+
+@app.post('/api/articles/{id}/usage/{usage_id}/settle')
+def settle_visual_bill(id:str,usage_id:str,value:BillConfirmation):
+    from .visuals import confirm_bill
+    return confirm_bill(id,usage_id,value)
 
 
 @app.post('/api/shutdown')
