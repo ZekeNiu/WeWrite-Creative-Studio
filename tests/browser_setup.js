@@ -27,7 +27,7 @@ async (page) => {
   await page.getByRole('button',{name:'寻找选题灵感',exact:true}).click();
   await page.getByRole('button',{name:'就写这个'}).first().waitFor({timeout:15000});
   if(await page.locator('.topic-card').count()!==10)throw new Error('topic count mismatch');
-  await page.screenshot({path:'output/playwright/topics.png',fullPage:false});
+  await page.screenshot({path:'output/diagnostics/screenshots/topics.png',fullPage:false});
   await page.getByRole('button',{name:'就写这个'}).first().click();
   await page.getByRole('button',{name:'下一步 · 素材',exact:true}).click();
   await page.getByRole('button',{name:'粘贴文字',exact:true}).click();

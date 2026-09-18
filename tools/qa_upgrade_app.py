@@ -1,7 +1,7 @@
 """Isolated visual fixture. Never loads or changes production settings."""
 from pathlib import Path
 from backend import store
-store.DATA=Path('output/qa-upgrade-data').resolve()
+store.DATA=Path('output/test-workspaces/qa-upgrade-data').resolve()
 store.init()
 from backend.app import app
 if not store.list_articles():

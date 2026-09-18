@@ -7,7 +7,7 @@ async (page) => {
   await page.waitForFunction(()=>window.getSelection()?.toString()==='这意味着，这个结论对所有人都成立。');
   const selected=await page.evaluate(()=>window.getSelection()?.toString());
   if(selected!=='这意味着，这个结论对所有人都成立。')throw new Error('review location mismatch: '+selected);
-  await page.screenshot({path:'output/playwright/review.png',fullPage:false});
+  await page.screenshot({path:'output/diagnostics/screenshots/review.png',fullPage:false});
   await page.getByRole('button',{name:'接受修改',exact:true}).click();
   await page.locator('.prose-editor').getByText('这个结论只适用于与研究条件相近的情况，不能直接推广到所有人。',{exact:true}).waitFor();
   await page.getByRole('button',{name:'审核当前稿',exact:true}).click();
@@ -44,13 +44,13 @@ async (page) => {
   await page.getByLabel('署名',{exact:true}).press('Tab');
   const download=page.waitForEvent('download');
   await page.getByRole('link',{name:'下载完整文章包',exact:true}).click();
-  const result=await download;await result.saveAs('output/playwright/验收文章.zip');
+  const result=await download;await result.saveAs('output/diagnostics/screenshots/验收文章.zip');
   await page.context().grantPermissions(['clipboard-read','clipboard-write']);
   await page.getByRole('button',{name:'复制公众号排版',exact:true}).click();
   await page.getByRole('button',{name:'已复制',exact:true}).waitFor();
   const clipboard=await page.evaluate(async()=>await navigator.clipboard.readText());
   if(!clipboard.includes('人工补充'))throw new Error('clipboard lost content');
-  await page.screenshot({path:'output/playwright/layout.png',fullPage:false});
+  await page.screenshot({path:'output/diagnostics/screenshots/layout.png',fullPage:false});
   const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth);
   if(overflow)throw new Error('desktop horizontal overflow');
   return {reviewLocation:true,revisionAccepted:true,manualEditRestored:true,imageGenerated:true,export:result.suggestedFilename(),clipboard:true,overflow:false};

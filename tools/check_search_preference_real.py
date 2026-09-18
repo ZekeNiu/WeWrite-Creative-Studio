@@ -1,6 +1,7 @@
 """One live preferred-model check; production service settings are read-only."""
 import asyncio,json,sys
 from pathlib import Path
+Path('output/diagnostics').mkdir(parents=True,exist_ok=True)
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from backend import store,providers,research
 from backend.models import ResearchNotes
@@ -22,7 +23,7 @@ async def main():
     except Exception as exc: result=dict(passed=False,error=str(exc) if isinstance(exc,ValueError) else type(exc).__name__,strategy=w.strategy(),log=w.log)
     result['settings_unchanged']=before==research.digest(store.get_settings())
     store.update_job(j['id'],status='completed' if result['passed'] else 'failed',ended=store.now())
-    Path('output/search-preference-real.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf8')
+    Path('output/diagnostics/search-preference-real.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf8')
     print(json.dumps({k:v for k,v in result.items() if k in ('passed','error','strategy','settings_unchanged')},ensure_ascii=False),flush=True)
 
 asyncio.run(main())

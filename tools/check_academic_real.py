@@ -1,6 +1,7 @@
 """Live public API acceptance. Never emits credentials or changes settings."""
 import asyncio,json,sys,time
 from pathlib import Path
+Path('output/diagnostics').mkdir(parents=True,exist_ok=True)
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from backend import academic,search_tools,store,materials
 
@@ -18,6 +19,6 @@ async def main():
             except Exception as e:
                 result=dict(domain=domain,channel=channel,query=query,error=str(e),seconds=round(time.monotonic()-start,1));print(json.dumps(result,ensure_ascii=False),flush=True)
             results.append(result)
-            Path('output/academic-real.json').write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
+            Path('output/diagnostics/academic-real.json').write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
 
 asyncio.run(main())

@@ -18,10 +18,14 @@ async def guard(route,lightweight=True):
 
 async def launch(headless=True):
     from playwright.async_api import async_playwright
+    profile=store.DATA/'cache'/'research-browser'
+    profile.parent.mkdir(parents=True,exist_ok=True)
+    legacy=store.DATA/'research-browser'
+    if legacy.exists() and not profile.exists(): legacy.rename(profile)
     driver=await async_playwright().start()
     for channel in ('msedge','chrome',None):
         try:
-            context=await driver.chromium.launch_persistent_context(str(store.DATA/'research-browser'),
+            context=await driver.chromium.launch_persistent_context(str(profile),
                 channel=channel,headless=headless,accept_downloads=False,service_workers='block',
                 viewport={'width':1200,'height':800},locale='zh-CN',args=['--disable-background-networking'])
             async def route_request(route): await guard(route,headless)

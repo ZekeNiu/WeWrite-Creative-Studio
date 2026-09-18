@@ -1,5 +1,6 @@
 import asyncio,json,sys,time
 from pathlib import Path
+Path('output/diagnostics').mkdir(parents=True,exist_ok=True)
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from backend import store,search_check,providers,research
 
@@ -12,7 +13,7 @@ async def main():
         print(json.dumps(dict(event='start',column=column,job=j['id']),ensure_ascii=False),flush=True)
         await search_check.run(j['id'])
         r=search_check.result(store.job(j['id']));results.append(r)
-        Path('output/upgrade-chain-real.json').write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
+        Path('output/diagnostics/upgrade-chain-real.json').write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
         print(json.dumps(dict(column=column,passed=r.get('passed'),steps=r.get('steps'),error=r.get('error'),calls=r['research']['calls'],pages=r['research']['pages']),ensure_ascii=False),flush=True)
     assert before==research.digest(store.get_settings()),'Settings changed during validation'
     print('Saved configuration unchanged',flush=True)

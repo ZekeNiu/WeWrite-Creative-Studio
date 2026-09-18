@@ -6,10 +6,11 @@ import json
 import sys
 import time
 from pathlib import Path
+Path('output/diagnostics').mkdir(parents=True,exist_ok=True)
 import httpx
 
 sys.stdout.reconfigure(encoding='utf-8')
-output=Path('output/search-check-real.json')
+output=Path('output/diagnostics/search-check-real.json')
 output.parent.mkdir(exist_ok=True)
 records=json.loads(output.read_text('utf-8')) if output.exists() else []
 with httpx.Client(base_url='http://127.0.0.1:8765',trust_env=False,timeout=30,headers={'X-Studio-Request':'1'}) as client:

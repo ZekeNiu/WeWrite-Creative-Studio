@@ -6,6 +6,7 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+Path('output/diagnostics').mkdir(parents=True,exist_ok=True)
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -39,5 +40,5 @@ with socket.socket() as occupied:
         time.sleep(.1)
 launch();final=state();assert alive(final['port'])
 report={'initial_launch':True,'repeated_launch_reuses_process':True,'stop_preserves_data':True,'occupied_port_fallback':True,'restart':True,'final_port':final['port']}
-dest=ROOT/'output/launcher-check.json';dest.parent.mkdir(exist_ok=True);dest.write_text(json.dumps(report,indent=2),encoding='utf-8')
+dest=ROOT/'output/diagnostics/launcher-check.json';dest.parent.mkdir(exist_ok=True);dest.write_text(json.dumps(report,indent=2),encoding='utf-8')
 print(json.dumps(report))

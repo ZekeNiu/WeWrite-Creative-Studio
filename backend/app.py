@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse,FileResponse,Response,StreamingRespon
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import ValidationError
-from . import store,providers,security,materials,rendering,workflow,prompts,search_tools,browser_search,search_check,bibliography
+from . import store,providers,security,materials,rendering,workflow,prompts,search_tools,browser_search,search_check,bibliography,outputs
 from .models import Settings,Brief,Layout,VisualSettings,ArticlePatch,JobRequest,STAGES,OutlineResult,ImagePlan
 
 
@@ -109,7 +109,7 @@ async def test_image(id:str):
     if id!=s['id']: raise ValueError('请在节点分工中选择图片服务，再测试实际图片节点')
     blob=await providers.image_generate(s,'A single green leaf on an ivory background, minimal editorial illustration, no text','1024x1024')
     img=Image.open(io.BytesIO(blob)); img.load()
-    dest=store.DATA/'connection-tests'; dest.mkdir(exist_ok=True)
+    dest=outputs.diagnostics()
     filename=store.uid()+'.png';img.convert('RGB').save(dest/filename)
     cfg=providers.settings()
     for row in cfg['services']:
@@ -122,7 +122,8 @@ async def test_image(id:str):
 @app.get('/api/connection-tests/{filename}')
 def connection_image(filename:str):
     if not re.fullmatch(r'[a-f0-9]{32}\.png',filename): raise HTTPException(404)
-    p=store.DATA/'connection-tests'/filename
+    p=outputs.diagnostics()/filename
+    if not p.is_file(): p=store.DATA/'connection-tests'/filename
     if not p.is_file(): raise HTTPException(404)
     return FileResponse(p,media_type='image/png')
 
@@ -414,14 +415,39 @@ def reference_preview(value:dict):
 
 @app.get('/api/articles/{id}/export/{kind}')
 def export(id:str,kind:str):
+    if kind not in ('zip','md','html'): raise ValueError('未知导出类型')
+    info=outputs.archive(store.get_article(id))
+    return FileResponse(Path(info['path'])/info['files'][kind],filename=info['basename']+'.'+kind,
+                        media_type={'zip':'application/zip','md':'text/markdown','html':'text/html'}[kind])
+
+
+@app.post('/api/articles/{id}/exports')
+def archive_article(id:str,value:dict):
     a=store.get_article(id)
-    if not a['content'].strip(): raise ValueError('请先写作或导入正文')
-    filename=re.sub(r'[<>:"/\\|?*]','_',a['title'])[:90]
-    if kind=='zip': data=rendering.export_zip(a); media='application/zip'; ext='zip'
-    elif kind=='md': data=rendering.markdown(a,True).encode('utf-8'); media='text/markdown'; ext='md'
-    elif kind=='html': data=rendering.render(a,True)['html'].encode('utf-8'); media='text/html'; ext='html'
-    else: raise ValueError('未知导出类型')
-    return Response(data,media_type=media,headers={'Content-Disposition':"attachment; filename*=UTF-8''"+quote(filename+'.'+ext)})
+    if value.get('revision')!=a['revision']: raise store.Conflict('文章已更新，请保存后重新导出')
+    return outputs.public_info(outputs.archive(a))
+
+
+@app.post('/api/articles/{id}/exports/open')
+def open_exports(id:str,value:dict):
+    a=store.get_article(id)
+    if value.get('revision')!=a['revision']: raise store.Conflict('文章已更新，请保存后重新导出')
+    info=outputs.archive(a)
+    if os.name!='nt': raise ValueError('请使用显示的归档路径打开文件夹')
+    os.startfile(info['path'])
+    return outputs.public_info(info)
+
+
+@app.get('/api/articles/{id}/exports/{digest}/{kind}')
+def download_archive(id:str,digest:str,kind:str):
+    store.get_article(id)
+    if kind not in ('zip','md','html') or not re.fullmatch('[a-f0-9]{64}',digest): raise HTTPException(404)
+    import json
+    for record in (outputs.root()/'articles'/id).glob('*/manifest.json'):
+        info=json.loads(record.read_text('utf-8'))
+        if info.get('digest')==digest:
+            return FileResponse(record.parent/info['files'][kind],filename=info['basename']+'.'+kind)
+    raise HTTPException(404)
 
 
 @app.get('/api/articles/{id}/versions')

@@ -1,5 +1,6 @@
 import asyncio,json,sys
 from pathlib import Path
+Path('output/diagnostics').mkdir(parents=True,exist_ok=True)
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from backend import providers,research,store,browser_search,search_tools
 from backend.app import test_native
@@ -22,6 +23,6 @@ async def main():
         r=await search_tools.ncbi(client,'esearch.fcgi',{'db':'pubmed','term':'10.1609/aaai.v38i16.29728[DOI]','retmode':'json'})
         result['pubmed_noncoverage']={'doi':'10.1609/aaai.v38i16.29728','response':r.json()}
     result['settings_unchanged']=before==research.digest(store.get_settings())
-    Path('output/native-web-real.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
+    Path('output/diagnostics/native-web-real.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
 
 asyncio.run(main())
