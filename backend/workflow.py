@@ -5,7 +5,7 @@ import re
 import time
 from PIL import Image
 from pydantic import ValidationError
-from . import store, providers, prompts, materials, rendering, research
+from . import store, providers, prompts, materials, rendering, research, visuals
 from .models import STAGES, LABELS, SCHEMAS
 from .structured_output import parse as parse_structured
 
@@ -39,6 +39,7 @@ def validate_result(stage,result,a):
     if stage=='write':
         citations=re.findall(r'\[(S[a-zA-Z0-9]+)\]',result)
         if any(c not in sources for c in citations): raise ValueError('正文引用了不存在的来源编号，结果已保留但未应用')
+    if stage=='visual': result['images']=visuals.normalize_plans(a,result['images'])
 
 
 def prerequisites(stage,a):
@@ -47,10 +48,15 @@ def prerequisites(stage,a):
     if state and not state['allowed']: raise ValueError(state['reason'])
     if stage in ('layout_advice','revise') and not a['content'].strip():
         raise ValueError('请先写作或导入正文')
+    if stage=='image' and (not a['content'].strip() or not a['visual']['enabled']):
+        raise ValueError('请先完成正文并启用配图')
 
 
 def start(article_id,request):
     a=store.get_article(article_id)
+    if request.action_id:
+        for existing in store.jobs(article_id):
+            if existing['request'].get('action_id')==request.action_id: return existing
     if request.continuation_job_id:
         original=store.job(request.continuation_job_id)
         from .flow_state import job_view
@@ -86,13 +92,18 @@ async def call(job_id,stage,a,request):
             store.update_job(job_id,partial=text)
             store.event(job_id,'progress',stage=stage,characters=len(text))
             last=time.monotonic()
+    reservation=None
+    system=prompts.system(stage,a['brief']);prompt=prompts.prompt(stage,a,request)
+    if stage=='visual': reservation=visuals.reserve(a,job_id,stage,s,visuals.text_reserve(s,prompt,system))
     try:
-        raw,usage=await providers.generate(s,prompts.system(stage,a['brief']),prompts.prompt(stage,a,request),emit)
-        store.add_usage(a['id'],stage=stage,**usage)
+        raw,usage=await providers.generate(s,system,prompt,emit)
+        if reservation: visuals.complete(reservation,usage)
+        else: store.add_usage(a['id'],stage=stage,**usage)
         store.update_job(job_id,partial=raw)
     except BaseException:
         store.update_job(job_id,partial=text)
-        store.add_usage(a['id'],stage=stage,model=s['model'],service=s['name'],status='unknown',estimated_cost=None,currency=s.get('currency','CNY'))
+        if reservation: store.update_usage(reservation['id'],status='unknown')
+        else: store.add_usage(a['id'],stage=stage,model=s['model'],service=s['name'],status='unknown',estimated_cost=None,currency=s.get('currency','CNY'))
         raise
     result=parse(stage,raw); validate_result(stage,result,a)
     store.update_job(job_id,result=result)
@@ -144,31 +155,8 @@ def apply_review_fixes(a):
 
 
 async def generate_image(a,job_id,plan):
-    s=providers.service_for('image'); price=s.get('image_price')
-    if price is None or price<=0: raise ValueError('请先在图片服务中填写可靠的每张预估价格，才能按预算生成图片')
-    if s.get('currency','CNY')!='CNY': raise ValueError('图片预算以人民币计，请配置人民币每张价格')
-    used=sum(u.get('reserved_cost',0) for u in store.usage(a['id']) if u.get('stage')=='image')
-    if used+price>a['visual']['budget']+1e-8: raise ValueError('本篇图片预算不足，请调整预算或减少图片数量。未知结果的请求仍占用预留。')
-    reservation=store.add_usage(a['id'],stage='image',model=s['model'],service=s['name'],reserved_cost=price,estimated_cost=price,currency='CNY',status='reserved')
-    store.update_job(job_id,message='正在生成图片；连接中断时不会自动重复请求')
-    try:
-        blob=await providers.image_generate(s,plan['prompt'],a['visual']['size'])
-    except BaseException:
-        store.update_usage(reservation['id'],status='unknown',estimated_cost=None)
-        raise
-    image=Image.open(io.BytesIO(blob)); image.load()
-    if image.width*image.height>40_000_000: raise ValueError('图片尺寸过大')
-    filename=store.uid()+'.png'; p=store.article_dir(a['id'])/'assets'; p.mkdir(exist_ok=True)
-    image.convert('RGB').save(p/filename,'PNG')
-    store.update_usage(reservation['id'],status='completed')
-    item=dict(plan,filename=filename,selected=True,created=store.now(),id=store.uid())
-    store.update_job(job_id,result={'image':item})
-    try:
-        return store.save_article(a['id'],a['revision'],lambda v:v['images'].append(item),'生成图片',invalidate='visual')
-    except store.Conflict:
-        current=store.get_article(a['id']);item['selected']=False
-        store.save_article(a['id'],current['revision'],lambda v:v['images'].append(item),'保存待确认图片')
-        raise store.Conflict('文章在生图期间已更新。图片已保存在配图库，默认未采用，请查看后选择。') from None
+    # Compatibility entry point for developer tools.
+    return await visuals.generate(a,job_id,plan)
 
 
 async def run(job_id):
@@ -209,7 +197,7 @@ async def run(job_id):
             elif stage=='image':
                 plan=next((p for p in a['image_plans'] if p['id']==req['image_id']),None)
                 if not plan: raise ValueError('请先生成或添加配图方案')
-                a=await generate_image(a,job_id,plan)
+                a=await visuals.acquire(a,job_id,plan)
             elif stage=='revise':
                 result=await call(job_id,stage,a,req)
                 item=dict(id=store.uid(),original=req['selected_text'] or a['content'],base_revision=a['revision'],**result)
@@ -228,7 +216,13 @@ async def run(job_id):
                         a=fixed; store.update_job(job_id,message='正在复审修改后的正文（第 2 轮）')
                         result=await call(job_id,'review',a,req); a=apply_result(a,'review',result,req)
                 if stage=='visual' and a['auto']['visual']:
-                    for plan in a['image_plans']: a=await generate_image(a,job_id,plan)
+                    for plan in a['image_plans']: a=await visuals.acquire(a,job_id,plan)
+            if stage in ('image','visual') and (stage=='image' or a['auto']['visual']):
+                unresolved=[p for p in a['image_plans'] if (stage!='image' or p['id']==req['image_id']) and not any(i.get('selected') and i.get('plan_id')==p['id'] for i in a['images'])]
+                if unresolved:
+                    message=store.job(job_id).get('message','')
+                    store.update_job(job_id,status='needs_input',ended=store.now(),message='配图候选已保留，仍有位置需要选图、确认使用依据或上传。'+message,blocked_stage='visual')
+                    return
             store.event(job_id,'saved',revision=a['revision'])
             if stage not in STAGES or not req['chain'] or not a['auto'][stage] or a['stages'][stage]=='needs_input': break
             idx=STAGES.index(stage)+1

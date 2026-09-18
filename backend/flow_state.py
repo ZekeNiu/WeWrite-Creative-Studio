@@ -54,6 +54,8 @@ def ready(a):
 
 def present(a):
     a['workflow']=ready(a)
+    from .visuals import presentation
+    a['visual_status']=presentation(a)
     if a.get('research'): a['research']['issues']=issues(a)
     return a
 

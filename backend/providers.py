@@ -89,8 +89,8 @@ def migrate_settings():
 
 def service_for(stage, override=None):
     cfg=settings(); route=cfg.get('routes',{}).get(stage,{})
-    if stage=='research' and not route.get('service_id'):
-        inherited=cfg.get('routes',{}).get('sources',{})
+    if stage in ('research','vision') and not route.get('service_id'):
+        inherited=cfg.get('routes',{}).get('sources' if stage=='research' else 'visual',{})
         route={**inherited,**{k:v for k,v in route.items() if v}}
     sid=override or route.get('service_id') or cfg.get('default_service')
     s=next((s.copy() for s in cfg['services'] if s['id']==sid),None)
@@ -138,7 +138,7 @@ def extract_json_text(d, protocol):
     return d.get('output_text') or ''.join(c.get('text','') for x in d.get('output',[]) for c in x.get('content',[]) if c.get('type')=='output_text')
 
 
-async def generate(s, system, prompt, emit=None):
+async def generate(s, system, prompt, emit=None, images=None):
     protocol=s['protocol']; started=time.monotonic(); text=''; usage={}; completed=False; truncated=False
     common={'model':s['model'],'stream':True}
     if protocol=='chat':
@@ -147,6 +147,15 @@ async def generate(s, system, prompt, emit=None):
         path='responses'; body=dict(common,instructions=system,input=prompt,max_output_tokens=s.get('max_tokens',8000))
     else:
         path='messages'; body=dict(common,system=system,messages=[{'role':'user','content':prompt}],max_tokens=s.get('max_tokens',8000))
+    if images:
+        if len(images)>12: raise ValueError('单次最多检查 12 张候选图片')
+        encoded=[base64.b64encode(blob).decode('ascii') for blob in images]
+        if protocol=='chat':
+            body['messages'][-1]['content']=[{'type':'text','text':prompt}]+[{'type':'image_url','image_url':{'url':'data:image/png;base64,'+b}} for b in encoded]
+        elif protocol=='responses':
+            body['input']=[{'role':'user','content':[{'type':'input_text','text':prompt}]+[{'type':'input_image','image_url':'data:image/png;base64,'+b} for b in encoded]}]
+        else:
+            body['messages'][-1]['content']=[{'type':'text','text':prompt}]+[{'type':'image','source':{'type':'base64','media_type':'image/png','data':b}} for b in encoded]
     if s.get('temperature') is not None: body['temperature']=s['temperature']
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(240,connect=20)) as client:

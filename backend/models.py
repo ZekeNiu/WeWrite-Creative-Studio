@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 STAGES = ['topic', 'sources', 'outline', 'write', 'review', 'visual', 'layout']
 LABELS = dict(zip(STAGES, ['选题', '素材', '大纲', '写作', '审核修改', '配图', '排版导出']))
 LABELS['research']='检索规划与资料整理'
-ROUTES = [*STAGES[:-1], 'revise', 'image', 'layout_advice', 'research']
+ROUTES = [*STAGES[:-1], 'revise', 'image', 'vision', 'layout_advice', 'research']
 
 
 class Brief(BaseModel):
@@ -108,6 +108,13 @@ class ImagePlan(BaseModel):
     prompt: str
     caption: str = ''
     after_heading: str = ''
+    method: Literal['generate', 'search', 'upload'] = 'generate'
+    purpose: str = ''
+    image_type: Literal['scene','concept','action','anatomy','equipment','research'] = 'concept'
+    requirements: str = ''
+    query: str = ''
+    section_index: int | None = None
+    context_key: str = ''
 
 
 class VisualResult(BaseModel):
@@ -233,7 +240,7 @@ class ModelConnection(BaseModel):
 
 class CapabilityTest(BaseModel):
     model: str = Field(min_length=1)
-    kind: Literal['text', 'image', 'search']
+    kind: Literal['text', 'image', 'search', 'vision']
     protocol: Literal['inherit', 'responses', 'anthropic', 'gemini'] | None = None
 
 

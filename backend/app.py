@@ -182,7 +182,14 @@ def patch(id:str,payload:ArticlePatch):
     for k in ('content','title'):
         if k in c and (not isinstance(c[k],str) or len(c[k])>500000): raise ValueError('文章内容格式或长度不正确')
     def mutate(a):
-        for key,fields in [('sources',('selected','personal_material','use','title','bibliography')),('images',('selected','caption','role','after_heading'))]:
+        from . import visuals
+        if 'image_plans' in c:
+            planned={**a,**c}
+            for plan in c['image_plans']:
+                if visuals.location_error(planned,plan): raise ValueError(visuals.location_error(planned,plan))
+                plan['context_key']=visuals.digest(visuals.context(planned,plan))
+        if 'images' in c: c['images']=visuals.edit_images(a,c['images'])
+        for key,fields in [('sources',('selected','personal_material','use','title','bibliography'))]:
             if key in c:
                 incoming={x['id']:x for x in c[key]}
                 if set(incoming)-{x['id'] for x in a[key]}: raise ValueError('不能引用未知素材')
@@ -362,7 +369,12 @@ def apply_suggestion(id:str,sid:str,value:dict):
 
 
 @app.post('/api/articles/{id}/images/upload')
-async def upload_image(id:str,file:UploadFile=File(),revision:int=Form(),role:str=Form('article')):
+async def upload_image(id:str,file:UploadFile=File(),revision:int=Form(),role:str=Form('article'),plan_id:str=Form('')):
+    from . import visuals
+    a=store.get_article(id)
+    if a['revision']!=revision: raise store.Conflict('文章已有更新，请重试上传')
+    plan=next((p for p in a['image_plans'] if p['id']==plan_id),None)
+    if plan_id and not plan: raise ValueError('配图方案不存在')
     blob=await file.read(30*1024*1024+1)
     if len(blob)>30*1024*1024: raise ValueError('图片不能超过 30 MB')
     try:
@@ -371,14 +383,20 @@ async def upload_image(id:str,file:UploadFile=File(),revision:int=Form(),role:st
     if image.width*image.height>40_000_000: raise ValueError('图片像素过大，请缩小后上传')
     filename=store.uid()+'.png'; p=store.article_dir(id)/'assets'; p.mkdir(exist_ok=True)
     image.convert('RGB').save(p/filename,'PNG')
-    item=dict(id=store.uid(),filename=filename,role='cover' if role=='cover' else 'article',caption='',after_heading='',selected=True,created=store.now())
-    return store.save_article(id,revision,lambda a:a['images'].append(item),'上传图片',invalidate='visual')
+    item=dict(plan or {},id=store.uid(),filename=filename,role=(plan['role'] if plan else 'cover' if role=='cover' else 'article'),
+        caption=plan.get('caption','') if plan else '',after_heading=plan.get('after_heading','') if plan else '',selected=True,created=store.now(),origin='upload',plan_id=plan_id,crop_x=.5,crop_y=.5)
+    return visuals.append_images(a,[item])
 
 
 @app.get('/api/articles/{id}/assets/{filename}')
-def asset(id:str,filename:str):
+def asset(id:str,filename:str,cover:bool=False):
     a=store.get_article(id)
-    if not any(x['filename']==filename for x in a['images']): raise HTTPException(404)
+    item=next((x for x in a['images'] if x['filename']==filename and (not cover or x['role']=='cover')),None)
+    if not item: raise HTTPException(404)
+    if cover:
+        from . import visuals
+        from fastapi.responses import Response
+        return Response(visuals.image_bytes(a,item,crop=True),media_type='image/png')
     return FileResponse(store.article_dir(id)/'assets'/filename,media_type='image/png')
 
 
