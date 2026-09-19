@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 STAGES = ['topic', 'sources', 'outline', 'write', 'review', 'visual', 'layout']
 LABELS = dict(zip(STAGES, ['选题', '素材', '大纲', '写作', '审核修改', '配图', '排版导出']))
 LABELS['research']='检索规划与资料整理'
+LABELS.update(revise='修改选段', image='图片', layout_advice='排版建议', search='搜索工具')
 ROUTES = [*STAGES[:-1], 'revise', 'image', 'layout_advice', 'research']
 
 
@@ -33,7 +34,6 @@ class VisualSettings(BaseModel):
     enabled: bool = False
     count: int = Field(2, ge=1, le=6)
     size: Literal['1536x1024', '1024x1024', '1024x1536'] = '1536x1024'
-    budget: float = Field(5, ge=0, le=10000)
 
 
 class Topic(BaseModel):
@@ -165,7 +165,6 @@ class SearchConfig(BaseModel):
     max_calls: int = Field(8, ge=1, le=30)
     max_pages: int = Field(16, ge=1, le=60)
     max_rounds: int = Field(2, ge=0, le=4)
-    budget: float | None = Field(None, ge=0)
 
     @model_validator(mode='before')
     @classmethod
@@ -189,6 +188,11 @@ class EvidenceSpan(BaseModel):
     quote: str
     claim: str
     boundary: str = ''
+    source_type: str = ''
+    adoption_reason: str = ''
+    use_scope: str = ''
+    quality: Literal['suitable', 'limited', 'insufficient', 'unassessed'] = 'unassessed'
+    core_claim: bool = False
 
 
 class ResearchIssue(BaseModel):

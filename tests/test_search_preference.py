@@ -82,10 +82,10 @@ def test_sufficient_native_skips_academic_supplement(client,network,routes,monke
     assert not network and not w.policy_issue
 
 
-def test_native_budget_failure_never_spills_when_switch_off(client,network,routes):
+def test_legacy_budget_does_not_block_native_when_fallback_off(client,network,routes):
     w=worker('native',False);w.cfg['budget']=0
     asyncio.run(w.discover(['query']))
-    assert not routes and not network and '预算' in w.policy_issue
+    assert routes==['native'] and not network and not w.policy_issue
 
 
 def test_cached_channels_are_identified_without_new_requests(client,network,routes):
@@ -117,8 +117,8 @@ def test_evidence_gap_uses_backup_even_with_many_native_sources(client,network,r
         return materials.source(url,body,url,'web')
     monkeypatch.setattr(materials,'from_url',read)
     original=research.structured
-    async def structured(a,stage,instruction,schema,job_id,candidates=None):
-        value=await original(a,stage,instruction,schema,job_id,candidates)
+    async def structured(a,stage,instruction,schema,job_id,candidates=None,questions=()):
+        value=await original(a,stage,instruction,schema,job_id,candidates,questions=questions)
         if schema.__name__=='ResearchNotes' and not any(s.get('url','').endswith('/tavily') for s in a['sources']):
             value['gaps']=['缺少另一项关键事实']
         return value
@@ -131,8 +131,8 @@ def test_existing_material_sufficient_skips_all_search(client,network,routes,mon
     from backend import materials
     w=worker('native');w.a['sources']=[materials.source('资料','研究只适用于给定条件。'*30)]
     original=research.structured
-    async def structured(a,stage,instruction,schema,job_id,candidates=None):
-        value=await original(a,stage,instruction,schema,job_id,candidates)
+    async def structured(a,stage,instruction,schema,job_id,candidates=None,questions=()):
+        value=await original(a,stage,instruction,schema,job_id,candidates,questions=questions)
         if schema.__name__=='ResearchPlan': value['needed']=False
         return value
     monkeypatch.setattr(research,'structured',structured)
@@ -167,9 +167,9 @@ def test_page_render_independent_of_search_engines(client,network,monkeypatch):
 
 def test_evidence_assessment_includes_supplemental_question(client,network,monkeypatch):
     w=worker('native');seen=[];original=research.structured
-    async def structured(a,stage,instruction,schema,job_id,candidates=None):
+    async def structured(a,stage,instruction,schema,job_id,candidates=None,questions=()):
         seen.append(instruction)
-        return await original(a,stage,instruction,schema,job_id,candidates)
+        return await original(a,stage,instruction,schema,job_id,candidates,questions=questions)
     monkeypatch.setattr(research,'structured',structured)
     asyncio.run(w.assess());count=len(seen)
     asyncio.run(w.assess());assert len(seen)==count

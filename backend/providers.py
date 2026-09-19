@@ -234,8 +234,8 @@ async def image_generate(s, prompt, size, emit=None):
                 blob,_=await fetch_bytes(item['url'],max_bytes=30*1024*1024)
                 return blob
             raise ValueError('图片接口没有返回可保存的图片')
-    except httpx.TimeoutException: raise ValueError('图片生成超时，可能已计费；预算预留保留，不自动重试') from None
-    except httpx.HTTPError: raise ValueError('图片连接失败，可能已计费；预算预留保留，不自动重试') from None
+    except httpx.TimeoutException: raise ValueError('图片生成超时，结果未知，不自动重试') from None
+    except httpx.HTTPError: raise ValueError('图片连接失败，结果未知，不自动重试') from None
 
 
 async def search(query, days=None):

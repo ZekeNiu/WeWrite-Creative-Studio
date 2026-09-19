@@ -85,7 +85,7 @@ def test_batch_selection_atomic_keeps_other_sources_and_conflict(client):
 
 def test_research_keeps_existing_evidence_flow_without_purpose_generation(client,model,monkeypatch):
     a=seeded(client);calls=[]
-    async def structured(a,stage,instruction,schema,job_id,candidates=None):
+    async def structured(a,stage,instruction,schema,job_id,candidates=None,questions=()):
         calls.append(schema.__name__)
         assert 'source_uses' not in instruction
         if schema is ResearchPlan:return ResearchPlan(needed=False,queries=[],questions=[]).model_dump()

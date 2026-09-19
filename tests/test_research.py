@@ -111,14 +111,17 @@ def test_failed_native_falls_back_without_repeating(client,network,monkeypatch):
     assert any(u['stage']=='search' and u['status']=='unknown' for u in store.usage(a['id']))
 
 
-def test_budget_skips_unknown_paid_allows_free(client,network,monkeypatch):
+def test_legacy_budget_allows_unknown_price_native(client,network,monkeypatch):
     c=providers.settings();c['search']['budget']=0;providers.save_settings(Settings.model_validate(c))
     s=providers.effective_service('search');store.capability(providers.fingerprint(s,'search'),{'status':'tested'})
-    async def forbidden(*args):pytest.fail('paid native should not run')
-    monkeypatch.setattr(search_tools,'native',forbidden)
+    calls=[]
+    async def native(*args):
+        calls.append('native')
+        return [{'url':'https://example.org/research','title':'原始资料','content':'摘要线索'}],{'calls':1}
+    monkeypatch.setattr(search_tools,'native',native)
     a=article(client);j=store.create_job(a['id'],{'stage':'research'});w=research.Research(a,j['id'],'sources')
     asyncio.run(w.discover(['q']))
-    assert network and w.added and 'native' in w.disabled
+    assert calls==['native'] and w.added and not network
 
 
 def test_excluded_source_never_reintroduced(client,network):

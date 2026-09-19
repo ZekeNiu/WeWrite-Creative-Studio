@@ -68,7 +68,8 @@ def get_article(id):
         if not row:
             raise KeyError('找不到这篇文章')
         from .flow_state import present
-        return present(json.loads(row['data']))
+        from .review_state import legacy
+        return present(legacy(json.loads(row['data']), db))
 
 
 def list_articles():
@@ -97,7 +98,7 @@ class Conflict(Exception):
     pass
 
 
-def save_article(id, expected_revision, mutate, label, invalidate=None):
+def save_article(id, expected_revision, mutate, label, invalidate=None, review_action=False):
     with connection() as db:
         row=db.execute('SELECT data FROM articles WHERE id=?',(id,)).fetchone()
         if not row: raise KeyError('文章不存在')
@@ -128,6 +129,10 @@ def save_article(id, expected_revision, mutate, label, invalidate=None):
             for s in STAGES[start+1:]:
                 if a['stages'][s] in ('done','needs_input','stale'):
                     a['stages'][s]='stale'
+        from . import review_state
+        if review_action: review_state.finish_action(a)
+        else: review_state.present(a)
+        review_state.sync_job(db,a)
         a['revision']+=1; a['updated']=now()
         db.execute('UPDATE articles SET data=? WHERE id=?',(encode(a),id))
         from .flow_state import present

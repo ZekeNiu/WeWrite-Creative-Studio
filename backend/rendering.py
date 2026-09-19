@@ -52,11 +52,6 @@ def markdown(a, export=False):
             else: content+=block
         else: content+=block
     if a['layout']['author']: content+='\n\n'+a['layout']['author']
-    provenance=[]
-    if any(u.get('stage') in ('write','revise','review') and u.get('status')=='completed' for u in store.usage(a['id'])):
-        provenance.append('本文使用 AI 辅助创作或编辑。')
-    if any(im.get('prompt') and im.get('selected',True) for im in a['images']): provenance.append('部分配图由 AI 生成。')
-    if provenance: content+='\n\n'+''.join(provenance)
     if unknown: content+='\n\n引用待关联：'+', '.join(unknown)
     if refs:
         content+='\n\n## 参考文献\n\n'
@@ -81,11 +76,12 @@ def render(a, export=False):
 
 
 def export_zip(a):
+    from .review_state import label as review_label
     result=render(a,True); output=io.BytesIO()
     with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as z:
         z.writestr('文章.md',result['markdown']); z.writestr('排版.html',result['html'])
         z.writestr('来源清单.json',json.dumps(a['sources'],ensure_ascii=False,indent=2))
-        z.writestr('使用说明.txt','打开排版.html 查看完整排版。复制正文到公众号编辑器后，请按图示位置上传 images 中的本地图片。\n审核状态：'+a['stages']['review']+'\nAI 审核只作辅助，请最终核对正文与引用。')
+        z.writestr('使用说明.txt','打开排版.html 查看完整排版。复制正文到公众号编辑器后，请按图示位置上传 images 中的本地图片。\n审核状态：'+review_label(a)+'\nAI 审核只作辅助，请最终核对正文与引用。')
         for im in a['images']:
             if im.get('selected',True):
                 p=store.article_dir(a['id'])/'assets'/im['filename']

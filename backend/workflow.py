@@ -33,6 +33,7 @@ def validate_result(stage,result,a):
             if stage=='sources' and x['type']=='fact' and not x['source_ids']: x['status']='unsupported'
             if stage=='sources' and x['type']=='user_experience' and not any(sources[s].get('personal_material') for s in x['source_ids']): x['status']='unsupported'
         if stage=='review':
+            if not items and result['decision']!='pass': raise ValueError('模型未给出可处理的审核意见，请重新审核；当前正文已保留')
             for x in items: x['status']='pending'
             if items and result['decision']=='pass': result['decision']='revise'
             if any(i['severity']=='blocker' for i in items): result['decision']='revise'
@@ -77,7 +78,7 @@ def cancel(id):
 
 
 async def call(job_id,stage,a,request):
-    store.update_job(job_id,current_step='generation',generation_revision=a['revision'],message='正在生成'+LABELS.get(stage,stage)+'结果')
+    store.update_job(job_id,current_step='generation',generation_revision=a['revision'],message='正在生成'+LABELS.get(stage,'当前环节'))
     s=providers.service_for(stage); text=''; last=0
     async def emit(delta):
         nonlocal text,last
@@ -120,8 +121,11 @@ def apply_result(a,stage,result,request):
         elif stage=='write': v['content']=result
         elif stage=='review':
             from wewrite.commands.humanness_score import score_article
+            from .review_state import signature
             result['tool_hints']=score_article(v['content'])
             result['content_revision']=v['revision']
+            result.update(round_id=store.uid(),job_id=request.get('_job_id',''),reviewed_key=signature(v))
+            if result['decision']=='pass': result['completion']='ai'
             v['review']=result
             if result['decision']!='pass': v['stages']['review']='needs_input'
         elif stage=='visual': v['image_plans']=result['images'][:v['visual']['count']]
@@ -145,21 +149,17 @@ def apply_review_fixes(a):
 
 async def generate_image(a,job_id,plan):
     s=providers.service_for('image'); price=s.get('image_price')
-    if price is None or price<=0: raise ValueError('请先在图片服务中填写可靠的每张预估价格，才能按预算生成图片')
-    if s.get('currency','CNY')!='CNY': raise ValueError('图片预算以人民币计，请配置人民币每张价格')
-    used=sum(u.get('reserved_cost',0) for u in store.usage(a['id']) if u.get('stage')=='image')
-    if used+price>a['visual']['budget']+1e-8: raise ValueError('本篇图片预算不足，请调整预算或减少图片数量。未知结果的请求仍占用预留。')
-    reservation=store.add_usage(a['id'],stage='image',model=s['model'],service=s['name'],reserved_cost=price,estimated_cost=price,currency='CNY',status='reserved')
+    reservation=store.add_usage(a['id'],stage='image',model=s['model'],service=s['name'],estimated_cost=price,currency=s.get('currency','CNY'),status='reserved')
     store.update_job(job_id,message='正在生成图片；连接中断时不会自动重复请求')
     try:
         blob=await providers.image_generate(s,plan['prompt'],a['visual']['size'])
+        image=Image.open(io.BytesIO(blob)); image.load()
+        if image.width*image.height>40_000_000: raise ValueError('图片尺寸过大')
+        filename=store.uid()+'.png'; p=store.article_dir(a['id'])/'assets'; p.mkdir(exist_ok=True)
+        image.convert('RGB').save(p/filename,'PNG')
     except BaseException:
         store.update_usage(reservation['id'],status='unknown',estimated_cost=None)
         raise
-    image=Image.open(io.BytesIO(blob)); image.load()
-    if image.width*image.height>40_000_000: raise ValueError('图片尺寸过大')
-    filename=store.uid()+'.png'; p=store.article_dir(a['id'])/'assets'; p.mkdir(exist_ok=True)
-    image.convert('RGB').save(p/filename,'PNG')
     store.update_usage(reservation['id'],status='completed')
     item=dict(plan,filename=filename,selected=True,created=store.now(),id=store.uid())
     store.update_job(job_id,result={'image':item})
@@ -172,7 +172,7 @@ async def generate_image(a,job_id,plan):
 
 
 async def run(job_id):
-    j=store.job(job_id); a=store.get_article(j['article_id']); req=j['request']; stage=req['stage']
+    j=store.job(job_id); a=store.get_article(j['article_id']); req={**j['request'],'_job_id':job_id}; stage=req['stage']
     try:
         if a['revision']!=req['revision']: raise store.Conflict('启动前文章已有更新，请重新开始')
         store.update_job(job_id,status='running')
@@ -191,13 +191,13 @@ async def run(job_id):
                 # A successful explicit verification is usable material work, not an idle stage.
                 notes=a.get('research',{})
                 claims=[dict(id='C'+research.digest([e['source_id'],e['claim']])[:10],text=e['claim'],type='fact',
-                    source_ids=[e['source_id']],status='bounded' if e.get('boundary') else 'supported',
+                    source_ids=[e['source_id']],status='unsupported' if e.get('quality')=='insufficient' else 'bounded' if e.get('boundary') or e.get('quality')=='limited' else 'supported',
                     boundary=e.get('boundary',''),evidence=[e]) for e in notes.get('evidence',[])]
                 a=apply_result(a,'sources',dict(summary=notes.get('summary',''),claims=claims,gaps=[]),req)
                 if req.get('continuation_job_id'):
                     original=store.job(req['continuation_job_id']);target=original['stage']
                     if a['auto'].get(target):
-                        stage=target;req={**original['request'],'resume_job_id':original['id']}
+                        stage=target;req={**original['request'],'resume_job_id':original['id'],'_job_id':job_id}
                         store.update_job(job_id,resumed_from=original['id'])
                         continue
                 store.update_job(job_id,status='completed',ended=store.now(),message='资料检索与整理已完成');return
@@ -222,11 +222,13 @@ async def run(job_id):
             else:
                 result=await call(job_id,stage,a,req)
                 a=apply_result(a,stage,result,req)
+                if stage=='review': store.update_job(job_id,review_round_id=a['review']['round_id'])
                 if stage=='review' and a['auto']['review'] and result['decision']!='pass':
                     fixed=apply_review_fixes(a)
                     if fixed:
                         a=fixed; store.update_job(job_id,message='正在复审修改后的正文（第 2 轮）')
                         result=await call(job_id,'review',a,req); a=apply_result(a,'review',result,req)
+                        store.update_job(job_id,review_round_id=a['review']['round_id'])
                 if stage=='visual' and a['auto']['visual']:
                     for plan in a['image_plans']: a=await generate_image(a,job_id,plan)
             store.event(job_id,'saved',revision=a['revision'])

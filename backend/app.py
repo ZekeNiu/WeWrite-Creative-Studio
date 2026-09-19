@@ -62,7 +62,7 @@ async def conflict(request,exc): return JSONResponse({'detail':str(exc)},409)
 
 
 @app.get('/api/health')
-def health(): return {'app':'wewrite-studio','version':'1.4.4','upstream':'4.2.1','workspace':str(store.ROOT)}
+def health(): return {'app':'wewrite-studio','version':'1.4.5','upstream':'4.2.1','workspace':str(store.ROOT)}
 
 
 @app.get('/api/meta')
@@ -343,10 +343,11 @@ def apply_issue(id:str,issue_id:str,value:dict):
         if action=='accept':
             quote=issue['quote']
             if not quote or a['content'].count(quote)!=1: raise ValueError('原文已改变或存在重复，请在正文中手动修改后复审')
-            a['content']=a['content'].replace(quote,value.get('replacement',issue['suggestion']),1)
+            issue['applied_replacement']=value.get('replacement',issue['suggestion'])
+            a['content']=a['content'].replace(quote,issue['applied_replacement'],1)
             a['stages']['review']='stale'
         issue['status']='accepted' if action=='accept' else 'rejected'
-    return store.save_article(id,value['revision'],change,'接受审核修改' if action=='accept' else '拒绝审核意见',invalidate='write' if action=='accept' else None)
+    return store.save_article(id,value['revision'],change,'接受审核修改' if action=='accept' else '拒绝审核意见',invalidate='write' if action=='accept' else None,review_action=True)
 
 
 @app.post('/api/articles/{id}/suggestions/{sid}')

@@ -53,12 +53,22 @@ def ready(a):
 
 
 def present(a):
+    from .review_state import present as review_present
+    review_present(a)
+    a['visual'].pop('budget',None)
     a['workflow']=ready(a)
     if a.get('research'): a['research']['issues']=issues(a)
     return a
 
 
 def job_view(j):
+    if j.get('stage')=='review' and j.get('status')=='needs_input' and j.get('current_step')=='generation':
+        from . import store
+        a=store.get_article(j['article_id']);review=a.get('review') or {}
+        same_round=(review.get('job_id')==j['id'] and review.get('round_id')==j.get('review_round_id'))
+        legacy_round=(not review.get('round_id') and review.get('content_revision')==j.get('generation_revision'))
+        if (same_round or legacy_round) and review.get('completion')=='human' and a['stages']['review']=='done':
+            j=dict(j,status='completed',message='本轮意见已处理',review_completion='human')
     # Older releases incorrectly labelled paused research as completed.
     r=j.get('research',{})
     notes=r.get('notes',{})

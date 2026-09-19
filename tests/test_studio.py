@@ -167,7 +167,7 @@ def test_suggestions_and_review_changes(client,model):
         v['review']={'issues':[{'id':'i1','quote':'另一段不改变。','suggestion':'另一段更清楚。','severity':'major','reason':'表达','status':'pending'}]};v['stages']['review']='done'
     a=store.save_article(a['id'],a['revision'],review,'test')
     a=client.post(f'/api/articles/{a["id"]}/review/i1',headers=H,json={'revision':a['revision'],'action':'accept'}).json()
-    assert '另一段更清楚。' in a['content'] and a['stages']['review']=='stale'
+    assert '另一段更清楚。' in a['content'] and a['stages']['review']=='done' and a['review']['completion']=='human'
 
 
 def test_import_pdf_docx_and_reject_scanned(client):
@@ -183,13 +183,16 @@ def test_import_pdf_docx_and_reject_scanned(client):
     assert r.status_code==400 and '扫描' in r.text
 
 
-def test_images_budget_failure_and_export(client,model,monkeypatch):
+def test_image_failure_no_budget_gate_and_export(client,model,monkeypatch):
     a=new(client);a=patch(client,a,{'content':'## 小节\n\n这里是正文','visual':{'enabled':True,'count':1,'size':'1024x1024','budget':1},'image_plans':[{'id':'cover','role':'cover','prompt':'test'}]},'write')
-    async def fail(*args,**kwargs): raise ValueError('图片生成超时')
+    calls=[]
+    async def fail(*args,**kwargs):
+        calls.append(1);raise ValueError('图片生成超时')
     monkeypatch.setattr(providers,'image_generate',fail)
     assert run(client,a,'image',image_id='cover')['status']=='failed'
-    assert store.usage(a['id'])[0]['reserved_cost']==1
-    assert '预算不足' in run(client,a,'image',image_id='cover')['message']
+    assert store.usage(a['id'])[0]['status']=='unknown' and len(calls)==1
+    assert '图片生成超时' in run(client,a,'image',image_id='cover')['message']
+    assert len(calls)==2
     blob=io.BytesIO();Image.new('RGB',(64,64),'green').save(blob,'PNG')
     r=client.post(f'/api/articles/{a["id"]}/images/upload',headers=H,data={'revision':a['revision'],'role':'cover'},files={'file':('cover.png',blob.getvalue())})
     assert r.status_code==200;a=r.json()

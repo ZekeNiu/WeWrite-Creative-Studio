@@ -61,8 +61,7 @@ async def main(case,resume=False,stage=None):
                 if src.exists(): shutil.copytree(src,store.article_dir(a['id']),dirs_exist_ok=True)
             else:
                 a=store.create_article(dict(column='AI',domain='如何核对 AI 回答的来源，面向普通用户的常青科普',purpose='给出可执行的核对方法，不讨论需要新实验才能证明的效果',words=900),auto={s:True for s in STAGES},diagnostic=True)
-            price=providers.effective_service('image')['image_price']
-            a=store.save_article(a['id'],a['revision'],lambda v:v.update(visual={**v['visual'],'enabled':True,'count':1,'budget':max(v['visual']['budget'],price)}),'Test image budget')
+            a=store.save_article(a['id'],a['revision'],lambda v:v.update(visual={**v['visual'],'enabled':True,'count':1}),'Enable test image')
             report['article_id']=a['id'];save()
         if case=='manual':
             a=article()

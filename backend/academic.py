@@ -43,7 +43,18 @@ def identifiers(s):
     return result
 
 
+def distinct_versions(a,b):
+    am=a.get('bibliography') or {};bm=b.get('bibliography') or {}
+    if am.get('document_type') and bm.get('document_type') and ('PP'==am['document_type']) != ('PP'==bm['document_type']): return True
+    def version(s,m):
+        match=re.search(r'\d{4}\.\d{4,5}(v\d+)',s.get('arxiv_id','')+' '+s.get('url',''),re.I)
+        return str(m.get('version') or (match[1] if match else '')).lower().strip()
+    av,bv=version(a,am),version(b,bm)
+    return bool(av and bv and av!=bv)
+
+
 def same(a,b):
+    if distinct_versions(a,b): return False
     ai,bi=identifiers(a),identifiers(b)
     if ai & bi: return True
     # Do not merge a preprint and a journal version based on title similarity alone.
@@ -53,7 +64,9 @@ def same(a,b):
     if {x[0] for x in ai}&{x[0] for x in bi}: return False
     title=lambda x:re.sub(r'[^\w]','',unicodedata.normalize('NFKC',x.get('title','')).lower())
     t=title(a)
-    return len(t)>20 and t==title(b)
+    # Title alone cannot establish that two independent sources are the same work.
+    return (len(t)>20 and t==title(b) and bool(am.get('authors')) and am.get('authors')==bm.get('authors')
+            and bool(am.get('year')) and am.get('year')==bm.get('year') and am.get('venue')==bm.get('venue'))
 
 
 def combine(old,new):

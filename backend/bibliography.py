@@ -10,7 +10,7 @@ from . import materials
 
 MARKER = re.compile(r'\[(S[a-zA-Z0-9]+(?:\s*[,，;；]\s*S[a-zA-Z0-9]+)*)\]')
 FIELDS = ('authors', 'title', 'document_type', 'venue', 'year', 'volume', 'issue',
-          'pages', 'article_number', 'doi', 'url', 'access_date', 'published_date', 'version', 'platform')
+          'pages', 'article_number', 'doi', 'url', 'access_date', 'published_date', 'version', 'platform', 'publisher', 'publication_place')
 
 
 class Metadata(BaseModel):
@@ -29,6 +29,8 @@ class Metadata(BaseModel):
     published_date: str = Field('',max_length=50)
     version: str = Field('',max_length=100)
     platform: str = Field('',max_length=500)
+    publisher: str = Field('',max_length=1000)
+    publication_place: str = Field('',max_length=500)
 
 
 def metadata(s):
@@ -60,13 +62,16 @@ def format_reference(s):
     m = metadata(s); typ = m.get('document_type') or ''; url = m.get('url', '').strip()
     missing = []
     if not m.get('title'): missing.append('题名')
-    if typ not in ('J', 'C', 'PP', 'EB'): missing.append('受支持的文献类型（J/C/PP/EB）')
+    if typ not in ('J', 'C', 'PP', 'EB', 'M'): missing.append('受支持的文献类型（J/C/PP/EB/M）')
     if not url and typ in ('EB','PP'): missing.append('可追溯网址')
     if typ in ('J', 'C'):
         for field, label in [('authors', '作者'), ('venue', '期刊或会议'), ('year', '年份')]:
             if not m.get(field): missing.append(label)
     if typ in ('EB', 'PP') and not m.get('access_date'): missing.append('访问日期')
     if typ == 'PP' and not m.get('authors'): missing.append('作者')
+    if typ == 'M':
+        for field,label in [('authors','作者'),('publisher','出版社'),('publication_place','出版地'),('year','年份')]:
+            if not m.get(field): missing.append(label)
     if any(isinstance(a,str) and re.search(r'[A-Za-z]{2,}\s+[A-Za-z]{2,}',a) for a in m.get('authors',[])):
         missing.append('西文作者姓、名顺序待核对')
     prefix = author_text(m.get('authors'))
@@ -74,7 +79,15 @@ def format_reference(s):
     out += '[' + (typ or '?') + ('/OL' if url else '') + ']'
     if typ == 'C': out += '//' + m.get('venue', '')
     else: out += '. '
-    if typ in ('J', 'C'):
+    if typ == 'M':
+        if m.get('version'): out+=m['version'].rstrip('.')+'. '
+        out+=m.get('publication_place','')
+        if m.get('publisher'): out+=(': ' if m.get('publication_place') else '')+m['publisher']
+        if m.get('year'): out+=', '+m['year']
+        if m.get('pages'): out+=': '+m['pages']
+        if url and m.get('access_date'): out+='['+m['access_date'][:10]+']'
+        out=out.rstrip(' ,')+'. '
+    elif typ in ('J', 'C'):
         if typ == 'J': out += m.get('venue', '')
         if m.get('year'): out += ', ' + str(m['year'])
         if m.get('volume'): out += ', ' + str(m['volume'])
@@ -127,7 +140,8 @@ def import_records(filename, blob):
                 venue=e.get('journal') or e.get('booktitle', ''), year=e.get('year', ''), volume=e.get('volume', ''),
                 issue=e.get('number', ''), pages=e.get('pages', '').replace('--', '-'), doi=e.get('doi', ''),
                 url=e.get('url') or ('https://doi.org/'+e['doi'] if e.get('doi') else ''), access_date=date.today().isoformat(),
-                platform=e.get('archiveprefix', ''), version=e.get('version', '')))
+                platform=e.get('archiveprefix', ''), version=e.get('edition') or e.get('version', ''),
+                publisher=e.get('publisher',''),publication_place=e.get('address','')))
     else:
         entries=[]; entry={}; last=None
         for line in text.splitlines():
@@ -143,7 +157,8 @@ def import_records(filename, blob):
             identifier=get('DO'); start=get('SP'); end=get('EP')
             records.append(dict(title=get('TI','T1'),authors=e.get('AU', e.get('A1', [])),document_type={'JOUR':'J','CONF':'C','CPAPER':'C','UNPB':'PP','BOOK':'M','CHAP':'M','THES':'D','RPRT':'R'}.get(get('TY'),'EB'),
                 venue=get('JO','JF','T2'),year=get('PY','Y1')[:4],volume=get('VL'),issue=get('IS'),pages=start+('-'+end if end else ''),
-                doi=identifier,url=get('UR') or ('https://doi.org/'+identifier if identifier else ''),access_date=date.today().isoformat()))
+                doi=identifier,url=get('UR') or ('https://doi.org/'+identifier if identifier else ''),access_date=date.today().isoformat(),
+                publisher=get('PB'),publication_place=get('CY'),version=get('ET')))
     if not records or len(records)>200: raise ValueError('请导入包含 1–200 条记录的 BibTeX 或 RIS 文件')
     result=[]
     for m in records:
