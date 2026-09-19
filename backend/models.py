@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 STAGES = ['topic', 'sources', 'outline', 'write', 'review', 'visual', 'layout']
 LABELS = dict(zip(STAGES, ['选题', '素材', '大纲', '写作', '审核修改', '配图', '排版导出']))
 LABELS['research']='检索规划与资料整理'
-LABELS.update(revise='修改选段', image='图片', layout_advice='排版建议', search='搜索工具')
+LABELS.update(revise='修改选段', image='图片', layout_advice='阅读与结构建议', search='搜索工具')
 ROUTES = [*STAGES[:-1], 'revise', 'image', 'layout_advice', 'research']
 
 
@@ -23,7 +23,7 @@ class Brief(BaseModel):
 
 
 class Layout(BaseModel):
-    theme: str = 'professional-clean'
+    theme: str = 'editorial-science'
     font_size: int = Field(16, ge=12, le=24)
     line_height: float = Field(1.8, ge=1.2, le=3)
     paragraph_gap: int = Field(18, ge=4, le=40)

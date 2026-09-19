@@ -178,7 +178,7 @@ async def run(job_id):
         store.update_job(job_id,status='running')
         while True:
             prerequisites(stage,a)
-            store.update_job(job_id,stage=stage,target_stage=j['request']['stage'],message='正在'+LABELS.get(stage,{'revise':'修改选段','image':'生成图片','layout_advice':'分析排版'}.get(stage,stage)),partial='',result=None)
+            store.update_job(job_id,stage=stage,target_stage=j['request']['stage'],message='正在'+LABELS.get(stage,{'revise':'修改选段','image':'生成图片','layout_advice':'分析阅读与结构'}.get(stage,stage)),partial='',result=None)
             store.event(job_id,'stage',stage=stage)
             if stage in ('topic','sources','outline','review','research'):
                 a,pending=await research.gather(a,job_id,stage,req.get('instruction','') if stage in ('sources','research','outline') else '')
@@ -218,7 +218,7 @@ async def run(job_id):
                 a=store.save_article(a['id'],a['revision'],suggest,'生成修改建议')
             elif stage=='layout_advice':
                 result=await call(job_id,stage,a,req)
-                a=store.save_article(a['id'],a['revision'],lambda v:v.update(layout_advice=result),'生成排版建议')
+                a=store.save_article(a['id'],a['revision'],lambda v:v.update(layout_advice=result),'生成阅读与结构建议')
             else:
                 result=await call(job_id,stage,a,req)
                 a=apply_result(a,stage,result,req)

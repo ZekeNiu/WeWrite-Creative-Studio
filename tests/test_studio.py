@@ -55,7 +55,7 @@ def model(monkeypatch,client):
     providers.save_settings(config)
     calls=[]
     async def fake(s,system,prompt,emit=None):
-        value=json.loads(prompt); context=value['资料与当前内容']; schema=value.get('schema',{}).get('title'); ids=[x['id'] for x in context['sources']]
+        value=json.loads(prompt); context=value['资料与当前内容']; schema=value.get('schema',{}).get('title'); ids=[x['id'] for x in context.get('sources',[])]
         calls.append((schema or 'write',s['model']))
         if schema=='TopicsResult': result={'topics':[{'title':f'可靠的选题 {i+1}','angle':'从证据边界出发','reason':'明确回答读者的问题','source_ids':ids[:1]} for i in range(10)]}
         elif schema=='EvidenceResult': result={'summary':'只采用给定材料','claims':[{'id':'C1','text':'研究仅能支持限定条件下的结论','type':'fact','source_ids':ids[:1],'status':'supported','boundary':'不能扩大因果解释'}],'gaps':[]}

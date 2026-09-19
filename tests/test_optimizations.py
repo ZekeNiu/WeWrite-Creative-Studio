@@ -116,7 +116,7 @@ def test_layout_progress_uses_chinese(client,model,monkeypatch):
     def update(id,**value): seen.append(value.get('message',''));return original(id,**value)
     monkeypatch.setattr(store,'update_job',update)
     assert run(client,a,'layout_advice',chain=False)['status']=='completed'
-    assert '正在生成排版建议' in seen
+    assert '正在生成阅读与结构建议' in seen
     assert not any('layout_advice' in text for text in seen)
 
 

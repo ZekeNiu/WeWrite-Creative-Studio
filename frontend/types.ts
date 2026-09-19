@@ -1,6 +1,6 @@
 export const STAGES=['topic','sources','outline','write','review','visual','layout'] as const;
 export type Stage=typeof STAGES[number];
-export const LABELS:Record<string,string>={research:'检索规划与资料整理',search:'搜索工具',topic:'选题',sources:'素材',outline:'大纲',write:'写作',review:'审核修改',visual:'配图',layout:'排版导出',revise:'修改选段',image:'生成图片',layout_advice:'排版建议'};
+export const LABELS:Record<string,string>={research:'检索规划与资料整理',search:'搜索工具',topic:'选题',sources:'素材',outline:'大纲',write:'写作',review:'审核修改',visual:'配图',layout:'排版导出',revise:'修改选段',image:'生成图片',layout_advice:'阅读与结构建议'};
 export const STATUS:Record<string,string>={idle:'未开始',done:'已完成',stale:'需要更新',needs_input:'待你确认'};
 export interface Brief {column:string;domain:string;topic:string;audience:string;words:number;persona:string;tone:string;purpose:string;include:string;avoid:string;recent_days:number}
 export interface Source {doi?:string;bibliography?:Record<string,any>;metadata_provenance?:any[];id:string;title:string;text:string;url:string;kind:string;status:string;selected:boolean;personal_material?:boolean;summary:string;use:string;pages:{page:number;text:string}[];provider?:string;published_date?:string;retrieved_at?:string;evidence_spans?:{quote:string;claim:string;boundary:string;location:string;source_type?:string;adoption_reason?:string;use_scope?:string;quality?:string}[]}
@@ -13,6 +13,8 @@ export interface SearchConfig {preference:string;allow_fallback:boolean;native_p
 export interface CapabilityResult {status:string;message?:string;at?:string;image_url?:string;sources?:{url:string;title:string}[];reply?:string;protocol?:string}
 export interface ModelCard {service_id:string;model:string;name:string;roles:string[];search_protocol:string;capabilities:Record<string,CapabilityResult>}
 export interface Settings {services:Service[];default_service:string;routes:Record<string,{service_id:string;model:string}>;search:SearchConfig;default_auto:Record<string,boolean>;model_connections?:{service_id:string;model:string;search_protocol:string}[];model_capabilities?:ModelCard[];route_capabilities?:Record<string,{status:string;model?:string;service?:string;image_url?:string}>}
-export interface Meta {personas:{id:string;name:string;description:string;example:string}[];themes:{id:string;name:string;description:string;colors:Record<string,string>}[]}
+export interface Meta {personas:{id:string;name:string;description:string;example:string}[];themes:Theme[]}
 export interface Job {resumed_from?:string;id:string;article_id:string;stage:string;status:string;created:string;ended:string|null;message:string;partial:string;result:any;request:any}
 export type Save=(changes:Partial<Article>,stage?:string)=>Promise<Article>;
+
+export interface Theme {id:string;name:string;description:string;colors:Record<string,string>;group:'editorial'|'classic';defaults:Pick<Article['layout'],'font_size'|'line_height'|'paragraph_gap'>}

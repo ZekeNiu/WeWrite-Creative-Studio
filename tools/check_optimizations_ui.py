@@ -43,8 +43,9 @@ with sync_playwright() as p:
     page.wait_for_function("document.querySelectorAll('.image-library img, .image-card img, .generated-images img').length>0")
     assert len(article('review')['images'])==1
     navigate('排版导出')
-    page.get_by_role('button',name='AI 排版建议',exact=True).click()
-    expect(page.get_by_text('正在生成排版建议',exact=True)).to_be_visible()
+    page.locator('.reading-advice summary').click()
+    page.get_by_role('button',name='获取阅读与结构建议',exact=True).click()
+    expect(page.get_by_text('正在生成阅读与结构建议',exact=True)).to_be_visible()
     expect(page.locator('.layout-advice')).to_contain_text('建议保留小标题')
     preview=page.frame_locator('iframe[title="公众号排版预览"]')
     expect(preview.locator('body')).not_to_contain_text('本文使用 AI 辅助创作或编辑')

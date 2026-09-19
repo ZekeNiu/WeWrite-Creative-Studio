@@ -83,6 +83,10 @@ def meta():
 def settings(): return providers.settings()
 
 
+@app.get('/api/themes/{id}/preview')
+def theme_preview(id:str): return rendering.theme_preview(id)
+
+
 @app.put('/api/settings')
 def settings_save(value:Settings): return providers.save_settings(value)
 
@@ -179,7 +183,9 @@ def patch(id:str,payload:ArticlePatch):
     if set(payload.changes)-allowed: raise ValueError('包含不可修改的字段')
     c=payload.changes.copy()
     if 'brief' in c: c['brief']=Brief.model_validate(c['brief']).model_dump()
-    if 'layout' in c: c['layout']=Layout.model_validate(c['layout']).model_dump()
+    if 'layout' in c:
+        c['layout']=Layout.model_validate(c['layout']).model_dump()
+        if c['layout']['theme'] not in {t['id'] for t in rendering.themes()}: raise ValueError('排版主题不存在')
     if 'visual' in c: c['visual']=VisualSettings.model_validate(c['visual']).model_dump()
     if 'outline' in c and c['outline']: c['outline']=OutlineResult.model_validate(c['outline']).model_dump()
     if 'auto' in c: c['auto']={s:bool(c['auto'].get(s,False)) for s in STAGES}
