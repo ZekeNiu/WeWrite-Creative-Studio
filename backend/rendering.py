@@ -15,7 +15,7 @@ THEME_LABELS={'bauhaus':'包豪斯','bold-green':'墨绿商务','bold-navy':'深
  'elegant-rose':'玫瑰雅致','focus-red':'焦点红','github':'开发者笔记','impeccable':'极简质感','ink':'水墨留白',
  'lobster-notes':'手账随笔','midnight':'深夜阅读','minimal-gold':'黑金简约','minimal':'纯净简约','newspaper':'报刊风',
  'professional-clean':'专业清爽','sspai':'少数派','tech-modern':'现代科技','warm-editorial':'温暖叙事'}
-CSS=CSSSanitizer(allowed_css_properties=CSSSanitizer().allowed_css_properties|frozenset(['border-radius','padding','padding-top','padding-bottom','padding-left','padding-right','margin','margin-top','margin-bottom','margin-left','margin-right','display','max-width','min-width','width','height','line-height','letter-spacing','box-shadow','overflow','overflow-wrap','word-break','background','opacity','text-align','border-left','border-bottom','border-top','border-right','font-weight','white-space','table-layout']))
+CSS=CSSSanitizer(allowed_css_properties=CSSSanitizer().allowed_css_properties|frozenset(['border-radius','padding','padding-top','padding-bottom','padding-left','padding-right','margin','margin-top','margin-bottom','margin-left','margin-right','display','max-width','min-width','width','height','line-height','letter-spacing','box-shadow','box-sizing','overflow','overflow-wrap','word-break','background','opacity','text-align','border-left','border-bottom','border-top','border-right','font-weight','white-space','table-layout']))
 TAGS=['section','article','div','span','p','br','h1','h2','h3','h4','h5','h6','strong','em','b','i','u','s','a','img','blockquote','ul','ol','li','pre','code','table','thead','tbody','tr','th','td','hr','sup','sub','figure','figcaption']
 
 

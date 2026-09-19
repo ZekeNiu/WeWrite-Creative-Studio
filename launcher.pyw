@@ -40,6 +40,11 @@ def expected_version():
     return json.loads((ROOT/'package.json').read_text('utf-8'))['version']
 
 
+def open_workbench(port):
+    # A unique navigation also bypasses an old tab's in-memory app or cached entry.
+    webbrowser.open_new_tab(f'http://127.0.0.1:{port}/?v={expected_version()}&opened={time.time_ns()}')
+
+
 def active_jobs():
     path=DATA/'studio.sqlite'
     if not path.exists(): return False
@@ -87,7 +92,7 @@ def main():
             if '--no-browser' not in sys.argv: message('工作台已停止。文章和设置仍保存在本机。')
             return
         if reuse_existing(previous):
-            if '--no-browser' not in sys.argv: webbrowser.open(f'http://127.0.0.1:{previous["port"]}')
+            if '--no-browser' not in sys.argv: open_workbench(previous['port'])
             return
         LOGS.mkdir(parents=True,exist_ok=True)
         for name in ('setup.log','server.log'):
@@ -122,7 +127,7 @@ def main():
             process.terminate()
             raise RuntimeError('服务启动超时，请重新启动工作台。详细记录：data/logs/server.log')
         STATE.write_text(json.dumps(dict(pid=process.pid,port=port,token=token,workspace=str(ROOT))),encoding='utf-8')
-        if '--no-browser' not in sys.argv: webbrowser.open(f'http://127.0.0.1:{port}')
+        if '--no-browser' not in sys.argv: open_workbench(port)
     finally:
         ctypes.windll.kernel32.ReleaseMutex(mutex)
         ctypes.windll.kernel32.CloseHandle(mutex)

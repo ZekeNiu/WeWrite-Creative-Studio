@@ -26,7 +26,7 @@ export default function App(){
  function update(a:Article){articleRef.current=a;setArticle(a)}
  const report=(e:unknown)=>setError(errorText(e));
  async function act(fn:()=>Promise<void>){setPending(n=>n+1);pendingRef.current++;try{await fn()}catch(e){report(e)}finally{setPending(n=>n-1);pendingRef.current--}}
- async function refreshVersion(){await act(async()=>{await flush.current();await queue.current;window.location.reload()})}
+ async function refreshVersion(){await act(async()=>{await flush.current();await queue.current;const url=new URL(location.href);url.searchParams.set('opened',String(Date.now()));window.location.replace(url.href)})}
  async function refreshList(){setList(await api('/articles'))}
  async function open(id:string){await flush.current();await queue.current;await act(async()=>{const a=await api<Article>('/articles/'+id);update(a);setSourceFocus(0);setStep(STAGES.includes(a.current_stage as Stage)?a.current_stage as Stage:'topic');setSelected('');setInstruction('');setHighlight('');location.hash=id;const jobs=await api<Job[]>('/articles/'+id+'/jobs');setJob(jobs[0]||null);setSideTab(a.current_stage==='review'?'review':a.current_stage==='write'?'assist':'brief')})}
  useEffect(()=>{mounted.current=true;void act(async()=>{const [m,c,rows]=await Promise.all([api<Meta>('/meta'),api<Config>('/settings'),api<Article[]>('/articles')]);setMeta(m);setCfg(c);setList(rows);const id=location.hash.slice(1);if(id){const a=await api<Article>('/articles/'+id);update(a);setStep(STAGES.includes(a.current_stage as Stage)?a.current_stage as Stage:'topic');const jobs=await api<Job[]>('/articles/'+id+'/jobs');setJob(jobs[0]||null)}});return()=>{mounted.current=false}},[]);

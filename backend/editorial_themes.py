@@ -11,7 +11,11 @@ PRESETS={
     'editorial-science':dict(name='专业科普',description='清晰层级与克制强调，让观点和依据都易于阅读。',primary='#24685d',text='#263b36',muted='#6b7f79',paper='#ffffff',tint='#eff6f3',font_size=16,line_height=1.8,paragraph_gap=18),
     'editorial-essay':dict(name='人文随笔',description='衬线标题、温暖纸色，让文字在留白中舒展。',primary='#79634e',text='#403a33',muted='#8b8073',paper='#fcfaf5',tint='#f2ede3',font_size=17,line_height=1.9,paragraph_gap=22),
     'editorial-feature':dict(name='现代专题',description='醒目的分节色块，建立明快的图文阅读节奏。',primary='#294bc0',text='#20283d',muted='#707b95',paper='#ffffff',tint='#f0f3fc',font_size=16,line_height=1.8,paragraph_gap=18),
+    'editorial-folio':dict(name='典藏书页',description='双细线、菱形章饰与纸页留白，像一本值得收藏的书。',primary='#8c704a',text='#39362f',muted='#887e6b',paper='#fcfaf4',tint='#f3eee2',font_size=16,line_height=1.95,paragraph_gap=22),
+    'editorial-gallery':dict(name='雅致画廊',description='几何角饰与柔和引文，让文字和图片像展品一样呼吸。',primary='#71617e',text='#37343d',muted='#887e90',paper='#fefcfe',tint='#f5eff7',font_size=16,line_height=1.9,paragraph_gap=22),
+    'editorial-fieldnotes':dict(name='精密手册',description='编号签、刻度线与细密分隔，为专业内容建立秩序。',primary='#355e73',text='#2c3b44',muted='#73838c',paper='#ffffff',tint='#eff4f7',font_size=16,line_height=1.85,paragraph_gap=20),
 }
+CRAFTED={'editorial-folio','editorial-gallery','editorial-fieldnotes'}
 
 
 def catalog():
@@ -24,7 +28,10 @@ def style(node,**values):
     for pair in node.get('style','').split(';'):
         if ':' in pair:
             k,v=pair.split(':',1);current[k.strip()]=v.strip()
-    current.update({k.replace('_','-'):str(v) for k,v in values.items()})
+    for key,value in values.items():
+        if key=='border':
+            current.update({f'border-{side}':str(value) for side in ('top','right','bottom','left')})
+        else: current[key.replace('_','-')]=str(value)
     node['style']=';'.join(f'{k}:{v}' for k,v in current.items())
 
 
@@ -65,7 +72,7 @@ class EditorialConverter(WeChatConverter):
             if self.id=='editorial-essay': style(node,background='transparent',font_family=SERIF,border_left='none',border_top=f'1px solid {primary}',border_bottom=f'1px solid {primary}',padding='22px 10px')
             if self.id=='editorial-magazine': style(node,background='transparent',border_left=f'1px solid {primary}',padding='6px 0 6px 22px')
         for node in soup.find_all(['h1','h2','h3','h4','h5','h6']):
-            level=int(node.name[1]);style(node,font_family=SERIF if self.id in ('editorial-essay','editorial-magazine') else SANS,
+            level=int(node.name[1]);style(node,font_family=SERIF if self.id in ('editorial-essay','editorial-magazine','editorial-folio','editorial-gallery') else SANS,
                 font_size=f'{24 if level<=2 else 19 if level==3 else 17}px',font_weight=700,line_height=1.5,
                 color=p['text'],margin='36px 0 18px' if level<=2 else '26px 0 12px',word_break='break-word')
         number=0
@@ -81,11 +88,36 @@ class EditorialConverter(WeChatConverter):
                     node.insert(0,badge)
             elif self.id=='editorial-science': style(node,font_size='21px',border_left=f'4px solid {primary}',padding='0 0 0 13px')
             elif self.id=='editorial-essay': style(node,text_align='center',font_size='23px',margin='44px 0 24px',font_weight=600)
-            else: style(node,font_size='21px',background=primary,color='#ffffff',padding='15px 18px',margin='34px 0 20px')
+            elif self.id=='editorial-feature': style(node,font_size='21px',background=primary,color='#ffffff',padding='15px 18px',margin='34px 0 20px')
+            elif self.id=='editorial-folio':
+                style(node,text_align='center',font_size='23px',font_weight=600,letter_spacing='1px',margin='44px 0 24px',padding='18px 4px',border_top=f'3px double {primary}',border_bottom=f'1px solid {primary}')
+                ornament=soup.new_tag('span');ornament.string='◇'
+                style(ornament,display='block',font_family=SANS,font_size='13px',line_height=1,color=primary,margin_bottom='12px')
+                node.insert(0,ornament)
+            elif self.id=='editorial-gallery':
+                style(node,font_size='24px',font_weight=600,margin='42px 0 24px',padding='16px 0 0 16px',border_left=f'1px solid {primary}')
+                corner=soup.new_tag('span')
+                style(corner,display='block',width='26px',height='1px',background=primary,margin='-16px 0 18px -16px')
+                node.insert(0,corner)
+            elif self.id=='editorial-fieldnotes':
+                style(node,font_size='21px',padding='0 0 15px',border_bottom=f'1px solid {primary}',margin='36px 0 20px')
+                number+=1
+                if not re.match(r'^(?:第[一二三四五六七八九十百\d]+[章节部分]|[（(]?[一二三四五六七八九十百\d]+[）)、.．\s])',label):
+                    badge=soup.new_tag('span');badge.string=f'{number:02d}'
+                    style(badge,display='inline-block',font_family=SANS,font_size='11px',line_height=1.6,letter_spacing='1px',color=primary,border=f'1px solid {primary}',padding='3px 6px',margin='0 10px 4px 0',vertical_align='middle')
+                    node.insert(0,badge)
         for heading in soup.find_all(['h1','h2','h3','h4','h5','h6']):
             for strong in heading.find_all(['strong','b']): style(strong,color='inherit')
         for node in soup.find_all('img'):
             style(node,max_width='100%',height='auto',display='block',margin='28px auto 12px',border_radius='0' if self.id in ('editorial-magazine','editorial-essay') else '5px')
+            if self.id=='editorial-folio': style(node,border_radius=0,padding='6px',border='1px solid #d9cfba',box_sizing='border-box')
+            elif self.id=='editorial-gallery': style(node,border_radius=0,margin='32px auto 14px')
+            elif self.id=='editorial-fieldnotes': style(node,border_radius='2px',border_bottom=f'3px solid {primary}')
+        if self.id in CRAFTED:
+            for quote in soup.find_all('blockquote'):
+                if self.id=='editorial-folio': style(quote,background='transparent',border_left='none',border_top='1px solid #d9cfba',border_bottom='1px solid #d9cfba',padding='22px 16px',font_family=SERIF)
+                elif self.id=='editorial-gallery': style(quote,border_left='none',border_radius='16px 0 16px 0',padding='22px',background=p['tint'])
+                else: style(quote,border_left=f'2px dotted {primary}',padding='16px 18px',background=p['tint'])
         for node in soup.find_all('hr'): style(node,border='none',border_top=f'1px solid {primary}',width='42px' if self.id=='editorial-essay' else '100%',margin='34px auto')
         for node in soup.find_all('code'): style(node,font_family='Consolas, Menlo, monospace',font_size='14px',background=p['tint'],color=primary,padding='2px 4px')
         for node in soup.find_all('pre'):
@@ -118,9 +150,25 @@ class EditorialConverter(WeChatConverter):
             elif role=='author': style(node,font_size='13px',color=p['muted'],margin='36px 0 20px',padding_top='16px',border_top='1px solid #d8dedb')
             elif reference_section:
                 style(node,font_size='15px' if node.name=='h2' else '12px',line_height=1.7,color=p['muted'],margin='26px 0 12px' if node.name=='h2' else '0 0 9px',background='transparent',padding=0,border='none')
+            if role=='caption' and self.id=='editorial-gallery': style(node,text_align='left',padding_left='12px',border_left=f'1px solid {primary}',margin='0 0 32px')
+            if role=='caption' and self.id=='editorial-fieldnotes': style(node,text_align='left',letter_spacing='.3px')
         root=soup.new_tag('section')
         style(root,font_family=SANS,font_size=f'{size}px',line_height=line,color=p['text'],background=p['paper'],padding='24px 22px' if self.id=='editorial-essay' else '20px',word_break='break-word')
         for child in list(soup.contents): root.append(child.extract())
+        if self.id in CRAFTED:
+            # Real inline elements travel with clipboard/export; no scripts or CSS animation.
+            ornament=soup.new_tag('section')
+            style(ornament,text_align='center',color=primary,margin='0 0 28px',font_size='10px',line_height=1.5,letter_spacing='6px')
+            if self.id=='editorial-folio':
+                ornament.string='·  ◇  ·';style(ornament,border_top=f'3px double {primary}',padding_top='13px')
+            elif self.id=='editorial-gallery':
+                ornament.string='◦  ◇  ◦';style(ornament,padding='8px 0 14px',border_bottom='1px solid #e6dfea')
+            else:
+                ornament.string='┆ ┆ ┆ ┆ ┆ ┆ ┆ ┆';style(ornament,text_align='left',letter_spacing='7px',border_bottom=f'1px solid {primary}',padding_bottom='7px')
+            root.insert(0,ornament)
+            end=soup.new_tag('section');end.string='◇' if self.id!='editorial-fieldnotes' else '· · ·'
+            style(end,text_align='center',color=primary,font_size='10px',margin='28px 0 0',padding_top='14px',border_top='1px solid #dedbd3',letter_spacing='4px')
+            root.append(end)
         soup.append(root)
         return str(soup)
 

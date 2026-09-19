@@ -24,10 +24,11 @@ def sample(client):
 def test_catalog_and_read_only_previews(client,monkeypatch):
     monkeypatch.setattr(source_context,'sources',lambda *a,**k:pytest.fail('No evidence context required'))
     meta=client.get('/api/meta').json();themes=meta['themes']
-    assert len([t for t in themes if t['group']=='editorial'])==4
+    assert len([t for t in themes if t['group']=='editorial'])==7
+    assert len([t for t in themes if t['id'] in editorial_themes.CRAFTED])==3
     assert len([t for t in themes if t['group']=='classic'])==18
     before=client.get('/api/articles').json()
-    for theme in themes[:4]:
+    for theme in themes[:7]:
         response=client.get('/api/themes/'+theme['id']+'/preview')
         assert response.status_code==200 and '让观点有清晰的层次' in response.json()['html']
         assert 'defaults' in theme
@@ -49,7 +50,7 @@ def test_complete_render_preserves_content_and_roles(client,theme):
     refs=next(n for n in soup.find_all('h2') if n.get_text()=='参考文献')
     assert not refs.find('span') and 'font-size:15px' in refs['style']
     numbered=next(n for n in soup.find_all('h2') if '03 已有编号' in n.get_text())
-    assert not numbered.find('span')
+    assert not [span for span in numbered.find_all('span') if span.get_text().strip().isdigit()]
     assert '补充信息保留自己的层级' in soup.get_text()
     assert 'table-layout:fixed' in soup.table['style']
     assert '本文使用 AI' not in result['body'] and '部分配图由 AI' not in result['body']
@@ -131,3 +132,15 @@ def test_theme_export_creates_new_archive_and_preserves_old_snapshot(client):
     second=outputs.archive(a)
     assert first['digest']!=second['digest'] and first['path']!=second['path']
     assert (folder/'排版.html').read_bytes()==original
+
+
+@pytest.mark.parametrize('theme',editorial_themes.CRAFTED)
+def test_crafted_decorations_survive_sanitizer_without_animation_or_raw_changes(client,theme):
+    a=sample(client);a['layout']['theme']=theme
+    result=rendering.render(a);soup=BeautifulSoup(result['body'],'html.parser')
+    assert 'animation' not in result['body'] and '<svg' not in result['body'] and '<script' not in result['body']
+    assert '┆' not in result['markdown'] and '◇' not in result['markdown']
+    if theme=='editorial-fieldnotes':
+        badge=next(n for n in soup.find_all('span') if n.get_text()=='01')
+        assert 'border-top:1px solid' in badge['style'] and 'border-left:1px solid' in badge['style']
+    if theme=='editorial-folio': assert 'border-left:1px solid' in soup.img['style']
