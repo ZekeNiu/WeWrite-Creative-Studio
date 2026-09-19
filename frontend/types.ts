@@ -15,6 +15,6 @@ export interface ModelCard {service_id:string;model:string;name:string;roles:str
 export interface Settings {services:Service[];default_service:string;routes:Record<string,{service_id:string;model:string}>;search:SearchConfig;default_auto:Record<string,boolean>;model_connections?:{service_id:string;model:string;search_protocol:string}[];model_capabilities?:ModelCard[];route_capabilities?:Record<string,{status:string;model?:string;service?:string;image_url?:string}>}
 export interface Meta {personas:{id:string;name:string;description:string;example:string}[];themes:Theme[]}
 export interface Job {resumed_from?:string;id:string;article_id:string;stage:string;status:string;created:string;ended:string|null;message:string;partial:string;result:any;request:any}
-export type Save=(changes:Partial<Article>,stage?:string)=>Promise<Article>;
+export type Save=(changes:Partial<Article>|((current:Article)=>Partial<Article>),stage?:string)=>Promise<Article>;
 
 export interface Theme {id:string;name:string;description:string;colors:Record<string,string>;group:'editorial'|'classic';defaults:Pick<Article['layout'],'font_size'|'line_height'|'paragraph_gap'>}

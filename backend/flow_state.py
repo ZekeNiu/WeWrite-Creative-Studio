@@ -45,7 +45,7 @@ def ready(a):
         block('outline','资料核对暂停，请先处理待核实问题','sources')
         block('write','资料核对暂停，请先处理待核实问题','sources')
     if not a['brief']['topic']:
-        for s in ('sources','outline','write'): block(s,'请先选择一个选题，或在创作设置中填写指定主题','topic')
+        for s in ('sources','outline','write'): block(s,'请先在选题环节选择或采用一个主题','topic')
     if not a['content'].strip():
         for s in ('review','visual','layout'): block(s,'请先写作或导入正文','write')
     if not a['visual']['enabled']: block('visual','配图为可选环节，请先启用 AI 配图或上传图片','visual')
