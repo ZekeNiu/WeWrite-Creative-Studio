@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import secrets
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
@@ -22,12 +23,49 @@ def message(text,error=False):
     ctypes.windll.user32.MessageBoxW(None,text,'WeWrite 创作工作台',0x10 if error else 0x40)
 
 
-def health(port):
+def server_info(port):
     try:
         with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/health',timeout=1) as r:
             value=json.load(r)
-        return value.get('app')=='wewrite-studio' and Path(value.get('workspace','')).resolve()==ROOT
-    except Exception: return False
+        if value.get('app')=='wewrite-studio' and Path(value.get('workspace','')).resolve()==ROOT: return value
+    except Exception: pass
+    return None
+
+
+def health(port):
+    return server_info(port) is not None
+
+
+def expected_version():
+    return json.loads((ROOT/'package.json').read_text('utf-8'))['version']
+
+
+def active_jobs():
+    path=DATA/'studio.sqlite'
+    if not path.exists(): return False
+    with sqlite3.connect(path.as_uri()+'?mode=ro',uri=True) as db:
+        return bool(db.execute("SELECT 1 FROM jobs WHERE status IN ('running','queued') LIMIT 1").fetchone())
+
+
+def stop_server(previous,restart=False):
+    req=urllib.request.Request(f'http://127.0.0.1:{previous["port"]}/api/shutdown',
+        data=json.dumps({'restart':restart}).encode(),headers={'X-Studio-Request':'1','X-Stop-Token':previous['token'],'Content-Type':'application/json'},method='POST')
+    with urllib.request.urlopen(req,timeout=5): pass
+    for _ in range(50):
+        if not health(previous['port']): return
+        time.sleep(.1)
+    raise RuntimeError('旧后台尚未退出，请稍后重新启动；不会另开一个版本混用。')
+
+
+def reuse_existing(previous):
+    """Only reuse this workspace's current version; never interrupt active work."""
+    info=server_info(previous['port']) if previous.get('port') else None
+    if not info: return False
+    if info.get('version')==expected_version(): return True
+    if active_jobs():
+        raise RuntimeError('检测到新版本，但仍有生成任务运行。请等待任务结束，或在工作台停止任务后重新双击启动。')
+    stop_server(previous,restart=True)
+    return False
 
 
 def state():
@@ -45,11 +83,10 @@ def main():
         previous=state()
         if '--stop' in sys.argv:
             if previous.get('port') and health(previous['port']):
-                req=urllib.request.Request(f'http://127.0.0.1:{previous["port"]}/api/shutdown',data=b'{}',headers={'X-Studio-Request':'1','X-Stop-Token':previous['token'],'Content-Type':'application/json'},method='POST')
-                with urllib.request.urlopen(req,timeout=5): pass
+                stop_server(previous)
             if '--no-browser' not in sys.argv: message('工作台已停止。文章和设置仍保存在本机。')
             return
-        if previous.get('port') and health(previous['port']):
+        if reuse_existing(previous):
             if '--no-browser' not in sys.argv: webbrowser.open(f'http://127.0.0.1:{previous["port"]}')
             return
         LOGS.mkdir(parents=True,exist_ok=True)

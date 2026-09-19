@@ -17,6 +17,8 @@ from . import store,providers,security,materials,rendering,workflow,prompts,sear
 from . import flow_state,issue_actions
 from .models import IssueAction,Settings,Brief,Layout,VisualSettings,ArticlePatch,JobRequest,STAGES,OutlineResult,ImagePlan,CapabilityTest
 
+APP_VERSION=json.loads((store.ROOT/'package.json').read_text('utf-8'))['version']
+
 
 @asynccontextmanager
 async def lifespan(app):
@@ -41,11 +43,14 @@ async def local_only(request: Request,call_next):
             return JSONResponse({'detail':'访问来源不匹配'},403)
     if request.method not in ('GET','HEAD','OPTIONS') and request.headers.get('x-studio-request')!='1':
         return JSONResponse({'detail':'请从工作台界面执行此操作'},403)
+    if request.method not in ('GET','HEAD','OPTIONS') and getattr(app.state,'restarting',False):
+        return JSONResponse({'detail':'后台正在更新，请稍后重试；尚未保存的文字请保留在当前页面'},409)
     try: result=await call_next(request)
     except Exception: return JSONResponse({'detail':'服务遇到异常，已有内容已保存；请重试或重新启动工作台'},500)
     result.headers['X-Content-Type-Options']='nosniff'
     result.headers['Referrer-Policy']='no-referrer'
-    if request.url.path.startswith('/api'): result.headers['Cache-Control']='no-store'
+    if request.url.path.startswith('/api') or 'text/html' in result.headers.get('content-type',''):
+        result.headers['Cache-Control']='no-store'
     return result
 
 
@@ -62,7 +67,10 @@ async def conflict(request,exc): return JSONResponse({'detail':str(exc)},409)
 
 
 @app.get('/api/health')
-def health(): return {'app':'wewrite-studio','version':'1.4.5','upstream':'4.2.1','workspace':str(store.ROOT)}
+def health():
+    try: available=json.loads((store.ROOT/'package.json').read_text('utf-8'))['version']
+    except (OSError,ValueError,KeyError): available=APP_VERSION
+    return {'app':'wewrite-studio','version':APP_VERSION,'available_version':available,'upstream':'4.2.1','workspace':str(store.ROOT)}
 
 
 @app.get('/api/meta')
@@ -302,7 +310,9 @@ async def hotspots():
 
 
 @app.post('/api/articles/{id}/jobs')
-async def start_job_async(id:str,request:JobRequest): return workflow.start(id,request)
+async def start_job_async(id:str,request:JobRequest):
+    if getattr(app.state,'restarting',False): raise store.Conflict('后台正在更新，请稍后重试')
+    return workflow.start(id,request)
 
 
 @app.get('/api/articles/{id}/jobs')
@@ -455,6 +465,11 @@ def usage(id:str): return store.usage(id)
 @app.post('/api/shutdown')
 async def shutdown(request:Request):
     if not os.environ.get('STUDIO_STOP_TOKEN') or not secrets.compare_digest(request.headers.get('x-stop-token',''),os.environ['STUDIO_STOP_TOKEN']): raise HTTPException(403)
+    if (await request.json()).get('restart'):
+        with store.connection() as db:
+            if db.execute("SELECT 1 FROM jobs WHERE status IN ('running','queued') LIMIT 1").fetchone():
+                raise ValueError('仍有生成任务运行，请等待完成或先停止任务后再更新工作台')
+        app.state.restarting=True
     async def stop():
         for t in list(workflow.TASKS.values()): t.cancel()
         if workflow.TASKS: await asyncio.gather(*list(workflow.TASKS.values()),return_exceptions=True)
