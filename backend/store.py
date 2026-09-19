@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import sqlite3
@@ -106,29 +107,34 @@ def save_article(id, expected_revision, mutate, label, invalidate=None, review_a
         if a['revision'] != expected_revision:
             raise Conflict('文章已有更新，为避免覆盖，未应用本次修改。请先查看最新版本。')
         db.execute('INSERT INTO versions VALUES(?,?,?,?,?)',(uid(),id,now(),label,encode(a)))
-        from .flow_state import material_sources
-        previous_sources=encode(material_sources(a))
-        old_source_ids={s['id'] for s in a['sources']}
+        from . import evidence_state
+        before=copy.deepcopy(a)
+        # Upgrade a legacy decision only when this article is explicitly edited.
+        from .flow_state import issues,legacy_signature,signature
+        for issue in issues(before):
+            decision=a.get('research_decisions',{}).get(issue['id'],{})
+            if not decision.get('dependency_key') and decision.get('material_key') in (legacy_signature(before),signature(before)):
+                decision['dependency_key']=evidence_state.dependency(before,issue)
         previous_research=encode(a.get('research'))
-        previous_brief=encode([a['brief'],a['title']])
-        previous_content=a['content']
         mutate(a)
-        for source in a['sources']:
-            if source['id'] not in old_source_ids and a.get('pending_issue_attachments'):
-                source['issue_ids']=list(a['pending_issue_attachments'])
-        if {s['id'] for s in a['sources']}-old_source_ids: a.pop('pending_issue_attachments',None)
-        if a.get('research') and encode(a['research'])==previous_research:
-            if (encode(material_sources(a))!=previous_sources or encode([a['brief'],a['title']])!=previous_brief
-                    or (a['research'].get('stage')=='review' and a['content']!=previous_content)):
-                a['research']['stale']=True
-        if encode(material_sources(a))!=previous_sources:
-            a['current_stage']='sources'
-            if a['evidence'] and a['stages']['sources']!='needs_input': a['stages']['sources']='stale'
+        # Attachment associations are part of each upload, never a sticky article flag.
+        a.pop('pending_issue_attachments',None)
+        material_change=False
+        if encode(a.get('research'))==previous_research and encode(a.get('evidence'))==encode(before.get('evidence')):
+            material_change=evidence_state.changed(a,before)
+        if invalidate=='setup':
+            # Expression settings affect writing, not fact verification or its decisions.
+            invalidate='topic' if evidence_state.objective(a)!=evidence_state.objective(before) else 'outline'
+        if invalidate=='sources' and not material_change and encode(a.get('evidence'))==encode(before.get('evidence')):
+            invalidate=None
         if invalidate is not None:
             start = -1 if invalidate == 'setup' else STAGES.index(invalidate)
             for s in STAGES[start+1:]:
                 if a['stages'][s] in ('done','needs_input','stale'):
                     a['stages'][s]='stale'
+        r=a.get('research',{})
+        if r.get('resume_stage') and a['stages'].get('outline' if r['resume_stage']=='sources' else r['resume_stage'])=='done':
+            r.pop('resume_job_id',None);r.pop('resume_stage',None)
         from . import review_state
         if review_action: review_state.finish_action(a)
         else: review_state.present(a)

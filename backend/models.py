@@ -37,11 +37,18 @@ class VisualSettings(BaseModel):
 
 
 class Topic(BaseModel):
+    id: str = ''
     title: str
     angle: str
     audience: str = ''
     reason: str
     source_ids: list[str] = []
+    reader_question: str = ''
+    novelty: str = ''
+    takeaway: str = ''
+    questions: list[str] = Field(default_factory=list, max_length=8)
+    key_claims: list[str] = Field(default_factory=list, max_length=8)
+    evidence_status: str = '待调查'
 
 
 class TopicsResult(BaseModel):
@@ -62,6 +69,8 @@ class EvidenceResult(BaseModel):
     summary: str
     claims: list[Claim]
     gaps: list[str] = []
+    intent: Topic | None = None
+    direction_change: str = ''
 
 
 class Section(BaseModel):
@@ -184,6 +193,8 @@ class ResearchPlan(BaseModel):
 
 
 class EvidenceSpan(BaseModel):
+    claim_id: str = ''
+    type: Literal['fact', 'inference', 'opinion', 'user_experience'] = 'fact'
     source_id: str
     quote: str
     claim: str
@@ -201,6 +212,7 @@ class ResearchIssue(BaseModel):
     kind: Literal['blocking','limitation'] = 'blocking'
     source_ids: list[str] = Field(default_factory=list)
     claim: str = ''
+    claim_id: str = ''
     status: Literal['open','resolved'] = 'open'
     resolution: str = ''
 
@@ -212,6 +224,8 @@ class ResearchNotes(BaseModel):
     conflicts: list[str] = Field(default_factory=list, max_length=8)
     followup_queries: list[str] = Field(default_factory=list, max_length=4)
     issues: list[ResearchIssue] = Field(default_factory=list, max_length=24)
+    intent: Topic | None = None
+    direction_change: str = ''
 
 
 class ScopeDecision(BaseModel):
@@ -274,8 +288,9 @@ class JobRequest(BaseModel):
 class IssueAction(BaseModel):
     revision: int
     issue_ids: list[str] = Field(min_length=1,max_length=40)
-    action: Literal['verify','waive','undo','attach']
+    action: Literal['verify','waive','bound','exclude','undo','attach']
     action_id: str = Field(min_length=1,max_length=80)
+    wording: str = Field(default='', max_length=3000)
 
 
 SCHEMAS = {'topic': TopicsResult, 'sources': EvidenceResult, 'outline': OutlineResult,

@@ -150,7 +150,9 @@ def test_single_task_cancel_and_restart(client,model,monkeypatch):
     monkeypatch.setattr(providers,'generate',slow)
     j=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json={'revision':a['revision'],'stage':'topic'}).json()
     r=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json={'revision':a['revision'],'stage':'topic'})
-    assert r.status_code==409
+    assert r.status_code==200 and r.json()['id']==j['id']
+    different=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json={'revision':a['revision'],'stage':'topic','instruction':'不同要求'})
+    assert different.status_code==409
     assert client.post('/api/jobs/'+j['id']+'/cancel',headers=H).json()['status']=='cancelled'
     pending=store.create_job(a['id'],{'stage':'topic'})
     store.init()

@@ -181,5 +181,5 @@ def test_evidence_assessment_includes_supplemental_question(client,network,monke
 def test_material_or_brief_edit_marks_saved_research_stale(client):
     a=store.create_article({'topic':'原主题'})
     a=store.save_article(a['id'],a['revision'],lambda x:x.update(research={'stage':'sources','stale':False,'summary':'历史结论'}),'fixture')
-    a=store.save_article(a['id'],a['revision'],lambda x:x.update(title='新主题'),'edit')
+    a=store.save_article(a['id'],a['revision'],lambda x:x['brief'].update(topic='新主题'),'edit')
     assert a['research']['stale'] and a['research']['summary']=='历史结论'

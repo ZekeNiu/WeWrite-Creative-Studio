@@ -1,18 +1,23 @@
 """Task-focused excerpts; stored source text is never shortened or rewritten."""
 import re
 
-POLICY_VERSION = 2
+POLICY_VERSION = 3
 POLICY = '''按具体主张判断来源是否适用，不能仅凭域名、论文身份或用户上传就认定可靠。
 科研和健康结论优先原始研究、系统综述、专业书籍和权威机构资料；技术实践和产品能力优先官方文档、原始研究、有明确作者与可核对依据的专业博客。
 维基百科可支持背景与概念梳理；关键数字、因果关系和争议性判断尽量追溯其参考文献中的原始出处。营销转载、无署名聚合页和搜索摘要只能作为发现线索，不能因重复出现而增加证据强度。
 区分同行评议、预印本、摘要和全文；书目、目录和售书页面不能证明书中结论。核对作者、出版方、日期、版本、研究设计、适用人群与利益相关性，缺失信息如实说明，不推测补全。
 证据充分性同时考虑原文支持与来源质量。仅对无法省略的核心主张缺口定向补查；非核心证据不足可删去断言或保留边界，不按来源数量凑材料，不固定追加论文检索。
 保留独立研究、不同版本、反方与局限。source_type 写实际来源类别，adoption_reason 说明为何能支持这一条主张，use_scope 写适用范围；quality 用 suitable/limited/insufficient 表示适用/有限/不足，不以出处声望代替原文核实。
-输入的 excerpt_only 和 excerpts 表示只读取部分原文；不得声称已读全文，也不能从未提供的部分推断事实。'''
+输入的 excerpt_only 和 excerpts 表示只读取部分原文；不得声称已读全文，也不能从未提供的部分推断事实。已有 claim.stale=true 的依据已变化，只供定位待核对内容，不得直接用作已核实事实。
+研究中的病例计数或构成比不等于风险率；没有暴露分母不能比较哪类人、地点、行为更危险。回顾性观察不等于测得神经或组织机制，机制推测必须逐处写明假设，不能只在文末加一句局限后通篇肯定。原作者讨论的外部研究与本研究实测结果分开。
+训练、治疗或干预启示不等于验证有效性，不得仅凭观察性研究断言必须使用某个方案或宣布既有方法无效。吸引力应来自具体问题、解释和读者用途；未经证实的生理因果链不能用强烈比喻替代。'''
 
 
 def terms(a, questions=()):
     pieces = [a['brief'].get(k, '') for k in ('topic', 'purpose', 'include')]
+    from .creative import intent
+    plan=intent(a).get('selected',{})
+    pieces += [str(plan.get(k,'')) for k in ('angle','reader_question','novelty','takeaway','key_claims')]
     pieces += list(questions)
     pieces += [str(s.get(k, '')) for s in a.get('outline', {}).get('sections', []) for k in ('title','purpose','points')]
     words = re.findall(r'[a-zA-Z][a-zA-Z0-9_-]{2,}|[\u4e00-\u9fff]{2,}', ' '.join(pieces).lower())

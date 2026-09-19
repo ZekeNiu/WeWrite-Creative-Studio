@@ -9,8 +9,12 @@ def material_sources(a):
 
 
 def signature(a):
-    sources=material_sources(a)
-    return hashlib.sha256(json.dumps([a['brief'],a['title'],sources],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+    from .evidence_state import objective,selected,digest
+    return digest([objective(a),selected(a)])
+
+
+def legacy_signature(a):
+    return hashlib.sha256(json.dumps([a['brief'],a['title'],material_sources(a)],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 
 def issue_id(text,source_ids=()):
@@ -23,18 +27,28 @@ def issues(a):
     if rows is None:
         rows=[dict(id=issue_id(text),text=text,kind=kind,source_ids=[],claim='',status='open')
               for kind,key in [('blocking','gaps'),('limitation','conflicts')] for text in r.get(key,[])]
+    from .evidence_state import dependency
     decisions=a.get('research_decisions',{})
-    key=signature(a)
-    return [dict(x,status='waived' if decisions.get(x['id'],{}).get('material_key')==key else
-                 ('open' if x.get('status')=='waived' or (r.get('stale') and x.get('status')=='resolved') else x.get('status','open'))) for x in rows]
+    result=[]
+    for raw in rows:
+        x=dict(raw);d=decisions.get(x['id'],{})
+        if x['text'] in ('未取得可用于当前主题的资料；可补充材料或检查检索渠道后重试。','尚未取得可定位的原文证据，请补充材料或继续检索。'): x['system_kind']='no_evidence'
+        valid=(d.get('dependency_key')==dependency(a,x) if d.get('dependency_key') else d.get('material_key') in (signature(a),legacy_signature(a)))
+        if valid:
+            x.update(status=d.get('handling','bounded'),wording=d.get('wording',''))
+        elif x.get('status') in ('waived','bounded','excluded'):
+            x['status']='stale'
+        result.append(x)
+    return result
 
 
 def ready(a):
     result={s:dict(allowed=True,reason='',target=s) for s in STAGES}
     def block(stage,reason,target): result[stage]=dict(allowed=False,reason=reason,target=target)
     r=a.get('research',{})
-    blockers=[x for x in issues(a) if x['kind']=='blocking' and x['status']=='open']
-    material_ok=(a['stages']['sources']=='done' and bool(a['evidence']) and not r.get('stale')) or (bool(r) and not r.get('stale') and not blockers)
+    blockers=[x for x in issues(a) if x['kind']=='blocking' and x['status'] in ('open','stale')]
+    from .evidence_state import material_view
+    material_ok=material_view(a)['ready']
     if not material_ok: block('outline','请先整理素材并处理待核实问题，再生成大纲','sources')
     if not a['outline'].get('sections'): block('write','尚未生成大纲，请先完成大纲','outline')
     elif a['stages']['outline']!='done': block('write','请先确认当前大纲；已有大纲需要更新时，可编辑后点击确认','outline')
@@ -56,8 +70,16 @@ def present(a):
     from .review_state import present as review_present
     review_present(a)
     a['visual'].pop('budget',None)
+    from .evidence_state import material_view
+    a['materials_state']=material_view(a)
     a['workflow']=ready(a)
-    if a.get('research'): a['research']['issues']=issues(a)
+    if a.get('research'):
+        a['research']['issues']=issues(a)
+        from .issue_actions import parent
+        active=parent(a)
+        if active: a['research'].update(resume_job_id=active['id'],resume_stage=active['stage'])
+        else:
+            a['research'].pop('resume_job_id',None);a['research'].pop('resume_stage',None)
     return a
 
 

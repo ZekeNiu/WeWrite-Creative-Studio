@@ -2,7 +2,8 @@ import json
 from pathlib import Path
 from .models import SCHEMAS
 from .store import ROOT
-from . import source_context
+from . import source_context, creative
+from datetime import date
 
 SKILLS=ROOT/'vendor/wewrite/skills'
 PERSONAS={
@@ -29,14 +30,13 @@ def system(stage, brief):
 事实只取自本次提供的资料；研究发现、推断与建议分别表述。引用使用 [S来源编号]，尽可能在附近写明材料页码。
 不要生成文末参考文献表或手写数字引用，程序会统一编号与生成文献表。仅文献信息不能支持研究结论。
 不要主动追加“本文使用 AI 辅助创作或编辑”“部分配图由 AI 生成”等创作声明；用户正文中已有文字按用户要求处理。
-issue_decisions 中 waived 表示用户允许保留边界后继续，不代表证实；limitation 必须保留适用范围。未定位原文的断言删去或弱化，不能作为确定事实，也不要反复要求用户确认已忽略的同类问题。
+issue_decisions 中 bounded/waived 只允许明确限定 wording；excluded 的主张本篇不使用。limitation 是写作条件，不是需要反复确认的任务。缺证据的数字不得改成概数冒充已核实。创作意图决定问题与价值，人格只决定表达。证据使核心方向无法成立时必须提出改变方向的原因与替代建议，不能静默降为普通科普。
 减少模板开头、机械分点、空泛结尾和强行煽情。保留证据局限，不夸大因果或承诺效果。
 用户的写作意图和本任务的输出协议优先于参考技能中的命令行、连续执行或交付约定。
 '''
     common+='\n'+source_context.POLICY
     refs=['wewrite-write/references/article-brief.md','wewrite-write/references/editorial-quality.md']
-    if stage=='topic': refs=['wewrite-topic/references/topic-selection.md']
-    elif stage=='review': refs+=['wewrite-review/references/seo-rules.md']
+    if stage in ('outline','write'): refs+=['wewrite-write/references/frameworks-quick.md','wewrite-write/references/content-enhance.md']
     elif stage=='visual': refs=['wewrite-visual/references/visual-guide.md']
     for rel in refs: common+='\n参考编辑规则：\n'+read(rel)
     persona=brief.get('persona','industry-observer')
@@ -60,15 +60,15 @@ def prompt(stage,a,request):
     src=source_context.sources(a,total=100000,per_source=18000)
     from .flow_state import issues
     notes=a.get('research',{})
-    context=dict(issue_decisions=issues(a),brief=a['brief'],title=a['title'],sources=src,evidence=source_context.evidence(a),outline=a['outline'],
+    context=dict(current_date=date.today().isoformat(),creative_intent=creative.context(a),issue_decisions=issues(a),brief=a['brief'],title=a['title'],sources=src,evidence=source_context.evidence(a),outline=a['outline'],
                  research={k:notes[k] for k in ('summary','gaps','conflicts') if k in notes})
     if stage in ('review','revise','visual'): context['article']=a['content']
     if stage=='revise': context['review']=a['review']
     tasks={
-      'topic':'生成 10 个有明确切入点的候选选题，按推荐程度排序。领域来自 domain，留空则采用 column。缺少实时资料时按常青选题处理，说明需要补证，不冒充热点。返回的 source_ids 只能用材料中的编号。',
-      'sources':'分析用户选中的素材，整理事实、推断、观点与主张。每条事实关联支持它的来源；不能支持的标 unsupported。没有证据时列出缺口，不补造事实。',
-      'outline':'生成可编辑的大纲、核心判断、读者问题、结论、最强反方及适用边界。每节推进一个判断，指向 evidence 的 claim_ids。section id 使用稳定的短字符串。',
-      'write':'按已确认大纲撰写完整 Markdown 正文，不重复一级标题。篇幅目标允许 ±15%。仅用有来源支持的事实；事实句就近标注 [S来源编号]，PDF 尽可能标页码；不得写出来源不支持的事实。无法支持的具体数字和引述省略。只输出正文，不包代码围栏。',
+      'topic':'生成 6 个有差异的候选方案，以问题价值、专业深度、读者用途与新增价值排序。标题、angle、reason 简明；展开字段 reader_question、novelty、takeaway、questions、key_claims 说明研究什么、解决什么。响应本次反馈及历史反馈，避开最近三批的相同角度，不只是换标题。普通换一批也应探索新角度。允许提出值得调查的专业假设，evidence_status 区分待调查与已有依据；不得把强烈措辞、因果或未核实数字当成吸引力。不强制反直觉，不因资料未齐退回概念罗列。领域来自 domain，空则 column；基础研究不受近期窗口排除，不冒充热点。source_ids 仅使用已有来源。',
+      'sources':'手动主题未展开时在 intent 中补充读者问题、切入点、新增价值、预期交付与待证主张；保留手动主题原意。证据使核心方向不成立时在 direction_change 解释原因和替代方向，交由用户采用。分析用户选中的素材，整理事实、推断、观点与主张。每条事实关联支持它的来源；不能支持的标 unsupported。没有证据时列出缺口，不补造事实。',
+      'outline':'围绕 creative_intent.selected 的角度、新增价值和预期交付，推进问题而非概念罗列。生成可编辑的大纲、核心判断、读者问题、结论、最强反方及适用边界。每节推进一个判断，指向 evidence 的 claim_ids。section id 使用稳定的短字符串。',
+      'write':'延续 creative_intent 中的立意，结合反方、机制与适用边界深化论证；不因篇幅简化而丢失新增价值。按已确认大纲撰写完整 Markdown 正文，不重复一级标题。篇幅目标允许 ±15%。仅用有来源支持的事实；事实句就近标注 [S来源编号]，PDF 尽可能标页码；不得写出来源不支持的事实。无法支持的具体数字和引述省略。只输出正文，不包代码围栏。',
       'review':'审核当前稿件，检查任务对齐、事实与来源、研究边界、个人材料、深度和自然度。quote 必须逐字摘自正文且能唯一定位；suggestion 是可直接替换 quote 的文字。证据不足的问题列 blocker，不用记忆补证。无问题才 decision=pass。dimensions 只作辅助，不以分数替代判断。只提出修改，是否执行由界面决定。',
       'revise':'按用户要求修改指定选段；replacement 仅包含替换该选段的内容，不能擅自改写全文。没提供选段而指明全文时才返回全文替换。解释应简短。',
       'visual':f'生成 {a["visual"]["count"]} 个可编辑配图方案，第一张 role=cover，其余 article。用图解释内容，不捏造数据或科研结果，不制作假研究图表。prompt 给出视觉主体、构图、色彩和文字要求。after_heading 必须引用正文中存在的章节标题或留空。',

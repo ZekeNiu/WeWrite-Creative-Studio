@@ -132,14 +132,14 @@ def test_excluded_source_never_reintroduced(client,network):
     assert not w.added and not w.pages
 
 
-def test_conflict_preserves_human_edit_and_pending_material(client,network,monkeypatch):
+def test_scoped_merge_preserves_later_human_draft_and_gathered_material(client,network,monkeypatch):
     orig=materials.from_url
     async def slow(url):await asyncio.sleep(.15);return await orig(url)
     monkeypatch.setattr(materials,'from_url',slow)
     a=article(client);j=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json={'stage':'research','revision':a['revision']}).json()
     edited=client.patch('/api/articles/'+a['id'],headers=H,json={'revision':a['revision'],'stage':'write','changes':{'content':'新人工稿'}})
     assert edited.status_code==200
-    done=wait(client,j);assert done['status']=='conflict'
+    done=wait(client,j);assert done['status']=='completed'
     assert client.get('/api/articles/'+a['id']).json()['content']=='新人工稿'
     assert done['research']['sources']
 
@@ -246,7 +246,7 @@ def test_irrelevant_search_results_not_adopted(client,network,monkeypatch):
         return await original(s,system,prompt,emit)
     monkeypatch.setattr(providers,'generate',reject)
     a=article(client);j=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json={'stage':'research','revision':a['revision']}).json()
-    assert wait(client,j)['status']=='needs_input'
+    assert wait(client,j)['status']=='completed'
     a=client.get('/api/articles/'+a['id']).json()
     assert a['sources']==[] and a['research']['pending'] and a['research']['gaps']
 

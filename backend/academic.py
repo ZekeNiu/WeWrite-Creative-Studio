@@ -34,7 +34,7 @@ def normalized_doi(value):
 
 def identifiers(s):
     b=s.get('bibliography') or {};result=set()
-    for key in ('doi','pmid','arxiv_id'):
+    for key in ('doi','pmid','pmcid','arxiv_id'):
         v=s.get(key) or b.get(key)
         if v: result.add((key,normalized_doi(v) if key=='doi' else re.sub(r'v\d+$','',str(v))))
     for value in (s.get('url',''),s.get('doi',''),b.get('doi','')):
@@ -73,7 +73,7 @@ def combine(old,new):
     rank={'retrieved':4,'user_provided':4,'abstract_only':3,'excerpt_only':2,'metadata_only':1,'unreadable':0}
     upgrade=rank.get(new.get('status'),0)>rank.get(old.get('status'),0)
     merged={**old,**({k:v for k,v in new.items() if v} if upgrade else {k:v for k,v in new.items() if not old.get(k)})}
-    for k in ('id','selected','personal_material','use'):
+    for k in ('id','selected','personal_material','use','issue_ids'):
         if k in old: merged[k]=old[k]
     merged['bibliography']={**(new.get('bibliography') or {}),**{k:v for k,v in (old.get('bibliography') or {}).items() if v}}
     new_authors=(new.get('bibliography') or {}).get('authors',[])
@@ -115,7 +115,9 @@ def crossref_record(w):
         published_date='-'.join(str(n).zfill(2) for n in date))
     abstract=BeautifulSoup(w.get('abstract',''),'html.parser').get_text(' ',strip=True)
     links=[l['URL'] for l in w.get('link',[]) if l.get('URL') and l.get('content-type') in ('application/pdf','text/html')]
-    return row(m,'crossref',abstract,links)
+    result=row(m,'crossref',abstract,links)
+    result['canonical_urls']=[u for u in [w.get('resource',{}).get('primary',{}).get('URL'),w.get('URL')] if u]
+    return result
 
 
 async def crossref(query):

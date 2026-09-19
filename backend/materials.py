@@ -68,6 +68,11 @@ def source(title,text,url='',kind='user',pages=None,filename=''):
 
 
 async def from_url(url):
+    from .source_reader import read
+    return await read(url)
+
+
+async def read_url(url):
     try: blob,final=await fetch_bytes(url)
     except httpx.HTTPError: raise ValueError('网页读取失败，可改为粘贴正文或上传文件') from None
     if blob.startswith(b'%PDF'):
@@ -94,6 +99,8 @@ async def from_url(url):
     text=body.get_text('\n',strip=True)
     if len(text)<300: raise ValueError('网页未返回足够正文，可能需要登录。请粘贴你可见的文章内容。')
     result=source(title,text[:200000],final,'web')
+    if not bib['doi'] and len(body.select('a'))>30 and len(body.select('a'))>len(body.select('p'))*3:
+        result['status']='metadata_only'
     # A bibliographic landing page is not the full research paper.
     host=(urlsplit(final).hostname or '').lower()
     if host=='pubmed.ncbi.nlm.nih.gov' or (host in ('arxiv.org','www.arxiv.org') and urlsplit(final).path.startswith('/abs/')):

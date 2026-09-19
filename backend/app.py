@@ -241,8 +241,21 @@ def select_topic(id:str,value:dict):
     title=str(value.get('title','')).strip()
     if not title: raise ValueError('请输入或选择题目')
     def change(a):
-        a['title']=title; a['brief']['topic']=title; a['stages']['topic']='done'; a['current_stage']='sources'
+        from .creative import adopt
+        adopt(a,title,value.get('topic_id',''))
     return store.save_article(id,value['revision'],change,'确认选题',invalidate='topic')
+
+
+def append_source(a,src,issue_ids=()):
+    if not isinstance(issue_ids,(list,tuple)) or len(issue_ids)>40 or not all(isinstance(i,str) for i in issue_ids): raise ValueError('问题关联格式无效')
+    ids=list(dict.fromkeys(issue_ids))
+    if set(ids)-{x['id'] for x in flow_state.issues(a)}: raise ValueError('关联问题已改变，请重新选择')
+    src['issue_ids']=ids
+    from .academic import same,combine
+    old=next((x for x in a['sources'] if same(x,src)),None)
+    if old:
+        merged=combine(old,src);merged['issue_ids']=list(dict.fromkeys(old.get('issue_ids',[])+ids));old.update(merged)
+    else: a['sources'].append(src)
 
 
 @app.post('/api/articles/{id}/sources/text')
@@ -250,27 +263,26 @@ def add_text(id:str,value:dict):
     text=str(value.get('text','')).strip()
     if not text or len(text)>1_000_000: raise ValueError('请输入有效素材正文（不超过 100 万字符）')
     src=materials.source(str(value.get('title') or '我的素材'),text)
-    return store.save_article(id,value['revision'],lambda a:a['sources'].append(src),'添加文字素材',invalidate='sources')
+    return store.save_article(id,value['revision'],lambda a:append_source(a,src,value.get('issue_ids',[])),'添加文字素材',invalidate='sources')
 
 
 @app.post('/api/articles/{id}/sources/url')
 async def add_url(id:str,value:dict):
     src=await materials.from_url(value['url'])
-    return store.save_article(id,value['revision'],lambda a:a['sources'].append(src),'导入网页素材',invalidate='sources')
+    return store.save_article(id,value['revision'],lambda a:append_source(a,src,value.get('issue_ids',[])),'导入网页素材',invalidate='sources')
 
 
 @app.post('/api/articles/{id}/sources/file')
-async def add_file(id:str,file:UploadFile=File(),revision:int=Form(),as_draft:bool=Form(False)):
+async def add_file(id:str,file:UploadFile=File(),revision:int=Form(),as_draft:bool=Form(False),issue_ids:str=Form('[]')):
+    ids=json.loads(issue_ids)
+    if not isinstance(ids,list) or not all(isinstance(i,str) for i in ids): raise ValueError('问题关联格式无效')
     blob=await file.read(materials.MAX_BYTES+1)
     if len(blob)>materials.MAX_BYTES: raise ValueError('文件不能超过 20 MB')
     if Path(file.filename or '').suffix.lower() in ('.bib','.ris'):
         rows=bibliography.import_records(file.filename,blob)
-        from .academic import same,combine
         def merge(a):
             for row in rows:
-                old=next((s for s in a['sources'] if same(s,row)),None)
-                if old is None: a['sources'].append(row)
-                else: old.update(combine(old,row))
+                append_source(a,row,ids)
         return store.save_article(id,revision,merge,'导入文献记录',invalidate='sources')
     text,pages=await asyncio.to_thread(materials.extract_file,file.filename or '',blob)
     filename=store.uid()+Path(file.filename or '').suffix.lower()
@@ -280,7 +292,7 @@ async def add_file(id:str,file:UploadFile=File(),revision:int=Form(),as_draft:bo
         if as_draft:
             a['content']=text; a['title']=Path(file.filename or '导入文章').stem
             a['brief']['topic']=a['title']; a['stages']['write']='done'; a['current_stage']='write'
-        else: a['sources'].append(src)
+        else: append_source(a,src,ids)
     return store.save_article(id,revision,change,'导入稿件' if as_draft else '导入文件素材',invalidate='write' if as_draft else 'sources')
 
 

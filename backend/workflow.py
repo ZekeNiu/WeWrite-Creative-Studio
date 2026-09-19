@@ -5,7 +5,7 @@ import re
 import time
 from PIL import Image
 from pydantic import ValidationError
-from . import store, providers, prompts, materials, rendering, research
+from . import store, providers, prompts, materials, rendering, research, creative
 from .models import STAGES, LABELS, SCHEMAS
 from .structured_output import parse as parse_structured
 
@@ -26,7 +26,7 @@ def validate_result(stage,result,a):
         items=result.get({'topic':'topics','sources':'claims','review':'issues'}[stage],[])
         ids=[]
         for x in items:
-            if 'id' in x:
+            if x.get('id'):
                 if x['id'] in ids: raise ValueError('模型返回了重复的条目编号，请重新生成')
                 ids.append(x['id'])
             if any(s not in sources for s in x.get('source_ids',[])): raise ValueError('模型引用了本任务中不存在或未采用的来源，结果未应用')
@@ -52,18 +52,24 @@ def prerequisites(stage,a):
 
 def start(article_id,request):
     a=store.get_article(article_id)
+    for existing in store.jobs(article_id):
+        if existing['status'] in ('queued','running') and all(existing['request'].get(k)==request.model_dump().get(k) for k in ('stage','revision','instruction','selected_text','section_id','image_id','issue_ids','chain','resume_job_id','continuation_job_id')):
+            return existing
     if request.continuation_job_id:
         original=store.job(request.continuation_job_id)
         from .flow_state import job_view
-        if request.stage!='research' or original['article_id']!=article_id or job_view(original)['status']!='needs_input':
+        if request.stage!='research' or original['article_id']!=article_id or (job_view(original)['status']!='needs_input' and not original.get('waiting_for_materials')):
             raise ValueError('核实任务不能恢复其他文章或已结束的任务')
     if request.resume_job_id:
         original=store.job(request.resume_job_id)
         from .flow_state import job_view
-        if original['article_id']!=article_id or job_view(original)['status']!='needs_input' or original['stage']!=request.stage:
+        if original['article_id']!=article_id or (job_view(original)['status']!='needs_input' and not original.get('waiting_for_materials')) or original['stage']!=request.stage:
             raise ValueError('此任务不能从该环节恢复')
         for existing in store.jobs(article_id):
-            if existing['request'].get('resume_job_id')==request.resume_job_id: return existing
+            if existing['request'].get('resume_job_id')==request.resume_job_id and existing['request'].get('revision')==request.revision: return existing
+        from .issue_actions import parent
+        valid=parent(a)
+        if not valid or valid['id']!=request.resume_job_id: raise ValueError('原待续任务已被替代或完成，请从当前环节操作')
     if a['revision']!=request.revision: raise store.Conflict('文章已更新，请等待保存完成后重试')
     if request.stage not in [*STAGES,'revise','image','layout_advice','research']: raise ValueError('未知环节')
     prerequisites(request.stage,a)
@@ -105,12 +111,17 @@ def apply_result(a,stage,result,request):
     def change(v):
         v['stages'][stage]='done'
         if stage=='topic':
-            v['topics']=result['topics']
+            creative.candidates(v,result['topics'],request.get('instruction',''))
             if v['auto']['topic']:
-                v['title']=result['topics'][0]['title']; v['brief']['topic']=v['title']
+                creative.adopt(v,result['topics'][0]['title'],result['topics'][0]['id'])
             else: v['stages']['topic']='needs_input'
         elif stage=='sources':
             v['evidence']=prompts.clean_context(result)
+            current=creative.intent(v)
+            if result.get('intent') and not current.get('expanded'):
+                current.update(selected={**result['intent'],'title':v['brief']['topic']},expanded=True)
+            if result.get('direction_change'): current['direction_change']=result['direction_change']
+            v['creative_intent']=current
         elif stage=='outline':
             if request.get('section_id') and v['outline']:
                 section=next((x for x in result['sections'] if x['id']==request['section_id']),None)
@@ -181,27 +192,25 @@ async def run(job_id):
             store.update_job(job_id,stage=stage,target_stage=j['request']['stage'],message='正在'+LABELS.get(stage,{'revise':'修改选段','image':'生成图片','layout_advice':'分析阅读与结构'}.get(stage,stage)),partial='',result=None)
             store.event(job_id,'stage',stage=stage)
             if stage in ('topic','sources','outline','review','research'):
-                a,pending=await research.gather(a,job_id,stage,req.get('instruction','') if stage in ('sources','research','outline') else '')
-                if pending:
+                a,pending=await research.gather(a,job_id,stage,req.get('instruction',''))
+                if pending and stage!='topic':
+                    if stage in ('sources','research'):
+                        store.update_job(job_id,status='completed',ended=store.now(),message='本次核实已执行完毕，仍有核心问题待处理',waiting_for_materials=stage=='sources',result={'materials_state':a.get('materials_state')})
+                        return
                     store.update_job(job_id,status='needs_input',ended=store.now(),message='资料核对暂停，尚未完成'+LABELS.get(stage,stage)+'；请处理待核实问题',blocked_stage=stage)
                     return
-                if stage in ('outline','review') and a['stages']['sources']=='stale':
-                    evidence=await call(job_id,'sources',a,req);a=apply_result(a,'sources',evidence,req)
             if stage=='research':
-                # A successful explicit verification is usable material work, not an idle stage.
-                notes=a.get('research',{})
-                claims=[dict(id='C'+research.digest([e['source_id'],e['claim']])[:10],text=e['claim'],type='fact',
-                    source_ids=[e['source_id']],status='unsupported' if e.get('quality')=='insufficient' else 'bounded' if e.get('boundary') or e.get('quality')=='limited' else 'supported',
-                    boundary=e.get('boundary',''),evidence=[e]) for e in notes.get('evidence',[])]
-                a=apply_result(a,'sources',dict(summary=notes.get('summary',''),claims=claims,gaps=[]),req)
                 if req.get('continuation_job_id'):
                     original=store.job(req['continuation_job_id']);target=original['stage']
-                    if a['auto'].get(target):
+                    from .issue_actions import parent
+                    if parent(a) and a['auto'].get(target):
                         stage=target;req={**original['request'],'resume_job_id':original['id'],'_job_id':job_id}
                         store.update_job(job_id,resumed_from=original['id'])
                         continue
                 store.update_job(job_id,status='completed',ended=store.now(),message='资料检索与整理已完成');return
-            if stage=='layout':
+            if stage=='sources' and a.get('research',{}).get('evidence'):
+                result=a['evidence']
+            elif stage=='layout':
                 rendering.render(a)
                 def layout_ready(v):
                     v['stages']['layout']='done';v['current_stage']='layout'

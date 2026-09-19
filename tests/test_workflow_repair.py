@@ -50,26 +50,26 @@ def paused_article(client):
 
 def act_issue(client,a,action,action_id='one'):
     return client.post('/api/articles/'+a['id']+'/research/issues/actions',headers=H,json={
-        'revision':a['revision'],'issue_ids':[a['research']['issues'][0]['id']],'action':action,'action_id':action_id})
+        'revision':a['revision'],'issue_ids':[a['research']['issues'][0]['id']],'action':action,'action_id':action_id,'wording':'仅讨论已提供的条件，不给出未核实数字'})
 
 
 def test_waive_undo_staleness_and_nonmaterial_preferences(client):
     a=paused_article(client)
     r=act_issue(client,a,'waive');assert r.status_code==200,r.text
     a=r.json()['article'];assert a['workflow']['outline']['allowed'] and not a['research']['pending']
-    assert a['research']['issues'][0]['status']=='waived'
+    assert a['research']['issues'][0]['status']=='bounded'
     a=patch(client,a,{'auto':{**a['auto'],'layout':True}},'preferences')
-    assert a['research']['issues'][0]['status']=='waived' and not a['research']['stale']
+    assert a['research']['issues'][0]['status']=='bounded' and not a['research']['stale']
     r=act_issue(client,a,'undo');a=r.json()['article'];assert not a['workflow']['outline']['allowed']
     a=act_issue(client,a,'waive').json()['article']
     a=patch(client,a,{'brief':{**a['brief'],'purpose':'新的写作目标'}},'setup')
-    assert a['research']['stale'] and a['research']['issues'][0]['status']=='open'
-    assert act_issue(client,a,'waive').status_code==400
+    assert a['research']['stale'] and a['research']['issues'][0]['status']=='stale'
+    assert a['research_decisions']
 
 
 def test_attachment_keeps_issue_pending_and_links_new_material(client):
     a=paused_article(client);a=act_issue(client,a,'attach').json()['article']
-    a=client.post('/api/articles/'+a['id']+'/sources/text',headers=H,json={'revision':a['revision'],'text':'待核实的补充资料'}).json()
+    a=client.post('/api/articles/'+a['id']+'/sources/text',headers=H,json={'revision':a['revision'],'text':'待核实的补充资料','issue_ids':[a['research']['issues'][0]['id']]}).json()
     assert a['sources'][0]['issue_ids']==[a['research']['issues'][0]['id']]
     assert a['research']['pending'] and a['research']['stale']
 
@@ -109,6 +109,7 @@ def test_selective_verification_cannot_silently_drop_other_blockers(client):
     old=a['research']['issues'][0]
     w.notes['issues']=[dict(old,status='resolved',resolution='claimed success',source_ids=['S1'])]
     assert not w.sufficient()  # No located original evidence.
+    w.notes['issues'][0]['claim']='范围已明确'
     w.notes['evidence']=[{'source_id':'S1','claim':'范围已明确'}]
     assert w.sufficient()
 
@@ -161,17 +162,12 @@ def test_continuation_cannot_use_another_article(client,model):
     assert r.status_code==400
 
 
-def test_scope_review_bounds_added_requirements_without_claiming_truth(client,monkeypatch):
+def test_scope_and_evidence_share_intent_without_second_classifier(client,monkeypatch):
     a=new(client);j=store.create_job(a['id'],{'stage':'sources'})
     w=research.Research(a,j['id'],'sources')
-    w.notes={'summary':'资料已读','gaps':['缺少实验证明核对顺序最优'],'conflicts':[],
-             'evidence':[{'source_id':'S1','claim':'核对来源有帮助'}],'issues':[]}
-    async def scope(a,stage,instruction,schema,job,candidates=None):
-        assert not a['sources'] and '用户' in instruction
-        return {'decisions':[{'id':candidates[0]['id'],'kind':'limitation','reason':'这是流程建议，不声称最优；不需增加实验证明'}]}
-    monkeypatch.setattr(research,'structured',scope)
-    asyncio.run(w.check_scope())
-    assert w.sufficient() and w.issues()[0]['kind']=='limitation' and w.issues()[0]['status']=='open'
-    w.notes['evidence']=[];w.notes['issues']=[];w.notes['gaps']=['没有任何可定位依据']
-    asyncio.run(w.check_scope())
+    w.notes={'summary':'资料已读','gaps':[],'conflicts':[],
+        'evidence':[{'source_id':'S1','claim':'核对来源有帮助'}],
+        'issues':[dict(id='L1',text='没有核对顺序最优的研究',kind='limitation',status='open',source_ids=[],claim='')]}
+    assert w.sufficient() and w.issues()[0]['status']=='open'
+    w.notes['evidence']=[];w.notes['gaps']=['没有任何可定位依据']
     assert not w.sufficient()

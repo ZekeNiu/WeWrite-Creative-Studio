@@ -92,9 +92,11 @@ async def gemini(s,query,limit=1):
     for c in data.get('candidates',[]):
         ground=c.get('groundingMetadata',{})
         queries.extend(ground.get('webSearchQueries',[]))
-        for chunk in ground.get('groundingChunks',[]):
+        for index,chunk in enumerate(ground.get('groundingChunks',[])):
             web=chunk.get('web',{})
-            if web.get('uri'): rows.append(dict(url=web['uri'],title=web.get('title') or web['uri'],content='',provider='native'))
+            if web.get('uri'):
+                excerpts=[x.get('segment',{}).get('text','') for x in ground.get('groundingSupports',[]) if index in x.get('groundingChunkIndices',[])]
+                rows.append(dict(url=web['uri'],title=web.get('title') or web['uri'],content=' '.join(excerpts),provider='native',snippet_kind='grounded_summary',status='excerpt_only'))
     if not queries or not rows: raise ValueError('未取得真实搜索工具记录和来源；当前 Gemini 接入方式未验证')
     # Gemini can expand a request into several queries; record actual queries separately.
     return list({r['url']:r for r in rows}.values()),dict(calls=len(set(queries)),queries=queries,seconds=round(time.monotonic()-started,2),
