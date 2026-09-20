@@ -171,9 +171,9 @@ class SearchConfig(BaseModel):
     pubmed_enabled: bool = True
     tavily_enabled: bool = False
     tavily_price: float | None = Field(None, ge=0)
-    max_calls: int = Field(8, ge=1, le=30)
-    max_pages: int = Field(16, ge=1, le=60)
-    max_rounds: int = Field(2, ge=0, le=4)
+    max_calls: int = Field(8, ge=1, le=100)
+    max_pages: int = Field(16, ge=1, le=500)
+    max_rounds: int = Field(2, ge=0, le=20)
 
     @model_validator(mode='before')
     @classmethod
@@ -215,6 +215,8 @@ class ResearchIssue(BaseModel):
     claim_id: str = ''
     status: Literal['open','resolved'] = 'open'
     resolution: str = ''
+    priority: Literal['high','normal'] | None = None
+    merged_ids: list[str] = Field(default_factory=list,max_length=24)
 
 
 class ResearchNotes(BaseModel):
@@ -271,6 +273,12 @@ class ArticlePatch(BaseModel):
     changes: dict
 
 
+class ResearchLimits(BaseModel):
+    max_calls: int = Field(ge=1,le=100)
+    max_pages: int = Field(ge=1,le=500)
+    max_rounds: int = Field(ge=0,le=20)
+
+
 class JobRequest(BaseModel):
     stage: str
     revision: int
@@ -283,12 +291,14 @@ class JobRequest(BaseModel):
     resume_job_id: str = ''
     action_id: str = ''
     continuation_job_id: str = ''
+    research_limits: ResearchLimits | None = None
+    research_parent_id: str = ''
 
 
 class IssueAction(BaseModel):
     revision: int
     issue_ids: list[str] = Field(min_length=1,max_length=40)
-    action: Literal['verify','waive','bound','exclude','undo','attach']
+    action: Literal['verify','waive','bound','bound_auto','exclude','undo','attach']
     action_id: str = Field(min_length=1,max_length=80)
     wording: str = Field(default='', max_length=3000)
 

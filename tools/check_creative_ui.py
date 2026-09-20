@@ -18,10 +18,11 @@ with sync_playwright() as p:
     ID=created.json()['id']
     page.goto(BASE+'/#'+ID)
     page.get_by_role('button',name='查找并整理资料',exact=True).click()
-    expect(page.locator('.material-status')).to_contain_text('核心问题')
-    expect(page.get_by_role('button',name='处理剩余问题',exact=True)).to_be_enabled()
+    expect(page.locator('.material-status')).to_contain_text('高优先级')
+    expect(page.get_by_role('button',name='查看待处理建议',exact=True)).to_be_enabled()
     first=article();qid=first['materials_state']['required'][0]['id']
-    page.locator('[data-issue="'+qid+'"]').get_by_role('button',name='展开问题').click()
+    toggle=page.locator('[data-issue="'+qid+'"]').get_by_role('button',name='展开问题')
+    if toggle.count():toggle.click()
     page.locator('[data-issue="'+qid+'"]').get_by_role('button',name='补充资料').click()
     page.get_by_role('dialog').get_by_role('button',name='关闭',exact=True).click()
     page.locator('.source-actions').get_by_role('button',name='粘贴文字').click()
@@ -39,7 +40,7 @@ with sync_playwright() as p:
     expect(page.locator('[data-issue="'+qid+'"]').get_by_role('button',name='收起问题')).to_be_visible()
     expect(page.get_by_role('button',name='核实新增资料',exact=True)).to_be_enabled()
     before=jobs();page.get_by_role('button',name='核实新增资料',exact=True).click()
-    expect(page.get_by_role('button',name='进入大纲',exact=True)).to_be_enabled()
+    expect(page.locator('.source-search .primary')).to_have_text('进入大纲')
     assert article()['research']['stats']['search_requests']==0
     assert article()['materials_state']['required']==[] and article()['materials_state']['boundaries']
     assert len(jobs())==len(before)+1

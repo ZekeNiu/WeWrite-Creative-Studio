@@ -124,11 +124,12 @@ def pdf_match_text(text,extracted=True):
 
 class Research:
     def __init__(self,a,job_id,stage):
-        self.a=a;self.job_id=job_id;self.stage=stage;self.cfg=providers.settings()['search']
+        self.a=a;self.job_id=job_id;self.stage=stage;self.cfg=dict(providers.settings()['search'])
         job=store.job(job_id);prior=job.get('research',{})
-        resume=job.get('request',{}).get('resume_job_id')
+        self.cfg.update(job.get('request',{}).get('research_limits') or {})
+        resume=job.get('request',{}).get('research_parent_id') or job.get('request',{}).get('resume_job_id')
         if not prior and resume: prior=store.job(resume).get('research',{})
-        self.calls=prior.get('calls',0);self.pages=prior.get('pages',0);self.rounds=prior.get('rounds',0)
+        self.calls=prior.get('stats',{}).get('search_requests',prior.get('calls',0));self.pages=prior.get('pages',0);self.rounds=prior.get('rounds',0)
         self.log=list(prior.get('log',[]));self.disabled={x['channel'] for x in self.log if x.get('reason') and x.get('channel')}
         self.seen_queries={x['query'] for x in self.log if x.get('query')};self.notes={}
         self.blocked=list(prior.get('blocked_urls',[]));self.added=[];self.started=time.monotonic();self.search_model=None
@@ -159,7 +160,7 @@ class Research:
         self.log.append(dict(at=store.now(),message=message,**details))
         store.update_job(self.job_id,message=message,current_step='research',research={'calls':self.calls,'pages':self.pages,'rounds':self.rounds,
             'log':self.log,'blocked_urls':self.blocked,'sources':self.added,'notes':self.notes,'telemetry':self.telemetry,'strategy':self.strategy(),
-            'stats':self.stats,'plan':self.plan})
+            'stats':self.stats,'plan':self.plan,'limits':{k:self.cfg[k] for k in ('max_calls','max_pages','max_rounds')}})
         store.event(self.job_id,'research',message=message,calls=self.calls,pages=self.pages)
 
     def strategy(self):
@@ -235,7 +236,7 @@ class Research:
 
     async def fetch(self,url):
         from .source_reader import READ_BUDGET
-        budget=dict(pages=0,metadata=0,max_pages=self.cfg['max_pages']-self.pages,max_metadata=self.cfg['max_calls']-self.calls)
+        budget=dict(pages=0,metadata=0,max_pages=self.cfg['max_pages']-self.pages,max_metadata=12)
         if budget['max_pages']<=0: raise ValueError('已达到页面读取上限')
         token=READ_BUDGET.set(budget)
         try: return await materials.from_url(url)
@@ -243,7 +244,7 @@ class Research:
             READ_BUDGET.reset(token)
             pages=max(1,budget['pages'])
             self.pages+=pages;self.stats['page_attempts']+=pages
-            self.calls+=budget['metadata'];self.stats['metadata_requests']+=budget['metadata']
+            self.stats['metadata_requests']+=budget['metadata']
 
     async def fetch_dynamic(self,url):
         if self.pages>=self.cfg['max_pages']: raise ValueError('已达到页面读取上限')
@@ -320,11 +321,10 @@ class Research:
             if r.get(field): src[field]=r[field]
         if r.get('academic') and r.get('title'): src['title']=r['title'].removesuffix(' [开放全文]')
         meta=src.get('bibliography') or {}
-        if src.get('doi') and (not all(meta.get(k) for k in ('authors','venue','year')) or any(isinstance(x,str) for x in meta.get('authors',[]))) and self.calls<self.cfg['max_calls'] and 'crossref' not in self.disabled and meta.get('document_type')!='PP':
+        if src.get('doi') and (not all(meta.get(k) for k in ('authors','venue','year')) or any(isinstance(x,str) for x in meta.get('authors',[]))) and 'crossref' not in self.disabled and meta.get('document_type')!='PP':
             cached_metadata=store.cache_get('doi:'+academic.normalized_doi(src['doi']))
             self.stats['metadata_cache_hits' if cached_metadata else 'metadata_requests']+=1
             if not cached_metadata:
-                self.calls+=1
                 if 'crossref' not in self.attempted: self.attempted.append('crossref')
             self.update('正在用 DOI 核对文献信息',channel='crossref',cached=bool(cached_metadata))
             metadata_usage=store.add_usage(self.a['id'],stage='search',job_id=self.job_id,model='crossref',service='crossref',reserved_cost=0,estimated_cost=0,currency='CNY',status='reserved')
@@ -361,6 +361,7 @@ class Research:
             '普通研究局限、样本量不足、尚未开展的研究、可并列介绍的学术争议均为 limitation，写进边界而非阻塞。'
             '每个问题给出 text、kind、source_ids、claim。gaps 只列 blocking；conflicts 记录可保留的分歧。'
             '已有问题保留原 id 及 claim_id；同问题改写不得创建新身份。evidence 使用已有 claim_id（新主张可留空），type 区分事实、推断与意见。定向核实只返回目标问题及其受影响关联项，不重做无关的已处理问题；确实核实完成的标 status=resolved，说明 resolution 并指向本轮 evidence 的 source_ids；'
+            '所有事项都是创作建议，不禁止用户继续。priority 为 high 或 normal。旧记录如同一主张同一核实问题重复，保留一个 id 并在 merged_ids 列出被合并 id；不同主张或人工决定不能混并。已有完整 issues 时不重复输出 gaps/conflicts。'
             '没有证据只能保留为 open 或明确解释为何属于 limitation，不能默默删除未处理的核心问题。'
             '对 bounded/waived 遵守已指定 wording，excluded 的主张本篇不使用，不再追查；不能把缺据数字改成概数。'
             'quote 保留原文语言，不翻译、不改写、不拼接；无法定位的具体断言应删除或弱化。'
@@ -456,6 +457,8 @@ class Research:
     async def run(self,query=''):
         self.requirements=query
         self.update('正在检查已有材料与需要补查的问题')
+        from .source_imports import enrich_existing
+        await enrich_existing(self.a)
         plan=await structured(self.a,self.stage,
             '判断本环节是否需要补查。主题改变、来源不足、数字缺据、核心主张的来源质量不适用、研究冲突需要检索；材料足够则 needed=false。'
             '依据当前日期和 recent_days 查询近期动态；经典研究、基础机制及用户指定文献不受近期窗口排除。选题反馈也用于调整检索方向，避开已展示角度。queries 最多3条，研究问题使用中英文检索词：英文查询放首位，适合跨库论文发现；中文查询补充本地语境，覆盖反方及适用边界。'
@@ -470,8 +473,10 @@ class Research:
         if plan['needed'] and (self.stage=='topic' or not self.sufficient()):
             queries=plan['queries'] or [self.a['brief']['topic'] or self.a['brief']['domain'] or self.a['brief']['column']]
             before=self.progress_key()
-            await self.discover(queries)
-            if before==self.progress_key(): self.stop_reason='本轮未新增有效材料或解决问题；请补充指定原文或调整问题范围。'
+            untried=[q for q in queries if q not in self.seen_queries]
+            if untried:
+                await self.discover(untried)
+                if before==self.progress_key(): self.stop_reason='本轮未新增有效材料或解决问题；请补充指定原文或调整问题范围。'
         for round_index in range(self.cfg['max_rounds']+1):
             await self.assess()
             if self.sufficient() or self.stop_reason: break
@@ -495,8 +500,10 @@ class Research:
         if self.policy_issue and not self.sufficient(): self.stop_reason=self.policy_issue
         pending=not self.sufficient()
         if pending and (self.calls>=self.cfg['max_calls'] or self.pages>=self.cfg['max_pages']):
-            self.stop_reason='本次检索已达到次数或页面上限，已停止；现有结果保留。'
-        self.update('资料核对暂停，请处理核心证据缺口' if pending else '资料已整理，已保留适用边界')
+            self.stop_reason=f"达到本轮上限：搜索 {self.calls}/{self.cfg['max_calls']} 次，读取 {self.pages}/{self.cfg['max_pages']} 页。可调整上限继续，或带限定进入大纲。"
+        elif pending and self.rounds>=self.cfg['max_rounds']:
+            self.stop_reason=f"已补查 {self.rounds}/{self.cfg['max_rounds']} 轮，可调整上限继续或保留当前建议。"
+        self.update('核实已完成，仍有建议待处理，可带限定继续创作' if pending else '资料已整理，已保留适用边界')
         return pending
 
 
@@ -508,7 +515,7 @@ def input_key(a,stage,query,search_signature):
 async def gather(a,job_id,stage,query=''):
     if not providers.settings()['search']['enabled'] and stage!='research' and not query: return a,False
     r=a.get('research',{})
-    if stage in ('outline','sources') and not query and r.get('policy_version')==source_context.POLICY_VERSION and not r.get('stale') and r.get('outline_key',digest(a['outline']))==digest(a['outline']) and not any(x['kind']=='blocking' and x['status'] in ('open','stale') for x in flow_state.issues(a)):
+    if stage in ('outline','sources') and not query and not r.get('unassessed_source_ids') and r.get('policy_version')==source_context.POLICY_VERSION and not r.get('stale') and r.get('outline_key',digest(a['outline']))==digest(a['outline']) and not any(x['kind']=='blocking' and x['status'] in ('open','stale') for x in flow_state.issues(a)):
         store.update_job(job_id,message='复用已整理的资料与处理决定，正在生成大纲')
         return a,False
     original=copy.deepcopy(a);worker=Research(copy.deepcopy(a),job_id,stage)
@@ -531,13 +538,28 @@ async def gather(a,job_id,stage,query=''):
             if source.get('selected') and (sid not in current_sources or evidence_state.source_key(source)!=evidence_state.source_key(current_sources[sid])):
                 raise store.Conflict('本次核实使用的来源已改变，结果已保留，请核对后重新处理')
         for source in worker.a['sources']:
-            if source['id'] in current_sources: current_sources[source['id']].update(academic.combine(current_sources[source['id']],source))
+            if source['id'] in current_sources:
+                current_sources[source['id']].update(academic.combine(current_sources[source['id']],source))
+                if source.get('identity_verified'): current_sources[source['id']].update(title=source['title'],bibliography=source.get('bibliography',{}),identity_verified=True,identity_status='identified')
             elif source['id'] not in prior_sources: v['sources'].append(source)
+        from .source_imports import consolidate
+        source_aliases=consolidate(v)
+        for span in result['evidence']:span['source_id']=source_aliases.get(span['source_id'],span['source_id'])
+        for issue in worker.notes.get('issues',[]):issue['source_ids']=list(dict.fromkeys(source_aliases.get(s,s) for s in issue.get('source_ids',[])))
         result['issues']=evidence_state.merge_issues(v,worker.notes,worker.requested)
         result['unassessed_source_ids']=[x['id'] for x in v['sources'] if x.get('selected') and x['id'] not in {s['id'] for s in worker.a['sources']}]
-        result['stale']=bool(result['unassessed_source_ids'])
+        result['stale']=False
+        result['limits']={k:worker.cfg[k] for k in ('max_calls','max_pages','max_rounds')}
+        aliases=dict(v.get('research',{}).get('issue_aliases',{}))
+        for issue in result['issues']:
+            for iid in issue.get('merged_ids',[]):aliases[iid]=issue['id']
+        result['issue_aliases']=aliases
+        for source in v['sources']:
+            source['issue_ids']=list(dict.fromkeys(aliases.get(i,i) for i in source.get('issue_ids',[])))
+        result['gaps']=[x['text'] for x in result['issues'] if x['kind']=='blocking' and x['status'] in ('open','stale')]
+        result['conflicts']=[x['text'] for x in result['issues'] if x['kind']=='limitation' and x['status'] in ('open','stale')]
         v['research']=result
-        v['evidence']=dict(summary=result['summary'],claims=evidence_state.merge_claims(original,result['evidence'],worker.requested),gaps=[x['text'] for x in result['issues'] if x['kind']=='blocking' and x['status'] in ('open','stale')])
+        v['evidence']=dict(summary=result['summary'],claims=evidence_state.merge_claims(v,result['evidence'],worker.requested),gaps=[x['text'] for x in result['issues'] if x['kind']=='blocking' and x['status'] in ('open','stale')])
         # The compatibility research view mirrors the canonical claim evidence.
         result['evidence']=[e for c in v['evidence']['claims'] for e in c.get('evidence',[])]
         result['delta']=dict(added_sources=len(worker.added),resolved=sum(x['status']=='resolved' and next((o.get('status') for o in flow_state.issues(original) if o['id']==x['id']),None)!='resolved' for x in result['issues']),remaining=sum(x['kind']=='blocking' and x['status'] in ('open','stale') for x in result['issues']))

@@ -53,8 +53,12 @@ def prerequisites(stage,a):
 def start(article_id,request):
     a=store.get_article(article_id)
     for existing in store.jobs(article_id):
-        if existing['status'] in ('queued','running') and all(existing['request'].get(k)==request.model_dump().get(k) for k in ('stage','revision','instruction','selected_text','section_id','image_id','issue_ids','chain','resume_job_id','continuation_job_id')):
+        if existing['status'] in ('queued','running') and all(existing['request'].get(k)==request.model_dump().get(k) for k in ('stage','revision','instruction','selected_text','section_id','image_id','issue_ids','chain','resume_job_id','continuation_job_id','research_limits','research_parent_id')):
             return existing
+    if request.research_parent_id:
+        parent=store.job(request.research_parent_id)
+        if request.stage!='research' or parent['article_id']!=article_id or parent['status'] in ('running','queued') or not parent.get('research') or a.get('research',{}).get('job_id')!=parent['id']:
+            raise ValueError('原检索任务已被替代，不能继续；请查看当前整理结果')
     if request.continuation_job_id:
         original=store.job(request.continuation_job_id)
         from .flow_state import job_view
@@ -79,6 +83,8 @@ def start(article_id,request):
 
 
 def cancel(id):
+    j=store.job(id)
+    if j['status'] not in ('queued','running'):return j
     if id in TASKS: TASKS[id].cancel()
     return store.update_job(id,status='cancelled',ended=store.now(),message='已停止；已完成的结果保留，已发出的请求可能仍计费')
 
@@ -191,14 +197,13 @@ async def run(job_id):
             prerequisites(stage,a)
             store.update_job(job_id,stage=stage,target_stage=j['request']['stage'],message='正在'+LABELS.get(stage,{'revise':'修改选段','image':'生成图片','layout_advice':'分析阅读与结构'}.get(stage,stage)),partial='',result=None)
             store.event(job_id,'stage',stage=stage)
-            if stage in ('topic','sources','outline','review','research'):
+            if stage in ('topic','sources','review','research'):
                 a,pending=await research.gather(a,job_id,stage,req.get('instruction',''))
-                if pending and stage!='topic':
+                if pending and stage in ('sources','research'):
                     if stage in ('sources','research'):
-                        store.update_job(job_id,status='completed',ended=store.now(),message='本次核实已执行完毕，仍有核心问题待处理',waiting_for_materials=stage=='sources',result={'materials_state':a.get('materials_state')})
-                        return
-                    store.update_job(job_id,status='needs_input',ended=store.now(),message='资料核对暂停，尚未完成'+LABELS.get(stage,stage)+'；请处理待核实问题',blocked_stage=stage)
-                    return
+                        if stage=='research' or not (req.get('chain') and a['auto'].get('sources')):
+                            store.update_job(job_id,status='completed',ended=store.now(),message='本次核实已完成，仍有建议待处理，可带限定继续',waiting_for_materials=stage=='sources',result={'materials_state':a.get('materials_state')})
+                            return
             if stage=='research':
                 if req.get('continuation_job_id'):
                     original=store.job(req['continuation_job_id']);target=original['stage']

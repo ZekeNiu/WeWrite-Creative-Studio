@@ -1,0 +1,12 @@
+import {useEffect,useState} from 'react';
+import {api,errorText} from './api';
+import {Modal} from './ui';
+import type {Article,Settings} from './types';
+export type Limits={max_calls:number;max_pages:number;max_rounds:number};
+
+export default function SourceLimits({a,initial,onClose,onApply,busy}:{a:Article;initial?:Limits;onClose:()=>void;onApply:(v:Limits,go:boolean)=>Promise<void>;busy:boolean}){
+ const [value,setValue]=useState<Limits|null>(initial||null),[error,setError]=useState(''),[future,setFuture]=useState(false),[saving,setSaving]=useState(false);
+ useEffect(()=>{if(initial)return;let active=true;void api<Settings>('/settings').then(c=>{if(active)setValue(a.research?.limits||{max_calls:c.search.max_calls,max_pages:c.search.max_pages,max_rounds:c.search.max_rounds})}).catch(e=>{if(active)setError(errorText(e))});return()=>{active=false}},[]);
+ async function apply(go:boolean){if(!value)return;setSaving(true);setError('');try{for(const [key,min,max] of [['max_calls',1,100],['max_pages',1,500],['max_rounds',0,20]] as const){if(!Number.isInteger(value[key])||value[key]<min||value[key]>max)throw new Error('请按标注范围填写整数上限')}if(future){const c=await api<Settings>('/settings');await api('/settings','PUT',{...c,search:{...c.search,...value}})}await onApply(value,go);onClose()}catch(e){setError(errorText(e))}finally{setSaving(false)}}
+ return <Modal title="本轮检索设置" onClose={onClose}><p className="modal-intro">上限用于控制本轮工作量。资料足够或没有进展时会提前停止，已取得的资料和处理决定保留。</p>{value&&<><div className="form-grid">{([['max_calls','最多搜索次数',1,100],['max_pages','最多读取页面',1,500],['max_rounds','最多补查轮数',0,20]] as const).map(([key,label,min,max])=><label className="field" key={key}><span>{label}（{min}–{max}）</span><input aria-label={label} type="number" min={min} max={max} value={Number.isNaN(value[key])?'':value[key]} onChange={e=>setValue({...value,[key]:e.target.value===''?NaN:Number(e.target.value)})}/></label>)}</div><p className="muted">本次已用：搜索 {a.research?.stats?.search_requests??a.research?.calls??0} 次 · 读取 {a.research?.pages??0} 页 · 补查 {a.research?.rounds??0} 轮。文献信息查询单独统计。</p><label className="row"><input type="checkbox" checked={future} onChange={e=>setFuture(e.target.checked)}/>用于以后任务</label></>}{error&&<p className="notice amber" role="alert">{error}</p>}<div className="modal-footer"><button className="button secondary" disabled={!value||saving} onClick={()=>void apply(false)}>保存本轮上限</button><button className="button primary" disabled={!value||saving||busy} onClick={()=>void apply(true)}>调整上限并继续</button></div></Modal>
+}

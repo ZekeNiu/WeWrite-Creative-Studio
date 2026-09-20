@@ -32,10 +32,12 @@ def issues(a):
     result=[]
     for raw in rows:
         x=dict(raw);d=decisions.get(x['id'],{})
+        x['priority']=x.get('priority') or ('high' if x.get('kind')=='blocking' else 'normal')
         if x['text'] in ('未取得可用于当前主题的资料；可补充材料或检查检索渠道后重试。','尚未取得可定位的原文证据，请补充材料或继续检索。'): x['system_kind']='no_evidence'
         valid=(d.get('dependency_key')==dependency(a,x) if d.get('dependency_key') else d.get('material_key') in (signature(a),legacy_signature(a)))
         if valid:
             x.update(status=d.get('handling','bounded'),wording=d.get('wording',''))
+            if d.get('application'):x['application']=d['application']
         elif x.get('status') in ('waived','bounded','excluded'):
             x['status']='stale'
         result.append(x)
@@ -45,19 +47,9 @@ def issues(a):
 def ready(a):
     result={s:dict(allowed=True,reason='',target=s) for s in STAGES}
     def block(stage,reason,target): result[stage]=dict(allowed=False,reason=reason,target=target)
-    r=a.get('research',{})
-    blockers=[x for x in issues(a) if x['kind']=='blocking' and x['status'] in ('open','stale')]
-    from .evidence_state import material_view
-    material_ok=material_view(a)['ready']
-    if not material_ok: block('outline','请先整理素材并处理待核实问题，再生成大纲','sources')
     if not a['outline'].get('sections'): block('write','尚未生成大纲，请先完成大纲','outline')
     elif a['stages']['outline']!='done': block('write','请先确认当前大纲；已有大纲需要更新时，可编辑后点击确认','outline')
-    if a['stages']['sources']=='stale' and a['evidence']:
-        block('outline','采用的素材已变化，请先重新分析素材，避免沿用过期证据','sources')
-        block('write','采用的素材已变化，请先重新分析素材，避免沿用过期证据','sources')
-    if blockers and not r.get('stale'):
-        block('outline','资料核对暂停，请先处理待核实问题','sources')
-        block('write','资料核对暂停，请先处理待核实问题','sources')
+    # Advice does not block creation. The generation context retains evidence limits.
     if not a['brief']['topic']:
         for s in ('sources','outline','write'): block(s,'请先在选题环节选择或采用一个主题','topic')
     if not a['content'].strip():

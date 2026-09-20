@@ -63,20 +63,46 @@ def init():
             db.execute('UPDATE jobs SET status=?,data=? WHERE id=?', ('interrupted', encode(j), row['id']))
 
 
-def get_article(id):
+def get_article(id,include_trash=False):
     with connection() as db:
         row = db.execute('SELECT data FROM articles WHERE id=?', (id,)).fetchone()
         if not row:
             raise KeyError('找不到这篇文章')
         from .flow_state import present
         from .review_state import legacy
-        return present(legacy(json.loads(row['data']), db))
+        a=json.loads(row['data'])
+        if a.get('trashed_at') and not include_trash: raise Conflict('这篇文章已在回收站，请恢复后继续')
+        return present(legacy(a, db))
 
 
-def list_articles():
+def list_articles(state='active'):
     with connection() as db:
         data = [json.loads(r['data']) for r in db.execute('SELECT data FROM articles')]
-    return sorted([{k: a[k] for k in ('id','title','revision','updated','brief','current_stage','stages')} for a in data if not a.get('diagnostic')], key=lambda a: a['updated'], reverse=True)
+    return sorted([dict({k:a[k] for k in ('id','title','revision','updated','brief','current_stage','stages')},trashed_at=a.get('trashed_at')) for a in data if not a.get('diagnostic') and bool(a.get('trashed_at'))==(state=='trash')],key=lambda a:a['updated'],reverse=True)
+
+
+def trash_article(id,revision,restore=False):
+    with LOCK:
+        if any(j['status'] in ('queued','running') for j in jobs(id)):raise Conflict('文章仍有活动任务，请完成或停止任务后再操作')
+        return save_article(id,revision,lambda a:a.update(trashed_at=None if restore else now()),'恢复回收站文章' if restore else '移入回收站',allow_trash=True)
+
+
+def purge_article(id,revision):
+    import shutil
+    from . import outputs
+    with connection() as db:
+        a=get_article(id,include_trash=True)
+        if a['revision']!=revision:raise Conflict('文章已改变，请刷新回收站后重试')
+        if not a.get('trashed_at'):raise ValueError('请先将文章移入回收站')
+        if db.execute("SELECT 1 FROM jobs WHERE article_id=? AND status IN ('queued','running')",(id,)).fetchone():raise Conflict('文章仍有活动任务，不能删除')
+        for parent in (DATA/'articles',outputs.root()/'articles'):
+            target=(parent/id).resolve();base=parent.resolve()
+            if target.parent!=base or target==base:raise ValueError('文章文件路径无效')
+            if target.exists():shutil.rmtree(target)
+        db.execute('DELETE FROM events WHERE job_id IN (SELECT id FROM jobs WHERE article_id=?)',(id,))
+        for table in ('versions','jobs','usage'):db.execute(f'DELETE FROM {table} WHERE article_id=?',(id,))
+        db.execute('DELETE FROM articles WHERE id=?',(id,))
+    return {'deleted':True}
 
 
 def create_article(brief=None, auto=None, diagnostic=False):
@@ -99,11 +125,12 @@ class Conflict(Exception):
     pass
 
 
-def save_article(id, expected_revision, mutate, label, invalidate=None, review_action=False):
+def save_article(id, expected_revision, mutate, label, invalidate=None, review_action=False,allow_trash=False):
     with connection() as db:
         row=db.execute('SELECT data FROM articles WHERE id=?',(id,)).fetchone()
         if not row: raise KeyError('文章不存在')
         a=json.loads(row['data'])
+        if a.get('trashed_at') and not allow_trash:raise Conflict('这篇文章已在回收站，请恢复后继续')
         if a['revision'] != expected_revision:
             raise Conflict('文章已有更新，为避免覆盖，未应用本次修改。请先查看最新版本。')
         db.execute('INSERT INTO versions VALUES(?,?,?,?,?)',(uid(),id,now(),label,encode(a)))

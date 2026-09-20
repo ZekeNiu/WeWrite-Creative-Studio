@@ -1,8 +1,5 @@
-import type {IssueFocus} from './StageContext';
+export {default as Sources} from './SourcesPanel';
 import ReviewChecks from './ReviewChecks';
-import ResearchDetails from './ResearchDetails';
-import MaterialList,{readView,remember} from './MaterialList';
-import ReferenceDetails from './ReferenceDetails';
 import {useEffect,useRef,useState} from 'react';
 import {BookOpen,Search,Upload,Link as LinkIcon,Plus,Check,ArrowRight,RefreshCw,FileText,ExternalLink,GripVertical,Trash2,ImagePlus,Sparkles,MessageSquare,CheckCheck,AlertCircle,Lightbulb,Scissors} from 'lucide-react';
 import {api} from './api';
@@ -11,7 +8,7 @@ import {Field,Select,Toggle,Empty,Tag,Modal,Busy} from './ui';
 
 export type Action=(fn:()=>Promise<void>)=>Promise<void>;
 export type Run=(stage:string,extra?:Record<string,unknown>)=>Promise<void>;
-type Common={prepare:()=>Promise<Article>;navigate:(stage:import('./types').Stage)=>Promise<void>;onJob:(j:Job)=>void;a:Article;save:Save;act:Action;update:(a:Article)=>void;run:Run;busy:boolean};
+export type Common={prepare:()=>Promise<Article>;navigate:(stage:import('./types').Stage)=>Promise<void>;onJob:(j:Job)=>void;a:Article;save:Save;act:Action;update:(a:Article)=>void;run:Run;busy:boolean};
 
 export function Topics({a,act,update,run,busy,prepare}:Common){
  const [feedback,setFeedback]=useState('');
@@ -22,48 +19,6 @@ export function Topics({a,act,update,run,busy,prepare}:Common){
  <label className="field"><span>这次想怎样探索（可选）</span><textarea value={feedback} onChange={e=>setFeedback(e.target.value)} placeholder="例如：这些角度太普通，深入某个机制；或继续细化第二个方向" rows={2}/></label><div className="row between section-label"><h3>候选选题 <span className="count">{a.topics.length||'—'}</span></h3><button className="text-button" disabled={busy} onClick={()=>run('topic',{instruction:feedback})}><RefreshCw size={14}/>{a.topics.length?'换一批选题':'探索选题'}</button></div>
  {!a.topics.length?<Empty icon={<Lightbulb size={30}/>} title="你的下一个选题，从这里开始" description={`基于「${a.brief.domain||a.brief.column}」寻找角度。你可以先在右侧补充领域、读者和写作偏好。`}><button className="button primary" disabled={busy} onClick={()=>run('topic',{instruction:feedback})}><Sparkles size={16}/>寻找选题灵感</button></Empty>:<div className="topics-grid">{a.topics.map((t,i)=><article key={t.id||i} className={'topic-card '+(a.brief.topic===t.title?'selected':'')}><div className="row between"><span className="topic-number">{String(i+1).padStart(2,'0')}</span>{i===0&&<Tag tone="green">优先推荐</Tag>}</div><h3>{t.title}</h3><p>{t.angle}</p><div className="topic-reason">{t.novelty||t.reason}</div><details><summary>拟讨论的问题与依据状态</summary><p>{t.reader_question}</p>{t.questions?.map((q:string,i:number)=><p key={i}>{q}</p>)}<p>预期交付：{t.takeaway||t.reason}</p><p className="muted">{t.evidence_status||'待调查'}；关联资料不等于主张已核实。</p></details>{t.audience&&<small className="muted">适合：{t.audience}</small>}<div className="row between"><span className="muted">{t.source_ids?.length?`${t.source_ids.length} 条关联资料`:'需要补充资料'}</span><button className={'button '+(a.brief.topic===t.title?'secondary':'ghost')} disabled={busy} onClick={()=>choose(t.title,t.id)}>{a.brief.topic===t.title?<><Check size={14}/>已采用</>:<>就写这个<ArrowRight size={14}/></>}</button></div></article>)}</div>}
  <details className="hotspots"><summary>看看公开热点</summary><p className="muted">热点提供灵感，不代表事实已核实，也不等同于你所在领域的阅读需求。</p><button className="button secondary" disabled={loading} onClick={()=>{setLoading(true);void act(async()=>setHot(await api('/hotspots'))).finally(()=>setLoading(false))}}>{loading?<Busy text="正在读取热点"/>:'读取公开热点'}</button>{hot&&(hot.items?.length?<div className="hotspot-list">{hot.items.map((h:any,i:number)=><button key={i} onClick={()=>setTopic(h.title)}><span>{i+1}</span>{h.title}<small>{h.source}</small></button>)}</div>:<p className="muted">暂未读取到公开热点，可手动填写主题或生成常青选题。</p>)}</details></>
-}
-
-export function Sources({a,save,act,update,run,busy,onJob,focusRequest,onFocusHandled,onContext,prepare,navigate}:Common&{focusRequest?:IssueFocus;onFocusHandled?:()=>void;onContext?:(id:string,explicit?:boolean)=>void}){
- const viewKey="materials-tab:"+a.id;
- const [tab,setTab]=useState(()=>readView(viewKey,{tab:a.research?.pending?"results":"materials"}).tab);
- const [summaryOpen,setSummaryOpen]=useState(false);
- const [focus,setFocus]=useState<{token:number;id?:string}>({token:0});const [supplied,setSupplied]=useState(false);const [attachmentIds,setAttachmentIds]=useState<string[]>([]);
- const selectTab=(tab:string)=>{void act(async()=>{await prepare();setTab(tab);remember(viewKey,{tab})})};
- const locate=(id?:string)=>{selectTab("results");setFocus({token:Date.now(),id})};
- useEffect(()=>{if(focusRequest?.token){locate(focusRequest.id);onFocusHandled?.()}},[focusRequest?.token]);
- const [mode,setMode]=useState('');const [title,setTitle]=useState('');const [text,setText]=useState('');const [url,setUrl]=useState('');const [query,setQuery]=useState('');const [inspect,setInspect]=useState<string|null>(null);const file=useRef<HTMLInputElement>(null);
- const finishSupply=(next:Article)=>{update(next);setSupplied(attachmentIds.length>0);if(attachmentIds.length)locate(attachmentIds[0]);setMode('');setAttachmentIds([])};
- const cancelSupply=()=>{setMode('');setAttachmentIds([])};
- async function upload(f:File){await act(async()=>{const current=await prepare();const body=new FormData();body.append('file',f);body.append('revision',String(current.revision));body.append('issue_ids',JSON.stringify(attachmentIds));finishSupply(await api('/articles/'+a.id+'/sources/file','POST',body))})}
- const state=a.materials_state;
- const primary=()=>{if(state?.action==='outline'&&!query.trim()){void navigate('outline');return}if(state?.action==='supplement'&&!query.trim()){locate(state.required[0]?.id);return}selectTab('results');void run(state?.action==='collect'||!state?'sources':'research',{instruction:query,issue_ids:state?.required.map(x=>x.id)||[],continuation_job_id:state?.action==='collect'?'':a.research?.resume_job_id||''})};
- const primaryLabel=query.trim()&&state?.action!=='collect'?'继续查证':state?.action==='outline'?'进入大纲':state?.action==='verify_new'?'核实新增资料':state?.action==='verify'?'更新相关判断':state?.action==='continue'||query.trim()?'继续查证':state?.action==='supplement'?'处理剩余问题':'查找并整理资料';
-
- useEffect(()=>{const input=file.current;const cancel=()=>setAttachmentIds([]);input?.addEventListener('cancel',cancel);return()=>input?.removeEventListener('cancel',cancel)},[]);
- const selected=a.sources.filter(s=>s.selected).length;
- useEffect(()=>setQuery(''),[a.id]);
- const research=a.research;const researchCurrent=research&&!research.stale;
- const evidenceCurrent=a.stages.sources==='done'&&a.evidence.summary;
- const summary=evidenceCurrent?a.evidence.summary:researchCurrent?research.summary:'';
- const gaps=(state?.required||(research?.issues||[]).filter(x=>x.kind==='blocking'&&['open','stale'].includes(x.status))).map(x=>x.text);
-
- return <>{mode==='supplement'&&<Modal title="补充核实资料" onClose={cancelSupply}><p>材料只关联本次所选问题；添加后先核实新增资料，上传成功不代表问题已解决。</p><div className="row"><button className="button secondary" onClick={()=>{setMode('');file.current?.click()}}>上传文件</button><button className="button secondary" onClick={()=>setMode('url')}>添加链接</button><button className="button secondary" onClick={()=>setMode('text')}>粘贴文字</button></div></Modal>}<div className="material-status" role="status"><h3>{busy?'正在处理，请留意上方执行进展':state?.message||'先检查已有材料，再按需检索'}</h3>{state?.delta&&<p>本轮新增 {state.delta.added_sources} 条素材 · 解决 {state.delta.resolved} 个问题 · 剩余 {state.delta.remaining} 个核心问题</p>}{state?.stop_reason&&<p className="muted">{state.stop_reason}</p>}{a.creative_intent?.direction_change&&<div className="notice amber"><p>核心方向需要你的判断：{a.creative_intent.direction_change}</p><button className="text-button" onClick={()=>navigate('topic')}>到选题调整并采用</button></div>}</div><div className="source-search"><Search size={18}/><input aria-label="补充检索要求" value={query} onChange={e=>setQuery(e.target.value)} placeholder="可选：补充需要查找或核实的问题，留空按文章主题整理…"/><button className="button primary" disabled={busy||!a.brief.topic} onClick={primary}>{primaryLabel}</button></div><div className="row wrap source-actions"><button className="button secondary" disabled={busy} onClick={()=>{setAttachmentIds([]);file.current?.click()}}><Upload size={15}/>上传文件</button><button className="button secondary" onClick={()=>{setAttachmentIds([]);setMode('url')}}><LinkIcon size={15}/>添加链接</button><button className="button secondary" onClick={()=>{setAttachmentIds([]);setMode('text')}}><Plus size={15}/>粘贴文字</button><span className="muted">PDF / Word / Markdown / TXT / BibTeX / RIS · 20 MB 内</span><input ref={file} type="file" hidden accept=".pdf,.docx,.md,.txt,.bib,.ris" onChange={e=>{if(e.target.files?.[0])void upload(e.target.files[0]);e.target.value=''}}/></div>
- <div className="material-overview"><span>已采用 {selected} / {a.sources.length} 条素材</span><button className="text-button" onClick={()=>locate()}>{research?.stale?'待复核':'待处理'} {gaps.length} 项</button><Tag tone={research?.stale?"amber":""}>{research?.stale?"资料需要更新":summary?"资料已整理":"尚未整理"}</Tag></div>
- {supplied&&<div className="notice"><span>资料已添加，尚需核实。</span><button className="text-button" onClick={()=>locate(focus.id)}>返回对应核实问题</button></div>}
- <div className="material-tabs" role="tablist" aria-label="素材页面"><button role="tab" aria-selected={tab==="results"} onClick={()=>selectTab("results")}>资料整理结果</button><button role="tab" aria-selected={tab==="materials"} onClick={()=>selectTab("materials")}>本篇素材 · {a.sources.length}</button></div>
- <div role="tabpanel" aria-label="资料整理结果" hidden={tab!=="results"}>
- {(summary||research||a.evidence.summary)?<section className="research-result source-card"><div className="row between"><h3>资料整理结果</h3><Tag tone={gaps.length||!summary?'amber':'green'}>{!summary?'需要更新':gaps.length?'待处理核心问题':'已整理'}</Tag></div>
- {summary?<><p className={summaryOpen?"summary-full":"preview-clamp summary-preview"}>{summary}</p><button className="text-button" aria-expanded={summaryOpen} onClick={()=>setSummaryOpen(v=>!v)}>{summaryOpen?"收起整理总结":"展开完整整理总结"}</button></>:<p className="muted">材料或主题已改变，请重新整理。历史结果仍保留，但不会作为当前结论展示。</p>}
-
- {a.evidence.claims?.length>0&&<details><summary>查看主张与证据关联{!evidenceCurrent?'（历史结果，待更新）':''}</summary>{a.evidence.claims.map((c:any)=><div className="claim" key={c.id}><Tag tone={c.status==='unsupported'?'amber':'green'}>{c.status==='unsupported'?'缺少支持':c.type==='fact'?'事实':'推断 / 观点'}</Tag><p>{c.text}</p><small>{c.source_ids.join(' · ')} {c.boundary}</small></div>)}</details>}
- {research&&<ResearchDetails a={a} busy={busy} act={act} update={update} onJob={onJob} run={run} focus={focus} prepare={prepare} onSupply={ids=>{setAttachmentIds(ids);setSupplied(false);setMode('supplement')}}/>}
- </section>:<p className="muted">尚无整理结果。添加素材后，点击“查找并整理资料”。</p>}</div>
- <div role="tabpanel" aria-label="本篇素材" hidden={tab!=="materials"}><MaterialList key={a.id} a={a} save={save} busy={busy} act={act} inspect={setInspect} onContext={onContext} prepare={prepare}/></div>
- {mode&&mode!=='supplement'&&<Modal title={mode==='url'?'添加网页资料':'添加文字素材'} onClose={cancelSupply}>{mode==='url'?<label className="field"><span>网页链接</span><input value={url} onChange={e=>setUrl(e.target.value)} placeholder="https://…"/></label>:<><label className="field"><span>素材名称</span><input value={title} onChange={e=>setTitle(e.target.value)}/></label><label className="field"><span>素材正文</span><textarea value={text} onChange={e=>setText(e.target.value)} rows={8}/></label></>}<div className="modal-footer"><span className="muted">材料只用于本篇文章</span><button className="button primary" disabled={busy} onClick={()=>act(async()=>{const current=await prepare();finishSupply(await api('/articles/'+a.id+'/sources/'+mode,'POST',{revision:current.revision,title,text,url,issue_ids:attachmentIds}));setText('');setUrl('')})}>添加素材</button></div></Modal>}
- {inspect&&a.sources.find(x=>x.id===inspect)&&<ReferenceDetails key={inspect} source={a.sources.find(x=>x.id===inspect)!} onClose={()=>setInspect(null)} onSave={s=>save({sources:a.sources.map(x=>x.id===s.id?s:x)},'sources')} onLookup={async doi=>update(await api(`/articles/${a.id}/sources/${inspect}/metadata`,'POST',{revision:a.revision,doi}))}/>}
-
- </>
 }
 
 export function OutlinePanel({a,save,run,busy,onContext}:Common&{onContext?:(id:string,explicit?:boolean)=>void}){

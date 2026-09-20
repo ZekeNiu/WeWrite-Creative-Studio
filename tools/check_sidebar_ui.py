@@ -17,7 +17,7 @@ with sync_playwright() as p:
     errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
     def article(case='full'):return page.request.get(BASE+'/api/articles/'+ids[case]).json()
     def open_case(case):
-        page.goto(BASE+'/#'+ids[case]);expect(page.locator('.workspace-title h1')).to_be_visible()
+        page.goto(BASE+'/#'+ids[case]);page.reload();expect(page.locator('.workspace-title h1')).to_be_visible()
     def nav(label):
         page.locator('.stage-nav').filter(has=page.locator('strong',has_text=label)).click()
         expect(page.locator('.workspace-title h1')).to_have_text(label)
@@ -50,10 +50,10 @@ with sync_playwright() as p:
     page.get_by_role('button',name='关闭侧栏',exact=True).click();first.locator('.source-title').click();first.locator('.source-title').click();expect(side()).to_have_count(0)
     first.get_by_role('button',name='查看依据',exact=True).click();expect(side()).to_be_visible();expect(page.get_by_role('tab',name='素材参考',exact=True)).to_have_attribute('aria-selected','true')
     side().get_by_role('button',name='返回素材概况',exact=True).click()
-    side().get_by_role('button',name='需要处理 核实问题 12',exact=True).click()
+    side().get_by_role('button',name='高优先级 核实问题 12',exact=True).click()
     expect(page.locator('[data-issue="issue12"]')).to_be_visible();expect(page.locator('[data-issue="issue12"] button[aria-expanded]')).to_have_attribute('aria-expanded','true')
     expect(page.locator('.research-details')).to_contain_text('第 2 / 2 页')
-    side().get_by_role('button',name='写作局限 需要保留的边界',exact=True).click();expect(page.locator('[data-issue="limit1"]')).to_be_visible()
+    side().get_by_role('button',name='普通优先级 需要保留的边界',exact=True).click();expect(page.locator('[data-issue="limit1"]')).to_be_visible()
     screenshot('sources-context')
     print('PASS remembered state, explicit/passive selection, cross-page issue focus',flush=True)
 

@@ -1,4 +1,4 @@
-import {useEffect,useRef,useState,type ReactNode} from 'react';
+import {useEffect,useRef,useState,useId,type ReactNode} from 'react';
 import {X,LoaderCircle,ChevronDown} from 'lucide-react';
 import {registerField} from './fieldChanges';
 
@@ -35,8 +35,8 @@ export function Select({label,value,onChange,children}:{label:string;value:strin
  return <label className="field"><span>{label}</span><div className="select-wrap"><select aria-label={label} aria-invalid={!!error} value={local} onChange={e=>{draft.current=e.target.value;dirty.current=true;setLocal(e.target.value);void commit().catch(()=>{})}}>{children}</select><ChevronDown size={14}/></div>{error&&<small role="alert">{error}<button type="button" className="text-button" onClick={()=>void commit().catch(()=>{})}>重试保存</button></small>}</label>
 }
 export function Modal({title,children,onClose,wide=false}:{title:string;children:ReactNode;onClose:()=>void;wide?:boolean}){
- const ref=useRef<HTMLDialogElement>(null);useEffect(()=>{ref.current?.showModal()},[]);
- return <dialog ref={ref} className={'modal '+(wide?'wide':'')} onCancel={onClose}><div className="modal-head"><h2>{title}</h2><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={20}/></button></div>{children}</dialog>
+ const heading=useId();const ref=useRef<HTMLDialogElement>(null);useEffect(()=>{ref.current?.showModal()},[]);
+ return <dialog ref={ref} aria-labelledby={heading} className={'modal '+(wide?'wide':'')} onCancel={e=>{e.preventDefault();onClose()}}><div className="modal-head"><h2 id={heading}>{title}</h2><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={20}/></button></div>{children}</dialog>
 }
 export function Empty({icon,title,description,children}:{icon:ReactNode;title:string;description:string;children?:ReactNode}){return <div className="empty"><div className="empty-icon">{icon}</div><h3>{title}</h3><p>{description}</p>{children}</div>}
 export function Busy({text='正在处理…'}:{text?:string}){return <span className="busy"><LoaderCircle size={16} className="spin"/>{text}</span>}

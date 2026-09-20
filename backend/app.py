@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import ValidationError
 from . import store,providers,security,materials,rendering,workflow,prompts,search_tools,browser_search,search_check,bibliography,outputs,capabilities
-from . import flow_state,issue_actions
+from . import flow_state,issue_actions,source_imports
 from .models import IssueAction,Settings,Brief,Layout,VisualSettings,ArticlePatch,JobRequest,STAGES,OutlineResult,ImagePlan,CapabilityTest
 
 APP_VERSION=json.loads((store.ROOT/'package.json').read_text('utf-8'))['version']
@@ -164,7 +164,40 @@ def get_search_check(id:str):
 
 
 @app.get('/api/articles')
-def articles(): return store.list_articles()
+def articles(state:str='active'):
+    if state not in ('active','trash'):raise ValueError('文章列表分类无效')
+    return store.list_articles(state)
+
+
+@app.post('/api/articles/{id}/trash')
+def trash_article(id:str,value:dict):return store.trash_article(id,value['revision'])
+
+
+@app.post('/api/articles/{id}/untrash')
+def untrash_article(id:str,value:dict):return store.trash_article(id,value['revision'],restore=True)
+
+
+@app.delete('/api/articles/{id}')
+def purge_article(id:str,value:dict):return store.purge_article(id,value['revision'])
+
+
+@app.post('/api/articles/{id}/source-imports')
+async def import_url(id:str,value:dict):
+    if not isinstance(value.get('url'),str):raise ValueError('请输入公开网页链接')
+    return source_imports.start(id,'url',value)
+
+
+@app.post('/api/articles/{id}/source-imports/file')
+async def import_file(id:str,file:UploadFile=File(),revision:int=Form(),issue_ids:str=Form('[]')):
+    blob=await file.read(materials.MAX_BYTES+1)
+    if len(blob)>materials.MAX_BYTES:raise ValueError('文件不能超过 20 MB')
+    ids=json.loads(issue_ids)
+    if not isinstance(ids,list) or len(ids)>40 or not all(isinstance(x,str) for x in ids):raise ValueError('建议关联格式无效')
+    return source_imports.start(id,'file',dict(filename=Path(file.filename or '').name,revision=revision,issue_ids=ids),blob)
+
+
+@app.post('/api/articles/{id}/sources/{sid}/identify')
+async def identify_source(id:str,sid:str,value:dict):return source_imports.start(id,'identify',dict(value,source_id=sid))
 
 
 @app.post('/api/articles')
@@ -247,15 +280,7 @@ def select_topic(id:str,value:dict):
 
 
 def append_source(a,src,issue_ids=()):
-    if not isinstance(issue_ids,(list,tuple)) or len(issue_ids)>40 or not all(isinstance(i,str) for i in issue_ids): raise ValueError('问题关联格式无效')
-    ids=list(dict.fromkeys(issue_ids))
-    if set(ids)-{x['id'] for x in flow_state.issues(a)}: raise ValueError('关联问题已改变，请重新选择')
-    src['issue_ids']=ids
-    from .academic import same,combine
-    old=next((x for x in a['sources'] if same(x,src)),None)
-    if old:
-        merged=combine(old,src);merged['issue_ids']=list(dict.fromkeys(old.get('issue_ids',[])+ids));old.update(merged)
-    else: a['sources'].append(src)
+    return source_imports.append(a,src,issue_ids)
 
 
 @app.post('/api/articles/{id}/sources/text')
@@ -288,6 +313,8 @@ async def add_file(id:str,file:UploadFile=File(),revision:int=Form(),as_draft:bo
     filename=store.uid()+Path(file.filename or '').suffix.lower()
     folder=store.article_dir(id)/'materials'; folder.mkdir(exist_ok=True); (folder/filename).write_bytes(blob)
     src=materials.source(file.filename or '文件素材',text,pages=pages,filename=filename)
+    src.update(original_filename=file.filename or '文件素材',content_hash=__import__('hashlib').sha256(blob).hexdigest(),attachments=[dict(filename=filename,name=file.filename or '文件素材')])
+    if not as_draft: await source_imports.identify_file(src,blob)
     def change(a):
         if as_draft:
             a['content']=text; a['title']=Path(file.filename or '导入文章').stem

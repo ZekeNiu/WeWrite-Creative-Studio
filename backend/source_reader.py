@@ -1,5 +1,7 @@
 """Identify a work before reading a public copy; metadata never becomes full text."""
 import re
+import asyncio
+import httpx
 import xml.etree.ElementTree as ET
 from contextvars import ContextVar
 from urllib.parse import urlsplit,unquote
@@ -7,6 +9,12 @@ from . import academic,materials
 
 API='https://www.ebi.ac.uk/europepmc/webservices/rest/'
 READ_BUDGET=ContextVar('source_read_budget',default=None)
+READ_PROGRESS=ContextVar('source_read_progress',default=None)
+
+
+def progress(message):
+    callback=READ_PROGRESS.get()
+    if callback: callback(message)
 
 
 def take(kind):
@@ -34,13 +42,14 @@ def record(row):
 
 
 async def identify(url,hint=None):
+    progress('正在识别文献')
     hint=hint or {};p=urlsplit(url);doi=hint.get('doi') or hint.get('bibliography',{}).get('doi','')
     match=re.search(r'10\.\d{4,9}/[^\s?#]+',unquote(url))
     if not doi and match: doi=match[0]
     pmc=re.search(r'PMC\d+',url,re.I)
     pmid=re.search(r'pubmed\.ncbi\.nlm\.nih\.gov/(\d+)',url)
     if doi or pmc or pmid:
-        query='DOI:"'+doi+'"' if doi else 'EXT_ID:'+pmc[0].upper() if pmc else 'EXT_ID:'+pmid[1]+' AND SRC:MED'
+        query='DOI:"'+doi+'"' if doi else 'PMCID:'+pmc[0].upper() if pmc else 'EXT_ID:'+pmid[1]+' AND SRC:MED'
         rows=await search(query)
         for row in rows:
             if doi and academic.normalized_doi(row.get('doi',''))!=academic.normalized_doi(doi): continue
@@ -109,29 +118,43 @@ def xml_source(blob,identity,url):
 
 
 async def read(url,hint=None):
-    direct=None;failure=''
     try:
-        take('pages')
-        direct=await materials.read_url(url)
-    except ValueError as exc: failure=str(exc)
+        async with asyncio.timeout(90): return await read_work(url,hint)
+    except TimeoutError: raise ValueError('读取超过 90 秒，已停止；可以重试或上传原文') from None
+
+
+async def read_work(url,hint=None):
+    direct=None;failure=''
+    identity=None
+    # A stable identifier does not require first visiting a publisher's challenge page.
+    if re.search(r'PMC\d+|pubmed\.ncbi\.nlm\.nih\.gov/\d+|10\.\d{4,9}/',unquote(url),re.I):
+        try: identity=await identify(url,hint)
+        except ValueError as exc: failure=str(exc)
+    if not identity:
+        try:
+            progress('正在读取网页正文');take('pages')
+            direct=await materials.read_url(url)
+        except ValueError as exc: failure=str(exc)
     if direct and direct['status']=='retrieved':
         direct.update(original_url=url,read_url=direct['url'],access_scope='fulltext' if direct.get('bibliography',{}).get('document_type') in ('J','C','PP') else 'page')
         return direct
     try:
-        identity=await identify(url,direct or hint)
+        identity=identity or await identify(url,direct or hint)
         if identity and not direct:
             direct=materials.source(identity['title'],identity.get('content',''),url,'web')
             direct['status']='abstract_only' if identity.get('content') else 'metadata_only'
             direct=academic.combine(direct,identity)
         if identity and identity.get('pmcid'):
             fullurl=API+identity['pmcid']+'/fullTextXML'
-            take('pages')
-            blob,_=await materials.fetch_bytes(fullurl)
-            src=xml_source(blob,identity,fullurl)
-            src.update(original_url=url,access_attempts=[dict(url=url,result=failure or 'abstract'),dict(url=fullurl,result='fulltext')])
-            return src
-        if identity and identity.get('doi') and not identity.get('pmcid'):
-            copies=list(identity.get('fulltext_urls',[]))
+            try:
+                progress('正在读取 Europe PMC 全文');take('pages')
+                blob,_=await materials.fetch_bytes(fullurl)
+                src=xml_source(blob,identity,fullurl)
+                src.update(original_url=url,access_attempts=[dict(url=url,result=failure or 'identified'),dict(url=fullurl,result='fulltext')])
+                return src
+            except (ValueError,ET.ParseError,httpx.HTTPError) as exc: failure=str(exc)
+        if identity and identity.get('doi'):
+            copies=[url]+list(identity.get('fulltext_urls',[]))
             try:
                 take('metadata')
                 for row in await academic.openalex(identity['doi']):
@@ -139,9 +162,9 @@ async def read(url,hint=None):
             except ValueError:
                 pass
             for address in list(dict.fromkeys(copies))[:3]:
-                if address.rstrip('/')==url.rstrip('/'): continue
+                if direct and direct.get('read_url')==address: continue
                 try:
-                    take('pages')
+                    progress('正在读取公开全文副本');take('pages')
                     full=await materials.read_url(address)
                     if full['status']=='retrieved' and matches_copy(full,identity):
                         full=academic.combine(full,identity)

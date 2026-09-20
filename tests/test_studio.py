@@ -256,7 +256,7 @@ def test_unconfigured_services_and_public_source_boundary(client):
     assert wait(client,r.json())['status']=='failed'
 
 
-def test_source_change_blocks_stale_evidence(client,model):
+def test_source_change_keeps_warning_without_blocking_outline(client,model):
     a=new(client)
     a=client.post('/api/articles/'+a['id']+'/sources/text',headers=H,json={'revision':a['revision'],'text':'可供分析的原始资料'}).json()
     assert run(client,a,'sources')['status']=='completed'
@@ -264,7 +264,7 @@ def test_source_change_blocks_stale_evidence(client,model):
     a=patch(client,a,{'sources':[{**a['sources'][0],'selected':False}]},'sources')
     assert a['stages']['sources']=='stale'
     r=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json={'revision':a['revision'],'stage':'outline'})
-    assert r.status_code==400 and '过期证据' in r.text
+    assert r.status_code==200 and wait(client,r.json())['status']=='completed'
 
 
 def test_automatic_review_bounded_to_two_passes(client,model,monkeypatch):

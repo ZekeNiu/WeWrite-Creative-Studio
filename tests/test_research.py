@@ -189,7 +189,10 @@ def test_pubmed_parses_abstract_as_abstract(monkeypatch):
     assert rows[0]['status']=='excerpt_only'  # Fulltext is verified only after reading.
 
 
-def test_missing_core_evidence_pauses_without_changing_draft(client,network,monkeypatch):
+def test_missing_evidence_allows_review_without_changing_draft(client,network,monkeypatch):
+    from backend import workflow
+    async def review_call(*args): return dict(decision='pass',summary='保留限定',issues=[],dimensions={})
+    monkeypatch.setattr(workflow,'call',review_call)
     original=providers.generate
     async def conflicting(s,system,prompt,emit=None):
         text,usage=await original(s,system,prompt,emit)
@@ -199,9 +202,9 @@ def test_missing_core_evidence_pauses_without_changing_draft(client,network,monk
     monkeypatch.setattr(providers,'generate',conflicting)
     a=article(client);a=store.save_article(a['id'],a['revision'],lambda v:v.update(content='保留的正文'),'fixture')
     j=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json={'stage':'review','revision':a['revision']}).json()
-    assert wait(client,j)['status']=='needs_input'
+    assert wait(client,j)['status']=='completed'
     a=client.get('/api/articles/'+a['id']).json()
-    assert a['content']=='保留的正文' and a['stages']['review']=='needs_input' and a['research']['gaps']
+    assert a['content']=='保留的正文' and a['stages']['review']=='done' and a['research']['gaps']
 
 
 def test_restart_marks_search_interrupted_without_replay(client):

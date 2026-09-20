@@ -4,18 +4,15 @@ from backend import store,workflow,research,flow_state
 from tests.test_studio import client,model,new,patch,run,H
 
 
-def test_pause_is_not_completed_or_empty_outline_confirmed(client,model,monkeypatch):
+def test_outline_uses_existing_material_without_restarting_research(client,model,monkeypatch):
     a=new(client)
-    a=store.save_article(a['id'],a['revision'],lambda v:v.update(evidence={'summary':'ready'},stages={**v['stages'],'sources':'done'}),'fixture')
-    async def pause(a,job,stage,*args):
-        a=store.save_article(a['id'],a['revision'],lambda v:v.update(research={'pending':True,'gaps':['核心依据不足'],'conflicts':[]},stages={**v['stages'],stage:'needs_input'}),'pause')
-        return a,True
-    monkeypatch.setattr(research,'gather',pause)
-    j=run(client,a,'outline',chain=False)
-    assert j['status']=='needs_input' and '资料核对暂停' in j['message']
-    a=client.get('/api/articles/'+a['id']).json()
-    assert not a['outline'] and not a['workflow']['write']['allowed']
     assert client.post('/api/articles/'+a['id']+'/confirm/outline',headers=H,json={'revision':a['revision']}).status_code==400
+    async def unexpected(*args):raise AssertionError('Outline must not restart research')
+    monkeypatch.setattr(research,'gather',unexpected)
+    j=run(client,a,'outline',chain=False)
+    assert j['status']=='completed'
+    a=client.get('/api/articles/'+a['id']).json()
+    assert a['outline']['sections'] and a['workflow']['write']['allowed']
 
 
 def test_readiness_allows_manual_draft_without_outline(client):
@@ -60,7 +57,7 @@ def test_waive_undo_staleness_and_nonmaterial_preferences(client):
     assert a['research']['issues'][0]['status']=='bounded'
     a=patch(client,a,{'auto':{**a['auto'],'layout':True}},'preferences')
     assert a['research']['issues'][0]['status']=='bounded' and not a['research']['stale']
-    r=act_issue(client,a,'undo');a=r.json()['article'];assert not a['workflow']['outline']['allowed']
+    r=act_issue(client,a,'undo');a=r.json()['article'];assert a['workflow']['outline']['allowed'] and a['research']['issues'][0]['status']=='open'
     a=act_issue(client,a,'waive').json()['article']
     a=patch(client,a,{'brief':{**a['brief'],'purpose':'新的写作目标'}},'setup')
     assert a['research']['stale'] and a['research']['issues'][0]['status']=='stale'
@@ -71,7 +68,7 @@ def test_attachment_keeps_issue_pending_and_links_new_material(client):
     a=paused_article(client);a=act_issue(client,a,'attach').json()['article']
     a=client.post('/api/articles/'+a['id']+'/sources/text',headers=H,json={'revision':a['revision'],'text':'待核实的补充资料','issue_ids':[a['research']['issues'][0]['id']]}).json()
     assert a['sources'][0]['issue_ids']==[a['research']['issues'][0]['id']]
-    assert a['research']['pending'] and a['research']['stale']
+    assert a['research']['pending'] and not a['research']['stale'] and a['research']['unassessed_source_ids']
 
 
 def test_resume_is_idempotent_and_preserves_manual_mode(client,model):

@@ -46,13 +46,22 @@ def merge_issues(a, notes, requested=()):
                 normal(item['text'])==normal(x['text']) or (item.get('claim') and normal(item['claim'])==normal(x.get('claim','')))),None)
             iid=match['id'] if match else item['id'] if item.get('system_kind')=='no_evidence' else issue_id(item['text'],item.get('source_ids',[]))
         if requested and iid in lookup and iid not in requested: continue
+        duplicates=[x for x in item.get('merged_ids',[]) if x in lookup and x!=iid]
+        protected=[x for x in [iid]+duplicates if x in a.get('research_decisions',{})]
+        if len(protected)>1:duplicates=[]
+        elif protected and protected[0]!=iid:
+            duplicates=[x for x in [iid]+duplicates if x!=protected[0]];iid=protected[0]
+        for duplicate in duplicates:
+            item['source_ids']=list(dict.fromkeys(item.get('source_ids',[])+lookup[duplicate].get('source_ids',[])))
+            rows.pop(duplicate,None)
+        item['merged_ids']=duplicates
         evidence=[e for e in notes.get('evidence',[]) if e.get('quality')!='insufficient' and
             ((item.get('claim_id') and item['claim_id']==e.get('claim_id')) or
              (item.get('claim') and normal(item['claim'])==normal(e['claim'])))]
         supported=bool(evidence) and bool(item.get('resolution'))
         item.update(id=iid,status='resolved' if item.get('status')=='resolved' and supported else 'open')
         rows[iid]=item;seen.add(item['text'])
-    for kind,key in [('blocking','gaps'),('limitation','conflicts')]:
+    for kind,key in ([] if notes.get('issues') else [('blocking','gaps'),('limitation','conflicts')]):
         for text in notes.get(key,[]):
             if text in seen or any(normal(x['text'])==normal(text) for x in rows.values()): continue
             iid=issue_id(text);rows[iid]=dict(id=iid,text=text,kind=kind,status='open',source_ids=[],claim='')
@@ -95,7 +104,7 @@ def changed(a, before):
     r=a.get('research')
     if r:
         r['unassessed_source_ids']=sorted((set(r.get('unassessed_source_ids',[]))|added)&set(new))
-        r['stale']=bool(direction or affected or r['unassessed_source_ids'])
+        r['stale']=bool(direction or affected)
         from .flow_state import issues
         r['issues']=copy.deepcopy(issues(before))
         for issue in r['issues']:
@@ -104,7 +113,7 @@ def changed(a, before):
             r.pop('resume_job_id',None);r.pop('resume_stage',None)
     for claim in a.get('evidence',{}).get('claims',[]):
         if direction or affected.intersection(claim.get('source_ids',[])): claim['stale']=True
-    if a.get('evidence') or r: a['stages']['sources']='stale'
+    if (direction or affected) and (a.get('evidence') or r): a['stages']['sources']='stale'
     return True
 
 
@@ -116,12 +125,15 @@ def material_view(a):
     new=r.get('unassessed_source_ids',[])
     claims=a.get('evidence',{}).get('claims',[])
     legacy_ready=not r.get('policy_version') and ((bool(r) and not r.get('pending')) or (a['stages']['sources']=='done' and bool(a.get('evidence'))))
-    usable=bool(claims or r.get('evidence') or legacy_ready) and not r.get('stale') and not required
+    usable=bool(claims or r.get('evidence') or legacy_ready) and not r.get('stale')
     if new: state='new_materials';message=f'{len(new)} 条新采用的材料尚未纳入判断';action='verify_new'
     elif r.get('stale'): state='changed';message='相关依据或文章目标已变化，需要更新对应判断';action='verify'
-    elif required: state='gaps';message=f'{len(required)} 个核心问题仍需处理';action='continue' if r.get('next_queries') and not r.get('exhausted') else 'supplement'
+    elif required: state='gaps';message=f'{len(required)} 项高优先级建议待处理，可带限定继续创作';action='continue' if r.get('next_queries') and not r.get('exhausted') else 'supplement'
     elif usable: state='ready';message='当前资料可进入大纲，请保留以下写作边界';action='outline'
     else: state='initial';message='先检查已有材料，再按缺口查找资料';action='collect'
-    return dict(state=state,message=message,action=action,ready=usable,required=required,boundaries=boundaries,
+    delta=r.get('delta')
+    if not isinstance(delta,dict) or not all(isinstance(delta.get(k),int) for k in ('added_sources','resolved','remaining')):delta=None
+    pending=sorted([x for x in rows if x.get('status') in ('open','stale')],key=lambda x:x.get('priority')!='high')
+    return dict(state=state,message=message,action=action,ready=usable,required=required,boundaries=boundaries,pending=pending,
         handled=[x for x in rows if x.get('status') in ('resolved','bounded','excluded','waived')],
-        new_source_ids=new,delta=r.get('delta',{}),stop_reason=r.get('stop_reason',''))
+        new_source_ids=new,delta=delta,delta_job_id=r.get('job_id',''),stop_reason=r.get('stop_reason',''))
