@@ -85,9 +85,22 @@ async def main(args):
             path.write_text(json.dumps(result,ensure_ascii=False,indent=2),'utf8')
             store.update_job(j['id'],status='completed' if result['status']=='completed' else 'failed',ended=store.now())
             print(json.dumps({k:result.get(k) for k in ('case','status','seconds','found','pending','error')},ensure_ascii=False),flush=True)
-    await asyncio.gather(*(run(c) for c in cases if not args.ids or c['id'] in args.ids.split(',')))
+    tasks=[asyncio.create_task(run(c)) for c in cases if not args.ids or c['id'] in args.ids.split(',')]
+    async def watch_stop():
+        while any(not task.done() for task in tasks):
+            if (output/'STOP').exists():
+                for task in tasks:task.cancel()
+                return
+            await asyncio.sleep(1)
+    watcher=asyncio.create_task(watch_stop())
+    outcomes=await asyncio.gather(*tasks,return_exceptions=True)
+    watcher.cancel()
+    await asyncio.gather(watcher,return_exceptions=True)
+    for outcome in outcomes:
+        if isinstance(outcome,BaseException) and not isinstance(outcome,asyncio.CancelledError):raise outcome
     results=[json.loads((output/(c['id']+'.json')).read_text('utf8')) for c in cases if (output/(c['id']+'.json')).exists()]
-    print(json.dumps(dict(completed=sum(x['status']=='completed' for x in results),found=sum(x['found'] for x in results),total=len(results))),flush=True)
+    print(json.dumps(dict(completed=sum(x['status']=='completed' for x in results),found=sum(x['found'] for x in results),
+        completed_readable=sum(x['status']=='completed' and x['found_readable'] for x in results),total=len(results),expected=len(cases))),flush=True)
 
 
 if __name__=='__main__':asyncio.run(main(arguments()))

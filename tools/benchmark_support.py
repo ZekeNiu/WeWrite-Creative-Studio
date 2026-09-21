@@ -62,7 +62,8 @@ class Capture:
             while (folder/(stem+'.json')).exists():
                 self.counts[case]+=1;stem=f'{self.counts[case]:04d}'
             path=folder/(stem+'.json')
-            record=dict(service={k:service.get(k) for k in ('id','model','protocol','max_tokens','temperature')},system=system,prompt=prompt,partial='')
+            record=dict(status='running',service={k:service.get(k) for k in ('id','model','protocol','max_tokens','temperature')},system=system,prompt=prompt,partial='')
+            path.write_text(json.dumps(record,ensure_ascii=False,indent=2),encoding='utf8')
             token=self.frames.set(folder/(stem+'.frames.jsonl'))
             async def receive(delta):
                 record['partial']+=delta

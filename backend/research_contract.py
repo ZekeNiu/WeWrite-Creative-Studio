@@ -3,7 +3,7 @@ import copy
 import re
 from . import creative,evidence_state
 
-VERSION=5
+VERSION=6
 CHECKS=('population','design','quantity','outcome','causality','scope')
 
 
@@ -52,18 +52,35 @@ def anchor_requirements(a,items):
     contract['requirements_anchored']=True
 
 
-def audit_coverage(rows,verdicts):
+def audit_candidates(a,rows,spans):
+    """An omitted question label must not hide independently verified evidence from the auditor."""
+    result=copy.deepcopy(rows)
+    targets={x['id'] for x in ensure(a).get('source_targets',[])}
+    for row in result:
+        candidates=[e for e in spans if evidence_state.evaluated(e) and e.get('support') in ('supported','limited','contradicted')]
+        if row['required'] and a['research_contract'].get('requires_primary'):
+            candidates=[e for e in candidates if e.get('source_origin')=='primary' and e.get('support_basis')!='external_reference']
+        if row['question_id'] in targets:
+            candidates=[e for e in candidates if e['source_id'] in row['source_ids']]
+        row['candidate_evidence_ids']=[e['evidence_id'] for e in candidates]
+    return result
+
+
+def audit_coverage(rows,verdicts,spans=()):
     """A relevant span is necessary but not sufficient to answer a compound question."""
     result=copy.deepcopy(rows)
+    sources={e['evidence_id']:e['source_id'] for e in spans}
     for row in result:
+        valid=set(row.pop('candidate_evidence_ids',row['evidence_ids']))
         matches=[v for v in verdicts if v['question_id']==row['question_id']]
         if len(matches)!=1:
             row.update(status='unresolved',reason='尚未完成核心问题的整体覆盖核查');continue
-        v=matches[0];valid=set(row['evidence_ids']);ids=v.get('evidence_ids',[])
+        v=matches[0];ids=v.get('evidence_ids',[])
         if v['status']=='unresolved' or not ids or set(ids)-valid:
             row.update(status='unresolved',reason=v['reason'] or '现有资料仅回答了问题的一部分');continue
         row.update(status=v['status'] if row['status']=='supported' else row['status'],reason=v['reason'],evidence_ids=ids)
         if row['status']=='unresolved':row['status']=v['status']
+        if spans:row['source_ids']=list(dict.fromkeys(sources[eid] for eid in ids))
     return result
 
 

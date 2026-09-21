@@ -76,6 +76,42 @@ def test_targeted_coverage_preserves_unrelated_verified_question():
     assert updated[1]==old and updated[2]['status']=='unresolved'
 
 
+def test_independent_audit_can_recover_omitted_question_label_without_auto_support():
+    from backend import research_contract
+    from tests.quality_fixtures import assessment
+    a=store.create_article(dict(topic='核实三分之二的样本分母'))
+    q=research_contract.ensure(a)['questions'][0]['id']
+    span=dict(assessment(),evidence_id='E1',source_id='S1',question_ids=[],quality='suitable',
+        verification='quote_matched',source_type='original',adoption_reason='Direct count',use_scope='Study')
+    rows=research_contract.coverage(a,dict(evidence=[span]))
+    assert rows[0]['evidence_ids']==[]
+    candidates=research_contract.audit_candidates(a,rows,[span])
+    assert candidates[0]['candidate_evidence_ids']==['E1']
+    assert not research_contract.sufficient(candidates)
+    no=dict(question_id=q,status='unresolved',reason='Does not answer this question',evidence_ids=[])
+    assert not research_contract.sufficient(research_contract.audit_coverage(candidates,[no],[span]))
+    yes=dict(no,status='supported',reason='Counts directly answer the requested denominator',evidence_ids=['E1'])
+    accepted=research_contract.audit_coverage(candidates,[yes],[span])
+    assert research_contract.sufficient(accepted) and accepted[0]['source_ids']==['S1']
+    assert 'candidate_evidence_ids' not in accepted[0]
+    assert not research_contract.sufficient(research_contract.audit_coverage(candidates,[dict(yes,evidence_ids=['invented'])],[span]))
+
+
+def test_audit_candidates_exclude_unverified_and_wrong_named_sources():
+    from backend import research_contract
+    from tests.quality_fixtures import assessment
+    a=store.create_article(dict(topic='定位 DOI 10.1234/required'))
+    a['sources']=[dict(id='S1',selected=True,status='abstract_only',doi='10.1234/other')]
+    research_contract.ensure(a)['requires_primary']=True
+    good=dict(assessment(),evidence_id='E1',source_id='S1',question_ids=[],quality='suitable',
+        verification='quote_matched',source_type='original',adoption_reason='Direct result',use_scope='Study')
+    bad=[dict(good,evidence_id='E2',verification='unmatched'),dict(good,evidence_id='E3',source_origin='secondary'),dict(good,evidence_id='E4',support='unsupported')]
+    rows=research_contract.coverage(a,dict(evidence=[good,*bad]))
+    candidates=research_contract.audit_candidates(a,rows,[good,*bad])
+    assert candidates[0]['candidate_evidence_ids']==['E1']
+    assert candidates[-1]['question_id'].startswith('K') and candidates[-1]['candidate_evidence_ids']==[]
+
+
 def test_parallel_identity_lookups_are_bounded_and_never_drop_failed_candidates(monkeypatch):
     from backend import discovery_identity
     active=0;peak=0

@@ -410,7 +410,7 @@ class Research:
             '整理核心发现及原文支持关系；evidence.quote 必须逐字复制来源中的连续片段，claim 写支持的判断，boundary 写适用范围。'
             '核对当前任务需要的全部关键问题；只列阻碍继续写作的实质 gaps 和 conflicts，不为凑篇数补查。'
             '只读到摘要不得推断全文。issues 分类：blocking 仅用于无法省略且阻碍当前写作任务的核心依据；'
-            '是否必需以 creative_intent 的采用方案、读者问题、新增价值及 brief 为准；人格不是写作目标。检索规划 questions 是线索。证据迫使核心方向改变时填写 direction_change（原因与替代方向），不得静默降低目标。手动主题未展开时，在 intent 中展开切入点、价值、交付、关键待验证主张，不能将假设当事实。'
+            '必需条件只以 research_contract 中 required=true 的用户原句和明确采用方案为准；creative_intent 中自动展开的计划、检索规划 questions 和模型建议都不是新增必需条件。人格不是写作目标。证据迫使核心方向改变时填写 direction_change（原因与替代方向），不得静默降低目标。手动主题未展开时，在 intent 中展开切入点、价值、交付、关键待验证主张，不能将假设当事实。'
             '普通研究局限、样本量不足、尚未开展的研究、可并列介绍的学术争议均为 limitation，写进边界而非阻塞。'
             '每个问题给出 text、kind、source_ids、claim。gaps 只列 blocking；conflicts 记录可保留的分歧。'
             '已有问题保留原 id 及 claim_id；同问题改写不得创建新身份。evidence 使用已有 claim_id（新主张可留空），type 区分事实、推断与意见。定向核实只返回目标问题及其受影响关联项，不重做无关的已处理问题；确实核实完成的标 status=resolved，说明 resolution 并指向本轮 evidence 的 source_ids；'
@@ -426,7 +426,7 @@ class Research:
             '有 blocking 时 followup_queries 给出可执行定向查询；没有时为空。'
             '素材 use 是用户的可选使用要求，不能当作证据；只有 author_experience_allowed=true 的材料可作作者亲历，不得自行推定授权。'
             '本轮目标问题 ID：'+json.dumps(self.requested)+'；新材料 ID：'+json.dumps(self.a.get('research',{}).get('unassessed_source_ids',[]))+'。只增量分析新材料及关联主张，保留其余已核实结果和人工决定。'
-            '本次补充要求：'+self.requirements+'；需要覆盖的问题：'+json.dumps(self.questions,ensure_ascii=False),ResearchNotes,self.job_id,questions=self.questions),self.a['sources'])
+            '本次补充要求：'+self.requirements+'；以下仅为可选检索线索，未被用户要求的细分人群、专项、对照实验或机制不能列为 blocking 或 gaps：'+json.dumps(self.questions,ensure_ascii=False),ResearchNotes,self.job_id,questions=self.questions),self.a['sources'])
         for src in self.a['sources']:
             if src.get('selected') and src.get('text'):
                 source_notebook.save(src,[n for n in self.notes.get('source_notes',[]) if n['source_id']==src['id']],signature,read_ranges.get(src['id'],[]))
@@ -453,9 +453,9 @@ class Research:
             if e['evidence_id'] in self.judgement_cache:e.update(self.judgement_cache[e['evidence_id']])
         self.coverage=research_contract.coverage(self.a,self.notes,self.coverage,self.requested)
         target_ids={x.get('question_id') for x in self.a.get('research',{}).get('issues',[]) if x['id'] in self.requested}-{None,''}
-        audit_rows=[row for row in self.coverage if not target_ids or row['question_id'] in target_ids]
+        audit_rows=research_contract.audit_candidates(self.a,[row for row in self.coverage if not target_ids or row['question_id'] in target_ids],spans)
         coverage_key=digest([self.a['research_contract'],audit_rows,spans])
-        if not any(row['evidence_ids'] for row in audit_rows):self.coverage_cache[coverage_key]=[]
+        if not any(row['candidate_evidence_ids'] for row in audit_rows):self.coverage_cache[coverage_key]=[]
         if coverage_key not in self.coverage_cache:
             self.update('正在独立核对各项必需条件是否真正得到回答')
             audit=await structured(self.a,self.stage,
@@ -464,10 +464,11 @@ class Research:
                 '例如要求某干预的随机试验，机制综述加另一干预的随机试验不能替代。要求溯源一个数字，找到同主题的另一个比例不能算完成溯源。'
                 'limited 只用于已回答问题但研究自身存在适用限制；遗漏必需条件、尚未找到所需出处必须 unresolved。contradicted 必须有直接反证，没找到不是反证。'
                 '仅验收用户原句和明确采用方案的条件。不能把检索规划自行扩展的机制、作者、后续实验设想变成新要求；解释证据边界不等于必须找到已经证明因果的实验。'
-                '只能选择该 coverage 已列出的 evidence_ids，具体说明哪项要求仍缺失；书目身份以已核验元数据为准，不要求将题名作者拼成正文引文。',
+                'candidate_evidence_ids 是已逐条独立核实、可供判读的证据池，不表示它们都回答了这个问题。逐个问题重新核对适用性，只选择真正回答该问题的候选编号作为 evidence_ids。之前 evidence_ids 或 question_ids 漏标不代表证据不存在。'
+                '具体说明用户原句中的哪项要求仍缺失；不能要求用户未指定的细分项目、对照实验或机制。书目身份以已核验元数据为准，不要求将题名作者拼成正文引文。',
                 CoverageAudit,self.job_id,[dict(coverage=audit_rows,evidence=spans)],questions=self.questions)
             self.coverage_cache[coverage_key]=audit['coverage']
-        audited={row['question_id']:row for row in research_contract.audit_coverage(audit_rows,self.coverage_cache[coverage_key])}
+        audited={row['question_id']:row for row in research_contract.audit_coverage(audit_rows,self.coverage_cache[coverage_key],spans)}
         self.coverage=[audited.get(row['question_id'],row) for row in self.coverage]
         self.notes.setdefault('issues',[]).extend(research_contract.issues(self.coverage))
         for e in spans:
