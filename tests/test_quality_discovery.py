@@ -76,6 +76,42 @@ def test_targeted_coverage_preserves_unrelated_verified_question():
     assert updated[1]==old and updated[2]['status']=='unresolved'
 
 
+def test_current_report_limits_reach_coverage_audit_and_invalidate_cached_verdict(monkeypatch):
+    import copy
+    from backend import research_contract
+    from tests.quality_fixtures import notes,judgements
+    w=worker();w.a['brief']['topic']='说明实验的入选和排除条件'
+    source=materials.source('Original study','Criterion A is described. Detailed criteria are in the appendix.')
+    w.a['sources']=[source];research_contract.ensure(w.a)
+    limits=[];audits=[]
+    async def structured(a,stage,instruction,schema,job_id,candidates=None,questions=()):
+        if schema.__name__=='ResearchNotes':
+            return schema.model_validate(notes(a,dict(summary='Current report',evidence=[dict(
+                source_id=source['id'],quote='Criterion A is described.',claim='Criterion A is stated.')],
+                issues=copy.deepcopy(limits)))).model_dump()
+        if schema.__name__=='EvidenceJudgements':return judgements(candidates,a['research_contract'])
+        if schema.__name__=='CoverageAudit':
+            snapshot=copy.deepcopy(candidates[0]);audits.append(snapshot)
+            missing=bool(snapshot['reported_limits']['issues'])
+            return dict(coverage=[dict(question_id=row['question_id'],status='unresolved' if missing else 'supported',
+                reason='Requested list is still missing' if missing else 'Complete conditions checked',
+                evidence_ids=row['candidate_evidence_ids']) for row in snapshot['coverage']])
+        raise AssertionError(schema.__name__)
+    monkeypatch.setattr(research,'structured',structured)
+    asyncio.run(w.assess())
+    assert len(audits)==1 and w.sufficient()
+    limits.append(dict(text='The requested criteria list remains in an unread appendix.',kind='limitation',source_ids=[source['id']],status='open'))
+    w.requirements='重新核查当前已知缺口'
+    asyncio.run(w.assess())
+    assert len(audits)==2 and not w.sufficient()
+    assert audits[0]['evidence']==audits[1]['evidence']
+    assert audits[0]['reported_limits']['issues']==[]
+    assert audits[1]['reported_limits']['issues'][0]['text']==limits[0]['text']
+    assert any(row['required'] and row['status']=='unresolved' for row in w.coverage)
+    asyncio.run(w.assess())
+    assert len(audits)==2
+
+
 def test_independent_audit_can_recover_omitted_question_label_without_auto_support():
     from backend import research_contract
     from tests.quality_fixtures import assessment

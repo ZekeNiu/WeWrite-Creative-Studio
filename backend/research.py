@@ -462,7 +462,9 @@ class Research:
         self.coverage=research_contract.coverage(self.a,self.notes,self.coverage,self.requested)
         target_ids={x.get('question_id') for x in self.a.get('research',{}).get('issues',[]) if x['id'] in self.requested}-{None,''}
         audit_rows=research_contract.audit_candidates(self.a,[row for row in self.coverage if not target_ids or row['question_id'] in target_ids],spans)
-        coverage_key=digest([self.a['research_contract'],audit_rows,spans])
+        audit_context=dict(coverage=audit_rows,evidence=spans,reported_limits={
+            k:copy.deepcopy(self.notes.get(k)) for k in ('summary','gaps','conflicts','issues','direction_change')})
+        coverage_key=digest([self.a['research_contract'],audit_context])
         if not any(row['candidate_evidence_ids'] for row in audit_rows):self.coverage_cache[coverage_key]=[]
         if coverage_key not in self.coverage_cache:
             self.update('正在独立核对各项必需条件是否真正得到回答')
@@ -474,8 +476,8 @@ class Research:
                 '仅验收用户原句和明确采用方案的条件。不能把检索规划自行扩展的机制、作者、后续实验设想变成新要求；解释证据边界不等于必须找到已经证明因果的实验。'
                 'candidate_evidence_ids 是已逐条独立核实、可供判读的证据池，不表示它们都回答了这个问题。逐个问题重新核对适用性，只选择真正回答该问题的候选编号作为 evidence_ids。之前 evidence_ids 或 question_ids 漏标不代表证据不存在。'
                 'requires_source_content 只有问题纯粹要求定位或核对文献身份时才为false；要求说明研究条件、核对数字、机制或研究结论时必须true，书目题名不能替代正文或摘要中的事实。'
-                '具体说明用户原句中的哪项要求仍缺失；不能要求用户未指定的细分项目、对照实验或机制。书目身份以已核验元数据为准，不要求将题名作者拼成正文引文。'+source_context.COVERAGE_PROVENANCE_POLICY+'用户要求数字溯源且未完成时，相应问题必须 unresolved，不能标 supported 或 limited。'+source_context.LOOKUP_SCOPE_POLICY,
-                CoverageAudit,self.job_id,[dict(coverage=audit_rows,evidence=spans)],questions=self.questions)
+                '具体说明用户原句中的哪项要求仍缺失；不能要求用户未指定的细分项目、对照实验或机制。书目身份以已核验元数据为准，不要求将题名作者拼成正文引文。'+source_context.COVERAGE_PROVENANCE_POLICY+'用户要求数字溯源且未完成时，相应问题必须 unresolved，不能标 supported 或 limited。'+source_context.LOOKUP_SCOPE_POLICY+source_context.COVERAGE_COMPLETENESS_POLICY,
+                CoverageAudit,self.job_id,[audit_context],questions=self.questions)
             self.coverage_cache[coverage_key]=audit['coverage']
         audited={row['question_id']:row for row in research_contract.audit_coverage(audit_rows,self.coverage_cache[coverage_key],spans)}
         self.coverage=[audited.get(row['question_id'],row) for row in self.coverage]
