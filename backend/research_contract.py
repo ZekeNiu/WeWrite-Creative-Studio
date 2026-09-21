@@ -3,7 +3,7 @@ import copy
 import re
 from . import creative,evidence_state
 
-VERSION=4
+VERSION=5
 CHECKS=('population','design','quantity','outcome','causality','scope')
 
 
@@ -62,8 +62,8 @@ def audit_coverage(rows,verdicts):
         v=matches[0];valid=set(row['evidence_ids']);ids=v.get('evidence_ids',[])
         if v['status']=='unresolved' or not ids or set(ids)-valid:
             row.update(status='unresolved',reason=v['reason'] or '现有资料仅回答了问题的一部分');continue
-        if row['status']=='unresolved':continue
         row.update(status=v['status'] if row['status']=='supported' else row['status'],reason=v['reason'],evidence_ids=ids)
+        if row['status']=='unresolved':row['status']=v['status']
     return result
 
 
@@ -127,7 +127,8 @@ def coverage(a,notes,previous=(),requested=()):
         if requested and target_ids and qid not in target_ids and qid in old:
             rows.append(old[qid]);continue
         v=verdicts.get(qid,{})
-        spans=[e for e in notes.get('evidence',[]) if qid in e.get('question_ids',[]) and semantic_valid(e)
+        original=qid==questions[0]['id'] and a.get('research_contract',{}).get('requirements_anchored')
+        spans=[e for e in notes.get('evidence',[]) if (qid in e.get('question_ids',[]) or original) and semantic_valid(e)
                and (evidence_state.assessed(e) or e.get('support')=='contradicted')]
         if q['required'] and a.get('research_contract',{}).get('requires_primary'):
             spans=[e for e in spans if e.get('source_origin')=='primary' and e.get('support_basis')!='external_reference']

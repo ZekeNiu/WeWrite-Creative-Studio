@@ -32,6 +32,8 @@ def test_related_evidence_cannot_complete_a_partially_answered_question():
     for verdicts in ([],[verdict,verdict],[dict(verdict,status='supported',evidence_ids=['invented'])]):
         assert not research_contract.sufficient(research_contract.audit_coverage([row],verdicts))
     assert research_contract.sufficient(research_contract.audit_coverage([row],[dict(verdict,status='limited')]))
+    assert research_contract.sufficient(research_contract.audit_coverage([dict(row,status='unresolved')],[dict(verdict,status='supported')]))
+    assert not research_contract.sufficient(research_contract.audit_coverage([dict(row,status='unresolved',evidence_ids=[])],[dict(verdict,status='supported')]))
 
 
 def test_unconfirmed_expansion_never_becomes_a_new_hard_requirement():
