@@ -3,7 +3,7 @@ import copy
 import re
 from . import creative,evidence_state
 
-VERSION=3
+VERSION=4
 CHECKS=('population','design','quantity','outcome','causality','scope')
 
 
@@ -20,14 +20,18 @@ def ensure(a,questions=()):
     # The user's original demand is always a question, even if the planner omits it.
     original='；'.join(str(a['brief'].get(k,'')) for k in ('topic','purpose','include') if a['brief'].get(k))
     texts=[(original or intent.get('original_request') or a['brief'].get('column',''),True)]
-    texts += [(x,True) for x in [selected.get('reader_question','')]+list(selected.get('key_claims') or [])+list(selected.get('questions') or [])]
+    adopted=intent.get('adopted_plan')
+    if adopted is None:
+        candidates=[t for b in intent.get('batches',[]) for t in b.get('topics',[])]+a.get('topics',[])
+        adopted=next((t for t in candidates if t.get('id') and t['id']==selected.get('id')), {})
+    texts += [(x,True) for x in [adopted.get('reader_question','')]+list(adopted.get('key_claims') or [])+list(adopted.get('questions') or [])]
     texts += [(x,False) for x in questions]
     seen=set();rows=[]
     for text,required in texts:
         text=str(text).strip();normal=evidence_state.normal(text)
         if text and normal not in seen:
             seen.add(normal);rows.append(dict(id='Q'+evidence_state.digest(text)[:12],text=text,required=required))
-    value=dict(version=VERSION,objective_key=key,original_request=intent.get('original_request') or original,
+    value=dict(version=VERSION,objective_key=key,original_request=original or intent.get('original_request',''),
                reader_value=selected.get('takeaway') or selected.get('novelty',''),questions=rows[:16],source_targets=source_targets(original))
     a['research_contract']=value
     return value
@@ -40,9 +44,11 @@ def anchor_requirements(a,items):
     for item in items:
         quote=item['request_quote'].strip();question=item['question'].strip()
         if not quote or quote not in available or not question:continue
-        qid='Q'+evidence_state.digest([quote,question])[:12]
+        # A plausible paraphrase can silently add authors or experimental demands.
+        # Only the user's exact clause becomes binding; the original whole request remains.
+        qid='Q'+evidence_state.digest(quote)[:12]
         if qid not in {q['id'] for q in contract['questions']}:
-            contract['questions'].append(dict(id=qid,text=question,request_quote=quote,required=True))
+            contract['questions'].append(dict(id=qid,text=quote,request_quote=quote,required=True))
     contract['requirements_anchored']=True
 
 
