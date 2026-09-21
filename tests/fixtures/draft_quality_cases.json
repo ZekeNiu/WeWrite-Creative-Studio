@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "frozen_before_generation": "2026-09-21",
+  "research_cases": "quality_cases.json",
+  "case_ids": ["acl", "sprint", "middle", "spanner", "crispr", "m1"],
+  "words": 1800,
+  "persona": "industry-observer",
+  "audience": "希望理解研究、技术与产品判断依据的普通读者",
+  "dimensions": ["accuracy", "viewpoint", "usefulness", "voice", "readability"],
+  "acceptance": "至少四篇整体改善，其余无实质退步；重要事实逐条核对，不能只凭模型总分。",
+  "substantive_regressions": ["新增不受来源支持的重要事实", "改变数字分母或研究对象", "把相关或推测写成因果", "丢失原始读者问题与价值", "挪用个人经历或范文事实"],
+  "protocol": "两版使用同一份只读材料包、同一任务书及用户已配置的模型；保留全部失败结果。输出匿名A/B稿及独立事实审核记录，先作成稿判断再揭盲。基线按旧流程成稿；候选按新论证、核查及最多两轮整体编辑流程成稿。"
+}
