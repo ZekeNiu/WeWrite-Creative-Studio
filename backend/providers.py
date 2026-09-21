@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import hashlib
+import re
 import time
 from urllib.parse import urlsplit
 import httpx
@@ -137,6 +138,10 @@ async def frames(response):
     if data: yield '\n'.join(data)
 
 
+class StructuredOutputUnsupported(ValueError):
+    """An explicitly rejected formatting option, before any generated content."""
+
+
 def extract_json_text(d, protocol):
     if protocol=='chat':
         content=d.get('choices',[{}])[0].get('message',{}).get('content','')
@@ -150,6 +155,8 @@ async def generate(s, system, prompt, emit=None):
     common={'model':s['model'],'stream':True}
     if protocol=='chat':
         path='chat/completions'; body=dict(common,messages=[{'role':'system','content':system},{'role':'user','content':prompt}],max_tokens=s.get('max_tokens',8000),stream_options={'include_usage':True})
+        if s.get('response_schema'):
+            body['response_format']=dict(type='json_schema',json_schema=dict(name='research_result',schema=s['response_schema'],strict=False))
     elif protocol=='responses':
         path='responses'; body=dict(common,instructions=system,input=prompt,max_output_tokens=s.get('max_tokens',8000))
     else:
@@ -158,6 +165,10 @@ async def generate(s, system, prompt, emit=None):
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(240,connect=20)) as client:
             async with client.stream('POST',endpoint(s['base_url'],path),headers=headers(s),json=body) as response:
+                if response.status_code in (400,422) and body.get('response_format'):
+                    detail=(await response.aread()).decode('utf-8',errors='replace').lower()
+                    if re.search(r'response_format|json_schema|json schema|structured.output',detail) and re.search(r'unsupported|not supported|not support|does not support|unrecognized|unknown parameter|不支持|未知参数',detail):
+                        raise StructuredOutputUnsupported('当前接口明确不支持结构化输出参数')
                 if response.status_code>=400: raise ValueError(http_error(response.status_code))
                 if 'text/event-stream' not in response.headers.get('content-type',''):
                     raw=await response.aread(); d=json.loads(raw)

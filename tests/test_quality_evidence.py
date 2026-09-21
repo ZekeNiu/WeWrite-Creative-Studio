@@ -120,11 +120,13 @@ def test_background_and_manual_exclusion_do_not_establish_full_coverage():
 
 
 @pytest.mark.parametrize('field',research_contract.CHECKS)
-def test_mismatched_population_design_denominator_outcome_causality_or_scope_cannot_pass(field):
+@pytest.mark.parametrize('verdict',['mismatch','unknown'])
+@pytest.mark.parametrize('support',['supported','limited'])
+def test_mismatched_population_design_denominator_outcome_causality_or_scope_cannot_pass(field,verdict,support):
     s=materials.source('Study','The experiment lacks a control group.')
     e=research.validate_spans(dict(evidence=[evidence(s)],gaps=[],issues=[]),[s])['evidence'][0]
-    checks=dict.fromkeys(research_contract.CHECKS,'matched');checks[field]='mismatch'
-    research_contract.apply_judgements([e],[dict(evidence_id=e['evidence_id'],support='supported',reason='冲突应拒绝',checks=checks,question_ids=[])])
+    checks=dict.fromkeys(research_contract.CHECKS,'matched');checks[field]=verdict
+    research_contract.apply_judgements([e],[dict(evidence_id=e['evidence_id'],support=support,basis='observed',source_origin='primary',reason='冲突或缺据应拒绝',checks=checks,question_ids=[])])
     assert not evidence_state.assessed(e)
 
 

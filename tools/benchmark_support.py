@@ -63,6 +63,9 @@ class Capture:
                 self.counts[case]+=1;stem=f'{self.counts[case]:04d}'
             path=folder/(stem+'.json')
             record=dict(status='running',service={k:service.get(k) for k in ('id','model','protocol','max_tokens','temperature')},system=system,prompt=prompt,partial='')
+            schema=service.get('response_schema')
+            record['structured_output']=dict(mode='json_schema' if schema and service.get('protocol')=='chat' else 'text',
+                schema_sha256=hashlib.sha256(json.dumps(schema,sort_keys=True,ensure_ascii=False).encode()).hexdigest() if schema else None)
             path.write_text(json.dumps(record,ensure_ascii=False,indent=2),encoding='utf8')
             token=self.frames.set(folder/(stem+'.frames.jsonl'))
             async def receive(delta):

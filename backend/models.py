@@ -274,7 +274,7 @@ class CoverageVerdict(QuestionCoverage):
 
 
 class CoverageAudit(BaseModel):
-    coverage: list[CoverageVerdict] = Field(default_factory=list,max_length=32)
+    coverage: list[CoverageVerdict] = Field(max_length=32)
 
 
 class EvidenceJudgement(BaseModel):
@@ -296,7 +296,7 @@ class EvidenceJudgement(BaseModel):
 
 
 class EvidenceJudgements(BaseModel):
-    judgements: list[EvidenceJudgement] = Field(default_factory=list,max_length=40)
+    judgements: list[EvidenceJudgement] = Field(max_length=40)
 
 
 class ScopeDecision(BaseModel):
