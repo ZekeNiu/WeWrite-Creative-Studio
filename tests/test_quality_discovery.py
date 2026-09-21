@@ -46,6 +46,36 @@ def test_unconfirmed_expansion_never_becomes_a_new_hard_requirement():
     assert any(q['required'] and '比较两个实验' in q['text'] for q in research_contract.ensure(a)['questions'])
 
 
+def test_whole_question_collects_verified_clause_evidence_then_requires_audit():
+    from backend import research_contract
+    from tests.quality_fixtures import assessment
+    a=store.create_article(dict(topic='比较实验结果与适用边界'))
+    research_contract.anchor_requirements(a,[dict(request_quote=q,question=q) for q in ('实验结果','适用边界')])
+    questions=a['research_contract']['questions'];whole=questions[0]['id']
+    spans=[dict(assessment(),evidence_id='E'+str(i),source_id='S'+str(i),question_ids=[q['id']],
+        quality='suitable',verification='quote_matched',source_type='original',adoption_reason='Direct result',use_scope='Study')
+        for i,q in enumerate(questions[1:])]
+    notes=dict(evidence=spans,coverage=[dict(question_id=q['id'],status='supported',reason='Individual condition answered') for q in questions[1:]])
+    rows=research_contract.coverage(a,notes)
+    assert rows[0]['evidence_ids']==['E0','E1'] and rows[0]['status']=='unresolved'
+    assert not research_contract.sufficient(rows)
+    verdicts=[dict(question_id=r['question_id'],status='supported',reason='All required conditions answered together',evidence_ids=r['evidence_ids']) for r in rows]
+    assert research_contract.sufficient(research_contract.audit_coverage(rows,verdicts))
+    verdicts[0].update(status='unresolved',reason='The two studies cannot be combined into one experiment')
+    assert not research_contract.sufficient(research_contract.audit_coverage(rows,verdicts))
+
+
+def test_targeted_coverage_preserves_unrelated_verified_question():
+    from backend import research_contract
+    a=store.create_article(dict(topic='核查结果与边界'))
+    research_contract.anchor_requirements(a,[dict(request_quote=q,question=q) for q in ('结果','边界')])
+    rows=research_contract.coverage(a,dict(evidence=[]))
+    old=rows[1];old.update(status='supported',reason='Previously verified',evidence_ids=['E1'],source_ids=['S1'])
+    target=rows[2]['question_id'];a['research']=dict(issues=[dict(id='issue',question_id=target)])
+    updated=research_contract.coverage(a,dict(evidence=[]),rows,['issue'])
+    assert updated[1]==old and updated[2]['status']=='unresolved'
+
+
 def test_parallel_identity_lookups_are_bounded_and_never_drop_failed_candidates(monkeypatch):
     from backend import discovery_identity
     active=0;peak=0
