@@ -85,11 +85,8 @@ async def structured(a,stage,instruction,schema,job_id,candidates=None,questions
         raise
     store.add_usage(a['id'],stage='research',**usage)
     store.update_job(job_id,partial=raw)
-    text=re.sub(r'^```(?:json)?\s*|\s*```$','',raw.strip())
-    fenced=re.findall(r'```json\s*([\s\S]*?)```',raw,re.I)
-    if len(fenced)==1: text=fenced[0].strip()
-    try: return parse_structured(text,schema)
-    except ValueError: raise ValueError('检索规划或证据整理格式无效，原始结果已保留，可更换检索规划模型后重试') from None
+    try: return parse_structured(raw,schema)
+    except ValueError: raise ValueError('检索规划或证据整理格式无效，原始结果已保留，可重试') from None
 
 
 def validate_spans(notes,sources):

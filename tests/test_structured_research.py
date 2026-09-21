@@ -87,3 +87,15 @@ def test_interrupted_stream_never_triggers_format_fallback(monkeypatch):
     _,article,job=environment(monkeypatch,handler)
     with pytest.raises(ValueError,match='提前结束'):invoke(article,job)
     assert len(calls)==1
+
+
+@pytest.mark.parametrize('fenced_valid',[False,True])
+def test_full_response_is_checked_including_outside_a_code_fence(monkeypatch,fenced_valid):
+    first={'judgements':[]} if fenced_valid else {'intermediate':'not a report'}
+    raw='```json\n'+json.dumps(first)+'\n```\n'+json.dumps({'judgements':[]})
+    def handler(request):
+        return httpx.Response(200,json={'choices':[{'message':{'content':raw},'finish_reason':'stop'}]})
+    _,article,job=environment(monkeypatch,handler)
+    if fenced_valid:
+        with pytest.raises(ValueError,match='格式无效'):invoke(article,job)
+    else:assert invoke(article,job)=={'judgements':[]}
