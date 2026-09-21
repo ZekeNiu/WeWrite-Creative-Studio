@@ -39,7 +39,7 @@ def test_legacy_context_is_filtered_without_mutating_history(client):
 def test_result_schemas_no_longer_request_purposes():
     for schema in (ResearchNotes,EvidenceResult):
         assert 'source_uses' not in schema.model_json_schema()['properties']
-        value=schema.model_validate({'summary':'ready','claims':[],'source_uses':[{'source_id':'S1','text':'old'}]}).model_dump()
+        value=schema.model_validate({'summary':'ready','claims':[],'evidence':[],'source_uses':[{'source_id':'S1','text':'old'}]}).model_dump()
         assert 'source_uses' not in value
 
 

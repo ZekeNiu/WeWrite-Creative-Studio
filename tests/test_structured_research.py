@@ -7,11 +7,16 @@ from backend.structured_output import parse
 from tools.benchmark_support import Capture
 
 
-@pytest.mark.parametrize('schema,key',[(models.CoverageAudit,'coverage'),(models.EvidenceJudgements,'judgements')])
-def test_intermediate_fragments_are_not_complete_results(schema,key):
-    fragment=json.dumps(dict(question_id='Q1',reason='intermediate fragment'))
-    final=json.dumps({key:[]})
-    assert parse(fragment+'\n'+final,schema)=={key:[]}
+@pytest.mark.parametrize('schema,fragment,final',[
+    (models.CoverageAudit,dict(question_id='Q1',reason='fragment'),dict(coverage=[])),
+    (models.EvidenceJudgements,dict(evidence_id='E1',reason='fragment'),dict(judgements=[])),
+    (models.SearchSelection,dict(url='https://example.org/source',reason='fragment'),dict(urls=[])),
+    (models.IssueScope,dict(id='I1',kind='limitation',reason='fragment'),dict(decisions=[])),
+    (models.ResearchNotes,dict(summary='source summary fragment'),dict(summary='report',evidence=[])),
+])
+def test_intermediate_fragments_are_not_complete_results(schema,fragment,final):
+    fragment=json.dumps(fragment);expected=schema.model_validate(final).model_dump();final=json.dumps(final)
+    assert parse(fragment+'\n'+final,schema)==expected
     with pytest.raises(ValueError):parse(fragment,schema)
     with pytest.raises(ValueError):parse(final+'\n'+final,schema)
 
@@ -65,12 +70,12 @@ def test_explicit_unsupported_format_keeps_same_model_and_both_attempts(monkeypa
     assert {k:v for k,v in requests[0].items() if k!='response_format'}==requests[1]
     assert len(store.usage(article['id']))==2
     assert any(e.get('structured_output')=='explicitly_unsupported' for e in store.events(job['id'],0))
-    first=json.loads((tmp_path/'capture/raw/case/0001.json').read_text())
-    second=json.loads((tmp_path/'capture/raw/case/0002.json').read_text())
+    first=json.loads((tmp_path/'capture/raw/case/0001.json').read_text('utf8'))
+    second=json.loads((tmp_path/'capture/raw/case/0002.json').read_text('utf8'))
     assert first['status']=='incomplete' and first['structured_output']['mode']=='json_schema'
     assert second['status']=='completed' and second['structured_output']['mode']=='text'
-    first_wire=json.loads((tmp_path/'capture/raw/case/0001.response.txt').read_text())
-    second_wire=json.loads((tmp_path/'capture/raw/case/0002.response.txt').read_text())
+    first_wire=json.loads((tmp_path/'capture/raw/case/0001.response.txt').read_text('utf8'))
+    second_wire=json.loads((tmp_path/'capture/raw/case/0002.response.txt').read_text('utf8'))
     assert 'not supported' in first_wire['error']['message']
     assert second_wire['choices'][0]['message']['content']=='{"judgements":[]}'
     assert 'private-test-key' not in json.dumps([first,second])

@@ -237,7 +237,7 @@ class ResearchIssue(BaseModel):
 
 class ResearchNotes(BaseModel):
     summary: str
-    evidence: list[EvidenceSpan] = Field(default_factory=list, max_length=40)
+    evidence: list[EvidenceSpan] = Field(max_length=40)
     gaps: list[str] = Field(default_factory=list, max_length=8)
     conflicts: list[str] = Field(default_factory=list, max_length=8)
     followup_queries: list[str] = Field(default_factory=list, max_length=4)
@@ -306,11 +306,11 @@ class ScopeDecision(BaseModel):
 
 
 class IssueScope(BaseModel):
-    decisions: list[ScopeDecision] = Field(default_factory=list,max_length=40)
+    decisions: list[ScopeDecision] = Field(max_length=40)
 
 
 class SearchSelection(BaseModel):
-    urls: list[str] = Field(default_factory=list, max_length=8)
+    urls: list[str] = Field(max_length=8)
     reason: str = ''
     decisions: list['CandidateDecision'] = Field(default_factory=list,max_length=32)
 
