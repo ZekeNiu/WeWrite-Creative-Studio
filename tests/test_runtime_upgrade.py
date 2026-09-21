@@ -26,12 +26,14 @@ def test_launch_opens_fresh_versioned_tab_without_closing_old_tab(launcher,monke
     from urllib.parse import urlparse,parse_qs
     opened=[]
     monkeypatch.setattr(launcher.webbrowser,'open_new_tab',opened.append)
+    monkeypatch.setattr(launcher.time,'time_ns',lambda:123456789)
     launcher.open_workbench(8765);launcher.open_workbench(8765)
     assert len(opened)==2 and opened[0]!=opened[1]
     for url in opened:
         parts=urlparse(url);query=parse_qs(parts.query)
         assert parts.netloc=='127.0.0.1:8765'
-        assert query['v']==['1.4.6'] and query['opened'][0].isdigit()
+        assert query['v']==['1.4.6'] and len(query['opened'][0])==32
+        int(query['opened'][0],16)
 
 
 @pytest.mark.parametrize('fail_install',[False,True])

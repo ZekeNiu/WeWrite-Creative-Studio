@@ -42,7 +42,7 @@ def expected_version():
 
 def open_workbench(port):
     # A unique navigation also bypasses an old tab's in-memory app or cached entry.
-    webbrowser.open_new_tab(f'http://127.0.0.1:{port}/?v={expected_version()}&opened={time.time_ns()}')
+    webbrowser.open_new_tab(f'http://127.0.0.1:{port}/?v={expected_version()}&opened={secrets.token_hex(16)}')
 
 
 def active_jobs():
