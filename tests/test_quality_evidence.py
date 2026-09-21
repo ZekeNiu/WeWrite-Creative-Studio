@@ -176,3 +176,14 @@ def test_authors_explanation_is_not_reported_as_measured_mechanism():
     e=research.validate_spans(dict(evidence=[evidence(s)],gaps=[],issues=[]),[s])['evidence'][0]
     research_contract.apply_judgements([e],[dict(evidence_id=e['evidence_id'],support='supported',basis='author_interpretation',reason='作者解释',checks=dict.fromkeys(research_contract.CHECKS,'matched'))])
     assert e['support']=='limited' and e['type']=='inference' and '不能当作本研究直接验证' in e['boundary']
+
+
+def test_resolved_issue_projects_evidence_without_publishing_free_resolution_facts():
+    from tests.quality_fixtures import assessment
+    a=store.create_article(dict(topic='解释观察结果'))
+    e=dict(assessment(),claim_id='C1',evidence_id='E1',source_id='S1',claim='观察到差异',quote='A difference was observed.',
+           boundary='未验证因果',quality='suitable',verification='quote_matched',source_type='original',adoption_reason='Direct result',use_scope='Study')
+    issue=dict(text='因果是否成立',claim_id='C1',claim='观察到差异',kind='limitation',status='resolved',source_ids=['S1'],resolution='已证明一种新的生理机制')
+    row=evidence_state.merge_issues(a,dict(evidence=[e],issues=[issue]))[0]
+    assert row['status']=='resolved' and '未验证因果' in row['resolution']
+    assert '新的生理机制' not in row['resolution']

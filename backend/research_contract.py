@@ -77,8 +77,10 @@ def audit_coverage(rows,verdicts,spans=()):
         if len(matches)!=1:
             row.update(status='unresolved',reason='尚未完成核心问题的整体覆盖核查');continue
         v=matches[0];ids=v.get('evidence_ids',[])
-        if v['status']=='unresolved' or not ids or set(ids)-valid:
+        if v['status']=='unresolved':
             row.update(status='unresolved',reason=v['reason'] or '现有资料仅回答了问题的一部分');continue
+        if not ids or set(ids)-valid:
+            row.update(status='unresolved',reason='覆盖核查未能提供有效的已核实证据编号，需继续核对。');continue
         if spans and v.get('requires_source_content',True) and not content.intersection(ids):
             row.update(status='unresolved',reason='仅有书目身份信息，不能替代本问题要求的研究内容。');continue
         # Coverage chooses verified answers; it cannot introduce a second set of

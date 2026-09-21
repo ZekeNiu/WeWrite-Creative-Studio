@@ -115,6 +115,7 @@ def merge_issues(a, notes, requested=()):
              (item.get('claim') and normal(item['claim'])==normal(e['claim'])))]
         supported=bool(evidence) and bool(item.get('resolution'))
         item.update(id=iid,status='resolved' if item.get('status')=='resolved' and supported else 'open')
+        if item['status']=='resolved':item['resolution']=span_summary(evidence)
         rows[iid]={**lookup.get(iid,{}),**item};seen.add(item['text'])
     for kind,key in [('blocking','gaps'),('limitation','conflicts')]:
         for text in notes.get(key,[]):

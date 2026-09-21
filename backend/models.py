@@ -317,6 +317,41 @@ class EvidenceScopeAudit(BaseModel):
     judgements: list[EvidenceScopeJudgement] = Field(max_length=40)
 
 
+class AnswerPart(BaseModel):
+    request_quote: str
+    evidence_ids: list[str]
+    status: Literal['answered','missing']
+    reason: str
+
+
+class AnswerListItem(BaseModel):
+    source_quote: str
+    evidence_ids: list[str]
+    covered: bool
+    reason: str
+
+
+class AnswerSourceList(BaseModel):
+    source_id: str
+    complete_read: bool
+    items: list[AnswerListItem]
+    reason: str
+
+
+class AnswerScope(BaseModel):
+    question_id: str
+    parts: list[AnswerPart]
+    enumeration_requested: bool
+    source_lists: list[AnswerSourceList]
+    complete: bool
+    reason: str
+
+
+class AnswerScopeAudit(BaseModel):
+    judgements: list[AnswerScope] = Field(max_length=32)
+    read_requests: list[SectionRead] = Field(default_factory=list,max_length=2)
+
+
 class ScopeDecision(BaseModel):
     id: str
     kind: Literal['blocking','limitation']

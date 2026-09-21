@@ -2,19 +2,45 @@
 import hashlib
 import re
 
-VERSION=1
+VERSION=2
 HEADINGS=re.compile(r'(?im)^\s*(?:\d+[.\s]+)?(?:abstract|introduction|background|methods?|methodology|materials and methods|results?|discussion|conclusions?|limitations?|references|supplement\w*.*|acknowledg\w*|方法|结果|讨论|结论|局限性?|参考文献|补充材料)\s*[:：]?\s*$')
+NUMBERED_HEADING=re.compile(r'(?i)^(?:chapter\s+\d+\s*[-–—:.]?\s+|\d+(?:\.\d+)+[.)]?\s+|[a-z]\)\s+|第[一二三四五六七八九十\d]+[章节]\s*)[A-Za-z\u4e00-\u9fff]')
+
+
+def heading_starts(text):
+    starts={m.start():m.group().strip() for m in HEADINGS.finditer(text)}
+    offset=0
+    for line in text.splitlines(keepends=True):
+        title=line.strip()
+        if re.match(r'(?i)^[a-z]\) ',title):
+            words=title[3:].split()
+            if len(words)>8 or not all(w[:1].isupper() or w in {'and','or','of','the','for','in','to','with','at','on'} for w in words):
+                offset+=len(line);continue
+        # Descriptive protocol/manual headings, without treating TOC leaders,
+        # numbered prose sentences or page footers as complete sections.
+        if (len(title)<=110 and NUMBERED_HEADING.match(title)
+                and not re.search(r'\.{3,}|…|[.;。；]$|\s\d+$',title)):
+            starts[offset]=title
+        offset+=len(line)
+    return sorted(starts.items())
 
 
 def sections(source):
     text=source.get('text','');starts=[(0,'开头')]
-    for m in HEADINGS.finditer(text):
-        if m.start()>0:starts.append((m.start(),m.group().strip()))
+    for offset,title in heading_starts(text):
+        if offset>0:starts.append((offset,title))
+        else:starts[0]=(0,title)
+    pages=[(m.start(),int(m.group(1))) for m in re.finditer(r'\[第\s*(\d+)\s*页\]',text)]
     result=[]
     for i,(start,title) in enumerate(starts):
         end=starts[i+1][0] if i+1<len(starts) else len(text)
         for part,offset in enumerate(range(start,end,5000)):
-            result.append(dict(id='sec'+str(offset),title=title+(' · '+str(part+1) if end-start>5000 else ''),start=offset,end=min(end,offset+5000)))
+            stop=min(end,offset+5000)
+            row=dict(id='sec'+str(offset),title=title+(' · '+str(part+1) if end-start>5000 else ''),start=offset,end=stop)
+            before=[page for at,page in pages if at<=offset]
+            within=[page for at,page in pages if offset<at<stop]
+            if before or within:row['pages']=list(dict.fromkeys(before[-1:]+within))
+            result.append(row)
     return result
 
 
@@ -56,4 +82,6 @@ def request_reads(article,requests):
         if not section:continue
         ranges=source.setdefault('_requested_sections',[])
         if section not in ranges:ranges.append(section);changed=True
+        elif section not in ranges[-2:]:
+            ranges.remove(section);ranges.append(section);changed=True
     return changed

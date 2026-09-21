@@ -50,6 +50,16 @@ def test_changed_boundary_invalidates_the_claim_verdict_cache_key():
     assert first['evidence_id']!=second['evidence_id']
 
 
+def test_pdf_condition_matching_accepts_formatting_only_not_omission():
+    e=dict(span(),source_id='S1',quote='It may work be-\ncause of a speciﬁc condition.',claim='可能有效',boundary='')
+    condition=dict(source_condition='may work because of a specific condition',claim_condition='可能有效',status='matched',reason='保留可能性')
+    evidence_scope.apply([e],[verdict(conditions=[condition])],{'S1'})
+    assert e['support']=='supported'
+    condition['source_condition']='may work ... of a specific condition'
+    evidence_scope.apply([e],[verdict(conditions=[condition])],{'S1'})
+    assert e['support']=='unsupported'
+
+
 def test_coverage_reason_cannot_add_a_mechanism_to_verified_observation():
     row=dict(question_id='Q1',status='supported',evidence_ids=['E1'],candidate_evidence_ids=['E1'],source_ids=['S1'])
     e=dict(span(),source_id='S1',claim='观察到行为差异',boundary='未测量生理机制')
@@ -57,3 +67,13 @@ def test_coverage_reason_cannot_add_a_mechanism_to_verified_observation():
     result=research_contract.audit_coverage([row],[v],[e])[0]
     assert '观察到行为差异' in result['reason'] and '未测量生理机制' in result['reason']
     assert '脑损伤' not in result['reason']
+
+
+def test_boundary_condition_must_come_from_the_same_actually_shown_source():
+    e=dict(span(),source_id='S1',quote='The result was recorded.',claim='结果已记录',boundary='仅在条件C下推算')
+    condition=dict(source_condition='Only under condition C',claim_condition='仅在条件C下',status='matched',reason='推算前提保留')
+    row=verdict(conditions=[condition])
+    evidence_scope.apply([e],[row],read_sources=[dict(id='S1',text='Only under condition C can the estimate be made.')])
+    assert e['support']=='supported'
+    evidence_scope.apply([e],[row],read_sources=[dict(id='S2',text='Only under condition C can the estimate be made.')])
+    assert e['support']=='unsupported'

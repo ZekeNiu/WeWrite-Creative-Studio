@@ -27,3 +27,8 @@ def notes(a,result):
 
 def coverage_audit(candidates):
     return dict(coverage=[dict(question_id=r['question_id'],status=r['status'],reason='Synthetic coverage check',evidence_ids=r['evidence_ids']) for r in candidates[0]['coverage']])
+
+
+def answer_scope_audit(candidates):
+    return dict(judgements=[dict(question_id=r['question_id'],parts=[dict(request_quote=r['question'],evidence_ids=r['candidate_evidence_ids'],status='answered',reason='Synthetic complete answer')],
+        enumeration_requested=False,source_lists=[],complete=True,reason='Synthetic complete answer') for r in candidates[0]['coverage']],read_requests=[])

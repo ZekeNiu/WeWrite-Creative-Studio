@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from backend.app import app
 from backend import store,providers,research,materials,search_tools,browser_search
 from backend.models import Settings,JobRequest
-from tests.quality_fixtures import judgements,scope_audit,notes as quality_notes
+from tests.quality_fixtures import judgements,scope_audit,answer_scope_audit,notes as quality_notes
 
 H={'X-Studio-Request':'1'}
 
@@ -53,6 +53,7 @@ def network(monkeypatch):
             result=coverage_audit(value['candidates'])
         elif kind=='EvidenceJudgements':result=judgements(value['candidates'],ctx['research_contract'])
         elif kind=='EvidenceScopeAudit':result=scope_audit(value['candidates'])
+        elif kind=='AnswerScopeAudit':result=answer_scope_audit(value['candidates'])
         else:
             src=ctx['sources']
             result={'summary':'已核对适用条件','evidence':[{'source_id':src[0]['id'],'quote':'研究只适用于给定条件。','claim':'只能在研究范围内解释','boundary':'不能扩大因果'}] if src else [],

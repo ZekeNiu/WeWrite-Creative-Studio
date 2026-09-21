@@ -1,7 +1,12 @@
 """Task-focused excerpts; stored source text is never shortened or rewritten."""
 import re
 
-POLICY_VERSION = 14
+POLICY_VERSION = 17
+TEMPORAL_SCOPE_POLICY = ('时间和版本也是适用范围：用户问首次发布、某年或某版时，当前帮助页与后续更新不能证明当时已具备全部功能。'
+    '区分首次记录、后续技术解释和当前行为，核对来源日期与所述功能的生效版本；没有当时依据的新增能力不得混入早期结论，scope必须unknown并保留缺口。')
+QUOTE_PROVENANCE_POLICY = ('verification=quote_matched表示系统已将该条quote逐字定位到对应来源的实际正文/摘要（bibliography另标为书目题名）。'
+    '因此candidates.quote本身就是本次提供的、已定位的原文，即使context.sources.text的当前章节切片没有重复包含它，仍须依据这段引文核查，不能仅以当前切片没重复引文为由宣称原文未提供。'
+    '逐字定位只证明引文真实存在，不证明claim或boundary得到支持；仍须核实全部事实、数字、条件及因果强度，不能让quote_matched覆盖缺据、矛盾或二手出处问题。')
 COVERAGE_COMPLETENESS_POLICY = ('reported_limits 是本轮整理报告明确披露的摘要、缺口、冲突与限制，必须与已核实证据一起交叉核对，不能在整体覆盖审查时丢弃。'
     '这些陈述及其blocking/limitation标签不是裁决，需回到用户原句判断是否关联其明确要求。'
     'reported_limits中的自由摘要、claim及resolution不是已核实事实；rejected_evidence是未获支持的主张，不能从这些内容重新引入被否定的事实或解释。'
@@ -12,6 +17,7 @@ COVERAGE_COMPLETENESS_POLICY = ('reported_limits 是本轮整理报告明确披�
     '这不等于一律要求全文：纯文献定位仍可由书目确认；摘要明确包含所问全部信息时也可通过。'
     '模型自行扩展的旁支问题与研究自身的适用边界仍不增加必需要求；未要求的机制证明或后续复现不因出现在reported_limits而阻塞。')
 LOOKUP_SCOPE_POLICY = ('先依据用户完整原句的任务动词区分文献定位与事实核查。用户仅要求查找或定位文献时，作者、年份、题名内的人数等属于书目识别线索；'
+    '纯定位只整理身份确认与可访问范围，不自行增加用户未要求的结果数字、实验解释或机制。用户同时要求其他事实时先独立确认身份，再分别核查实际要求。'
     '已核验书目足以确认与这些线索匹配，不得将其拆成额外的样本分布、绝对发生率或数字原始数据核验要求。'
     '此时可以requires_source_content=false，但只能确认文献身份，不能另行声称研究数字、效果或机制已经核实。'
     '用户同时要求说明研究对象、结果，或明确要求查证数字出处、分母与因果时，对这些明确要求仍必须以实际正文/摘要证据核验，书目题名不能替代；'
@@ -24,7 +30,7 @@ CLAIM_SUPPORT_POLICY = ('核查对象是 claim 和 boundary 中每一个可核�
     '主体结论有据不能掩盖其中一项缺据；任何具体事实在所给原文或书目中没有依据时，对应 checks 必须为 unknown 且 support=unsupported，reason 点明缺项。'
     'limited 仅表示完整判断已有依据、但研究设计或适用范围有限，不能用于放行部分内容缺据的主张。'
     '边界中的实验系统、测试条件或人群也须有对应来源；不能从分子组成推断实验场景，不能将另一指标的脚注测试条件移给本指标。'
-    '外部常识中正确也不等于当前材料已支持，不得凭记忆补全名称或因果解释。')
+    '外部常识中正确也不等于当前材料已支持，不得凭记忆补全名称或因果解释。'+TEMPORAL_SCOPE_POLICY)
 NUMERIC_POLICY = ('对 claim 和 boundary 中每一项数字（包括括号、约数、分数分母、单位和时间窗）逐项与实际给出的原文或书目核对，'
     '不能只核对主要结论而忽略附加数字。不能从四舍五入的百分比反推实际人数或样本分母，也不能用“约/左右”补全缺失数字；'
     '这种情况 quantity=unknown 且 support=unsupported，reason 必须点明缺失数字。'
@@ -62,8 +68,9 @@ def excerpts(source, keywords, limit=12000):
     if len(text) <= limit:
         return [dict(start=0,end=len(text),text=text)] if text else []
     candidates = []
-    for section in source.get('_requested_sections',[])[-2:]:
-        candidates.append((2000,section['start'],section['end']))
+    for i,section in enumerate(reversed(source.get('_requested_sections',[]))):
+        # Keep earlier requested sections when they still fit in the same budget.
+        candidates.append((2000 if i<2 else 1900,section['start'],section['end']))
     for note in source.get('notebook',{}).get('notes',[]):
         if text[note['start']:note['end']]==note['quote']:
             candidates.append((900,max(0,note['start']-250),min(len(text),note['end']+250)))

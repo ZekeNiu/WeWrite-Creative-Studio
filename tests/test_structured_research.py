@@ -11,6 +11,7 @@ from tools.benchmark_support import Capture
     (models.CoverageAudit,dict(question_id='Q1',reason='fragment'),dict(coverage=[])),
     (models.EvidenceJudgements,dict(evidence_id='E1',reason='fragment'),dict(judgements=[])),
     (models.EvidenceScopeAudit,dict(evidence_id='E1',reason='fragment'),dict(judgements=[])),
+    (models.AnswerScopeAudit,dict(question_id='Q1',reason='fragment'),dict(judgements=[])),
     (models.SearchSelection,dict(url='https://example.org/source',reason='fragment'),dict(urls=[])),
     (models.IssueScope,dict(id='I1',kind='limitation',reason='fragment'),dict(decisions=[])),
     (models.ResearchNotes,dict(summary='source summary fragment'),dict(summary='report',evidence=[])),

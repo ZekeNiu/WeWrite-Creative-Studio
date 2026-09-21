@@ -3,7 +3,7 @@ import argparse, asyncio, copy, hashlib, json, os, re, sqlite3, sys, time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-METRIC_VERSION=3
+METRIC_VERSION=4
 
 
 def arguments():
@@ -36,6 +36,15 @@ def found(case,sources):
         # heading on the already accepted official host, never mentions in body/references.
         official={(u.hostname or '').removeprefix('www.') for u in expected}
         front=(s.get('pages') or [{}])[0].get('text','')
+        # Journal PDFs may extract a side column and abstract before the title.
+        # The first page's explicit article DOI plus title/abstract can establish
+        # identity without guessing from a filename or a reference-list mention.
+        front_dois={v.lower().rstrip('.,;') for v in re.findall(r'(?im)^\s*doi\s*:\s*(10\.\d{4,9}/\S+)',front)}
+        if (case.get('doi') and front_dois=={case['doi'].lower()}
+                and normal(case['title']) in normal(front)
+                and re.search(r'\babstract\b',front,re.I) and len(front)>1000
+                and not re.search(r'(?im)^\s*references\s*$|\b(presented\s+by|presenter|lecture|slides)\b',front)):
+            return True
         heading=normal(case['title']) in normal(front[:500])
         if not heading:continue
         if re.search(r'\b(presented\s+by|presenter|lecture|slides)\b',front[:500],re.I):continue

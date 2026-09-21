@@ -1,5 +1,6 @@
 import asyncio
 import httpx
+import pytest
 from backend import research,store,academic,materials
 
 
@@ -79,7 +80,7 @@ def test_targeted_coverage_preserves_unrelated_verified_question():
 def test_current_report_limits_reach_coverage_audit_and_invalidate_cached_verdict(monkeypatch):
     import copy
     from backend import research_contract
-    from tests.quality_fixtures import notes,judgements,scope_audit
+    from tests.quality_fixtures import notes,judgements,scope_audit,answer_scope_audit
     w=worker();w.a['brief']['topic']='说明实验的入选和排除条件'
     source=materials.source('Original study','Criterion A is described. Detailed criteria are in the appendix.')
     w.a['sources']=[source];research_contract.ensure(w.a)
@@ -91,6 +92,7 @@ def test_current_report_limits_reach_coverage_audit_and_invalidate_cached_verdic
                 issues=copy.deepcopy(limits)))).model_dump()
         if schema.__name__=='EvidenceJudgements':return judgements(candidates,a['research_contract'])
         if schema.__name__=='EvidenceScopeAudit':return scope_audit(candidates)
+        if schema.__name__=='AnswerScopeAudit':return answer_scope_audit(candidates)
         if schema.__name__=='CoverageAudit':
             snapshot=copy.deepcopy(candidates[0]);audits.append(snapshot)
             missing=bool(snapshot['reported_limits']['issues'])
@@ -136,7 +138,7 @@ def test_independent_audit_can_recover_omitted_question_label_without_auto_suppo
 
 def test_report_summary_cannot_reintroduce_unverified_numbers_or_rejected_claims(monkeypatch):
     from backend import evidence_state
-    from tests.quality_fixtures import notes,judgements,coverage_audit,scope_audit
+    from tests.quality_fixtures import notes,judgements,coverage_audit,scope_audit,answer_scope_audit
     w=worker()
     source=materials.source('Original study','Events: 18 (12%). Outcome was observed. Mechanism is unknown.')
     w.a['sources']=[source]
@@ -152,6 +154,7 @@ def test_report_summary_cannot_reintroduce_unverified_numbers_or_rejected_claims
             response['judgements'][1].update(support='contradicted',reason='The source explicitly says the mechanism is unknown.')
             return response
         if schema.__name__=='EvidenceScopeAudit':return scope_audit(candidates)
+        if schema.__name__=='AnswerScopeAudit':return answer_scope_audit(candidates)
         if schema.__name__=='CoverageAudit':
             audits.append(candidates[0]['reported_limits']['summary'])
             assert len(candidates[0]['evidence'])==1
@@ -171,7 +174,7 @@ def test_report_summary_cannot_reintroduce_unverified_numbers_or_rejected_claims
 
 
 def test_condition_rejection_reaches_next_notes_and_changed_boundary_gets_new_review(monkeypatch):
-    from tests.quality_fixtures import notes,judgements,scope_audit,coverage_audit
+    from tests.quality_fixtures import notes,judgements,scope_audit,coverage_audit,answer_scope_audit
     w=worker();source=materials.source('Protocol','Use B only if A is unavailable.');w.a['sources']=[source]
     feedback=[];reviewed=[];corrected=False
     async def structured(a,stage,instruction,schema,job_id,candidates=None,questions=()):
@@ -188,6 +191,7 @@ def test_condition_rejection_reaches_next_notes_and_changed_boundary_gets_new_re
                 status='matched' if corrected else 'missing',reason='候补条件必须保留')]
             return result
         if schema.__name__=='CoverageAudit':return coverage_audit(candidates)
+        if schema.__name__=='AnswerScopeAudit':return answer_scope_audit(candidates)
         raise AssertionError(schema.__name__)
     monkeypatch.setattr(research,'structured',structured)
     asyncio.run(w.assess())
@@ -336,6 +340,68 @@ def test_requested_section_reaches_context_without_changing_original():
     assert source_notebook.request_reads(w.a,[dict(source_id=s['id'],section_id=section['id'],reason='Read caveat')])
     assert 'No causal inference.' in source_context.sources(w.a)[0]['text']
     assert s['text']==text
+
+
+def test_descriptive_protocol_sections_are_navigable_within_existing_read_budget():
+    from backend import source_notebook,source_context
+    text='Contents\nChapter 8 – Selection ........ 14\n'+('Overview text. '*2000)
+    text+='\n[第 16 页]\nChapter 8 – Participant Selection\n8.1 Eligibility Criteria\na) Inclusion Criteria\nAdult participants.\n'
+    text+='b) Exclusion Criteria\n'+('A complete condition with its exception. '*190)+'\n8.2 Recruitment\nNext procedure.'
+    s=materials.source('Protocol',text);w=worker();w.a['sources']=[s]
+    sections=source_notebook.sections(s)
+    chosen=[x for x in sections if x['title'].startswith('b) Exclusion Criteria')]
+    assert len(chosen)==2 and all(x['pages']==[16] for x in chosen)
+    assert not any('......' in x['title'] for x in sections)
+    assert source_notebook.request_reads(w.a,[dict(source_id=s['id'],section_id=x['id']) for x in chosen])
+    supplied=source_context.sources(w.a)[0]
+    assert sum(r['end']-r['start'] for r in supplied['excerpts'])<=12000
+    assert all(any(r['start']<=x['start'] and r['end']>=x['end'] for r in supplied['excerpts']) for x in chosen)
+    assert s['text']==text
+
+
+def test_reading_list_tail_keeps_prior_requested_body_when_it_fits():
+    from backend import source_notebook,source_context
+    text='Chapter 4 – Selection\na) Inclusion Criteria\nAdults.\na) Presence of clinical or subclinical findings\nMore details.\n'
+    text+='b) Exclusion Criteria\n'+('Condition with an exception. '*205)+'\n4.2 Procedure\n'+('Other text. '*1800)
+    s=materials.source('Protocol',text);w=worker();w.a['sources']=[s]
+    sections=source_notebook.sections(s)
+    assert not any('Presence' in x['title'] for x in sections)
+    inclusion=next(x for x in sections if x['title']=='a) Inclusion Criteria')
+    exclusions=[x for x in sections if x['title'].startswith('b) Exclusion Criteria')]
+    assert len(exclusions)==2 and 'Presence' in text[inclusion['start']:inclusion['end']]
+    for chosen in ([inclusion,exclusions[0]],[exclusions[1]]):
+        source_notebook.request_reads(w.a,[dict(source_id=s['id'],section_id=x['id']) for x in chosen])
+    supplied=source_context.sources(w.a)[0]
+    assert sum(r['end']-r['start'] for r in supplied['excerpts'])<=12000
+    assert all(any(r['start']<=x['start'] and r['end']>=x['end'] for r in supplied['excerpts']) for x in [inclusion]+exclusions)
+
+
+@pytest.mark.parametrize('corrected',[False,True])
+def test_local_correction_is_bounded_and_does_not_spend_search_budget(monkeypatch,corrected):
+    from tests.quality_fixtures import notes,judgements,scope_audit,answer_scope_audit
+    w=worker();s=materials.source('Study','The effect is possible only under condition C.');w.a['sources']=[s]
+    seen=[]
+    async def structured(a,stage,instruction,schema,job,candidates=None,questions=()):
+        if schema.__name__=='ResearchNotes':
+            seen.append(candidates)
+            claim='仅在条件C下可能有效' if corrected and len(seen)>1 else '必然有效'
+            return schema.model_validate(notes(a,dict(summary='Synthetic report',evidence=[dict(source_id=s['id'],quote=s['text'],claim=claim,core_claim=True)]))).model_dump()
+        if schema.__name__=='EvidenceJudgements':
+            assert candidates[0]['verification']=='quote_matched'
+            result=judgements(candidates,a['research_contract'])
+            if len(seen)==1 or not corrected:
+                for row in result['judgements']:row.update(support='unsupported',reason='把可能写成必然')
+            return result
+        if schema.__name__=='EvidenceScopeAudit':return scope_audit(candidates)
+        if schema.__name__=='AnswerScopeAudit':return answer_scope_audit(candidates)
+        if schema.__name__=='CoverageAudit':
+            return dict(coverage=[dict(question_id=r['question_id'],status='supported',reason='Rechecked correction',evidence_ids=r['candidate_evidence_ids']) for r in candidates[0]['coverage']])
+        raise AssertionError(schema.__name__)
+    monkeypatch.setattr(research,'structured',structured)
+    asyncio.run(w.assess())
+    assert len(seen)==2 and seen[1][0]['support_reason']=='把可能写成必然'
+    assert w.calls==0 and w.pages==0 and w.sufficient()==corrected
+    assert s['notebook']['read_ranges']==[dict(start=0,end=len(s['text']))]
 
 
 def test_citation_edges_are_bounded_and_do_not_become_support():

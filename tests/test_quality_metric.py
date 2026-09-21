@@ -26,3 +26,12 @@ def test_expected_url_cannot_be_embedded_in_unrelated_host_or_path():
     assert found(case,[dict(url='https://www.publisher.example/news/original/?ref=home')])
     assert not found(case,[dict(url='https://reader.example/?url=publisher.example/news/original')])
     assert not found(case,[dict(url='https://publisher.example/news/original-commentary')])
+
+
+def test_journal_columns_can_place_title_after_abstract_but_not_in_references():
+    case=dict(title='Synthetic Controlled Experiment',doi='10.1234/trial')
+    front='Journal header\n'+('Author addresses and publication details. '*32)+'\nDOI: 10.1234/TRIAL\nABSTRACT\nOriginal results.\n'+case['title']
+    paper=dict(url='https://university.example/copy.pdf',pages=[dict(text=front)])
+    assert found(case,[paper])
+    for invalid in (front.replace('10.1234/TRIAL','10.1234/other'),front+'\nDOI: 10.1234/other',front.replace('ABSTRACT','References\nABSTRACT'),front.replace('Journal header','Lecture slides')):
+        assert not found(case,[dict(paper,pages=[dict(text=invalid)])])
