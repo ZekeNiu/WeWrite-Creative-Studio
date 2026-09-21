@@ -142,6 +142,10 @@ class StructuredOutputUnsupported(ValueError):
     """An explicitly rejected formatting option, before any generated content."""
 
 
+async def response_body(response):
+    return await response.aread()
+
+
 def extract_json_text(d, protocol):
     if protocol=='chat':
         content=d.get('choices',[{}])[0].get('message',{}).get('content','')
@@ -152,9 +156,10 @@ def extract_json_text(d, protocol):
 
 async def generate(s, system, prompt, emit=None):
     protocol=s['protocol']; started=time.monotonic(); text=''; usage={}; completed=False; truncated=False
-    common={'model':s['model'],'stream':True}
+    common={'model':s['model'],'stream':s.get('stream',True)}
     if protocol=='chat':
-        path='chat/completions'; body=dict(common,messages=[{'role':'system','content':system},{'role':'user','content':prompt}],max_tokens=s.get('max_tokens',8000),stream_options={'include_usage':True})
+        path='chat/completions'; body=dict(common,messages=[{'role':'system','content':system},{'role':'user','content':prompt}],max_tokens=s.get('max_tokens',8000))
+        if common['stream']:body['stream_options']={'include_usage':True}
         if s.get('response_schema'):
             body['response_format']=dict(type='json_schema',json_schema=dict(name='research_result',schema=s['response_schema'],strict=False))
     elif protocol=='responses':
@@ -165,16 +170,20 @@ async def generate(s, system, prompt, emit=None):
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(240,connect=20)) as client:
             async with client.stream('POST',endpoint(s['base_url'],path),headers=headers(s),json=body) as response:
-                if response.status_code in (400,422) and body.get('response_format'):
-                    detail=(await response.aread()).decode('utf-8',errors='replace').lower()
-                    if re.search(r'response_format|json_schema|json schema|structured.output',detail) and re.search(r'unsupported|not supported|not support|does not support|unrecognized|unknown parameter|不支持|未知参数',detail):
+                if response.status_code>=400:
+                    detail=(await response_body(response)).decode('utf-8',errors='replace').lower()
+                    if response.status_code in (400,422) and body.get('response_format') and re.search(r'response_format|json_schema|json schema|structured.output',detail) and re.search(r'unsupported|not supported|not support|does not support|unrecognized|unknown parameter|不支持|未知参数',detail):
                         raise StructuredOutputUnsupported('当前接口明确不支持结构化输出参数')
-                if response.status_code>=400: raise ValueError(http_error(response.status_code))
+                    raise ValueError(http_error(response.status_code))
                 if 'text/event-stream' not in response.headers.get('content-type',''):
-                    raw=await response.aread(); d=json.loads(raw)
+                    raw=await response_body(response); d=json.loads(raw)
                     if d.get('error'): raise ValueError('模型返回错误，请检查模型权限和额度')
                     text=extract_json_text(d,protocol); usage=d.get('usage',{})
                     completed=True
+                    if protocol=='chat' and common['stream'] is False:
+                        choices=d.get('choices',[])
+                        if len(choices)!=1:raise ValueError('模型没有返回唯一的完整结果')
+                        completed=bool(choices[0].get('finish_reason'))
                     truncated=d.get('status')=='incomplete' or d.get('stop_reason')=='max_tokens' or any(x.get('finish_reason')=='length' for x in d.get('choices',[]))
                     if emit: await emit(text)
                 else:

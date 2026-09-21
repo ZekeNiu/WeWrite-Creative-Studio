@@ -48,6 +48,15 @@ class Capture:
         self.output=Path(output);self.counts={}
         generate=providers.generate;frames=providers.frames
 
+        if hasattr(providers,'response_body'):
+            response_body=providers.response_body
+            async def captured_body(response):
+                raw=await response_body(response)
+                path=self.frames.get()
+                if path:path.with_name(path.name.replace('.frames.jsonl','.response.txt')).write_bytes(raw)
+                return raw
+            providers.response_body=captured_body
+
         async def captured_frames(response):
             async for frame in frames(response):
                 path=self.frames.get()
@@ -65,7 +74,8 @@ class Capture:
             record=dict(status='running',service={k:service.get(k) for k in ('id','model','protocol','max_tokens','temperature')},system=system,prompt=prompt,partial='')
             schema=service.get('response_schema')
             record['structured_output']=dict(mode='json_schema' if schema and service.get('protocol')=='chat' else 'text',
-                schema_sha256=hashlib.sha256(json.dumps(schema,sort_keys=True,ensure_ascii=False).encode()).hexdigest() if schema else None)
+                schema_sha256=hashlib.sha256(json.dumps(schema,sort_keys=True,ensure_ascii=False).encode()).hexdigest() if schema else None,
+                stream_requested=service.get('stream',True))
             path.write_text(json.dumps(record,ensure_ascii=False,indent=2),encoding='utf8')
             token=self.frames.set(folder/(stem+'.frames.jsonl'))
             async def receive(delta):

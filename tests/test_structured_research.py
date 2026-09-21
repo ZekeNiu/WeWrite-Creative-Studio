@@ -44,6 +44,7 @@ def test_native_schema_is_requested_without_changing_user_service(monkeypatch):
     assert service==before and len(requests)==1
     body=requests[0]
     assert body['model']=='unchanged-model' and body['max_tokens']==8000
+    assert body['stream'] is False and 'stream_options' not in body
     assert body['response_format']['type']=='json_schema'
     assert 'judgements' in body['response_format']['json_schema']['schema']['required']
 
@@ -57,6 +58,7 @@ def test_explicit_unsupported_format_keeps_same_model_and_both_attempts(monkeypa
     service,article,job=environment(monkeypatch,handler)
     monkeypatch.setattr(providers,'generate',providers.generate)
     monkeypatch.setattr(providers,'frames',providers.frames)
+    monkeypatch.setattr(providers,'response_body',providers.response_body)
     capture=Capture(providers,tmp_path/'capture');capture.case.set('case')
     assert invoke(article,job)==dict(judgements=[])
     assert len(requests)==2
@@ -67,6 +69,10 @@ def test_explicit_unsupported_format_keeps_same_model_and_both_attempts(monkeypa
     second=json.loads((tmp_path/'capture/raw/case/0002.json').read_text())
     assert first['status']=='incomplete' and first['structured_output']['mode']=='json_schema'
     assert second['status']=='completed' and second['structured_output']['mode']=='text'
+    first_wire=json.loads((tmp_path/'capture/raw/case/0001.response.txt').read_text())
+    second_wire=json.loads((tmp_path/'capture/raw/case/0002.response.txt').read_text())
+    assert 'not supported' in first_wire['error']['message']
+    assert second_wire['choices'][0]['message']['content']=='{"judgements":[]}'
     assert 'private-test-key' not in json.dumps([first,second])
 
 
@@ -99,3 +105,39 @@ def test_full_response_is_checked_including_outside_a_code_fence(monkeypatch,fen
     if fenced_valid:
         with pytest.raises(ValueError,match='格式无效'):invoke(article,job)
     else:assert invoke(article,job)=={'judgements':[]}
+
+
+@pytest.mark.parametrize('kind',['missing_finish','truncated','multiple_choices'])
+def test_single_response_research_requires_unique_completed_output(monkeypatch,kind):
+    choice={'message':{'content':'{"judgements":[]}'},'finish_reason':'stop'}
+    if kind=='missing_finish':choice.pop('finish_reason')
+    if kind=='truncated':choice['finish_reason']='length'
+    choices=[choice,choice] if kind=='multiple_choices' else [choice]
+    calls=[]
+    def handler(request):calls.append(request);return httpx.Response(200,json={'choices':choices})
+    _,article,job=environment(monkeypatch,handler)
+    with pytest.raises(ValueError):invoke(article,job)
+    assert len(calls)==1 and len(store.usage(article['id']))==1
+    assert store.usage(article['id'])[0]['status']=='unknown'
+
+
+def test_single_response_research_remains_cancellable_without_retry(monkeypatch):
+    calls=[]
+    async def scenario():
+        started=asyncio.Event()
+        async def handler(request):
+            calls.append(request);started.set();await asyncio.Event().wait()
+        _,article,job=environment(monkeypatch,handler)
+        task=asyncio.create_task(research.structured(article,'sources','核查给定证据',models.EvidenceJudgements,job['id']))
+        await asyncio.wait_for(started.wait(),1);task.cancel()
+        with pytest.raises(asyncio.CancelledError):await task
+        assert len(calls)==1 and store.usage(article['id'])[0]['status']=='unknown'
+    asyncio.run(scenario())
+
+
+def test_other_generation_keeps_default_streaming(monkeypatch):
+    requests=[]
+    def handler(request):requests.append(json.loads(request.content));return completed()
+    service,_,_=environment(monkeypatch,handler)
+    asyncio.run(providers.generate(service,'system','prompt'))
+    assert requests[0]['stream'] is True and requests[0]['stream_options']=={'include_usage':True}

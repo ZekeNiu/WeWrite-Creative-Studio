@@ -64,7 +64,7 @@ def context(a,stage,questions=()):
 
 async def structured(a,stage,instruction,schema,job_id,candidates=None,questions=()):
     s=providers.service_for('research')
-    if s.get('protocol')=='chat':s=dict(s,response_schema=schema.model_json_schema())
+    if s.get('protocol')=='chat':s=dict(s,response_schema=schema.model_json_schema(),stream=False)
     partial='';last=0
     async def emit(delta):
         nonlocal partial,last
