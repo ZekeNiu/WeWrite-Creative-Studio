@@ -41,7 +41,6 @@ async def main(args):
     output=args.output.resolve();root=args.settings_root.resolve();code=args.code_root.resolve()
     if output==root or output==root/'data' or root/'data' in output.parents:
         raise ValueError('Benchmark output must not be in production data')
-    output.mkdir(parents=True,exist_ok=True)
     os.environ['WEWRITE_STUDIO_DATA']=str(output/'data')
     os.environ['WEWRITE_HOME']=str(output/'upstream-home')
     sys.path.insert(0,str(code))
@@ -49,19 +48,23 @@ async def main(args):
     with sqlite3.connect((root/'data/studio.sqlite').as_uri()+'?mode=ro',uri=True) as db:
         cfg=json.loads(db.execute('select data from settings where id=1').fetchone()[0])
         secrets=dict(db.execute('select id,value from secrets'))
-    store.init();store.set_settings(cfg);store.get_secret=lambda sid:secrets.get(sid)
+    from tools.benchmark_support import identity,manifest_once,Capture
     payload=args.cases.read_bytes();cases=json.loads(payload)['cases']
     manifest=dict(metric_version=METRIC_VERSION,cases_sha256=hashlib.sha256(payload).hexdigest(),code_root=str(code),mode=args.mode,round=args.round,
                   code_sha256=hashlib.sha256(b''.join(p.read_bytes() for p in sorted((code/'backend').glob('*.py')))).hexdigest(),
                   timeout_seconds=args.timeout,
                   search_limits={k:cfg['search'].get(k) for k in ('max_calls','max_pages','max_rounds')},
-                  routes={k:dict(service_id=v.get('service_id'),model=v.get('model')) for k,v in cfg.get('routes',{}).items()})
-    (output/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),'utf8')
+                  runner_sha256=hashlib.sha256(Path(__file__).read_bytes()+Path(__file__).with_name('benchmark_support.py').read_bytes()).hexdigest(),
+                  concurrency=args.concurrency,**identity(cfg))
+    manifest_once(output,manifest)
+    store.init();store.set_settings(cfg);store.get_secret=lambda sid:secrets.get(sid)
+    capture=Capture(providers,output)
     sem=asyncio.Semaphore(args.concurrency)
     async def run(case):
         path=output/(case['id']+'.json')
         if path.exists():return
         async with sem:
+            capture.case.set(case['id'])
             a=store.create_article(dict(topic=case[args.mode],column=case['domain']),diagnostic=True)
             # The research engine's diagnostic flag has a special short path; exercise normal behavior.
             a.pop('diagnostic',None)
@@ -73,11 +76,12 @@ async def main(args):
             try:
                 async with asyncio.timeout(args.timeout):pending=await w.run('')
                 result.update(status='completed',pending=pending,found=found(case,w.a['sources']))
-            except Exception as e:result.update(status='incomplete',error=type(e).__name__+': '+str(e),found=False)
+            except (Exception,asyncio.CancelledError) as e:result.update(status='interrupted' if isinstance(e,asyncio.CancelledError) else 'incomplete',error=type(e).__name__+': '+str(e),found=False)
             result.update(case=case['id'],seconds=round(time.monotonic()-start,1),plan=w.plan,notes=w.notes,coverage=getattr(w,'coverage',None),stats=w.stats,
                           found_readable=found(case,[s for s in w.a['sources'] if s.get('status') in ('retrieved','abstract_only','user_provided')]),
                           query_ledger=getattr(w,'query_ledger',[]),candidates=list(getattr(w,'candidates',{}).values()),
-                          stop_reason=w.stop_reason,sources=w.a['sources'],log=w.log,usage=store.usage(a['id']))
+                          article_id=a['id'],job_id=j['id'],research_contract=w.a.get('research_contract'),
+                          stop_reason=w.stop_reason,stop_code=w.stop_code,sources=w.a['sources'],log=w.log,usage=store.usage(a['id']))
             path.write_text(json.dumps(result,ensure_ascii=False,indent=2),'utf8')
             store.update_job(j['id'],status='completed' if result['status']=='completed' else 'failed',ended=store.now())
             print(json.dumps({k:result.get(k) for k in ('case','status','seconds','found','pending','error')},ensure_ascii=False),flush=True)
