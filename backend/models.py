@@ -193,12 +193,18 @@ class ResearchQuery(BaseModel):
     channel_queries: dict[str,str] = Field(default_factory=dict,max_length=8)
 
 
+class RequiredEvidence(BaseModel):
+    request_quote: str
+    question: str
+
+
 class ResearchPlan(BaseModel):
     needed: bool
     academic: bool = True
     queries: list[str | ResearchQuery] = Field(default_factory=list, max_length=8)
     questions: list[str] = Field(default_factory=list, max_length=12)
     reason: str = ''
+    required_evidence: list[RequiredEvidence] = Field(default_factory=list,max_length=10)
 
 
 class EvidenceSpan(BaseModel):
@@ -238,7 +244,7 @@ class ResearchNotes(BaseModel):
     issues: list[ResearchIssue] = Field(default_factory=list, max_length=24)
     intent: Topic | None = None
     direction_change: str = ''
-    coverage: list['QuestionCoverage'] = Field(default_factory=list,max_length=16)
+    coverage: list['QuestionCoverage'] = Field(default_factory=list,max_length=32)
     source_notes: list['SourceNote'] = Field(default_factory=list,max_length=64)
     read_requests: list['SectionRead'] = Field(default_factory=list,max_length=4)
 
@@ -260,6 +266,14 @@ class QuestionCoverage(BaseModel):
     question_id: str
     status: Literal['supported','limited','contradicted','unresolved']
     reason: str
+
+
+class CoverageVerdict(QuestionCoverage):
+    evidence_ids: list[str] = Field(default_factory=list,max_length=40)
+
+
+class CoverageAudit(BaseModel):
+    coverage: list[CoverageVerdict] = Field(default_factory=list,max_length=32)
 
 
 class EvidenceJudgement(BaseModel):

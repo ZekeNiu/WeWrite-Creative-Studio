@@ -9,7 +9,7 @@ from pathlib import Path
 from datetime import date
 from urllib.parse import urlsplit,urlunsplit,parse_qsl,urlencode
 from . import store,providers,materials,search_tools,browser_search,academic,flow_state,evidence_state,creative
-from .models import ResearchPlan,ResearchNotes,SearchSelection,IssueScope,EvidenceJudgements
+from .models import ResearchPlan,ResearchNotes,SearchSelection,IssueScope,EvidenceJudgements,CoverageAudit
 from .structured_output import parse as parse_structured
 from . import source_context,research_contract,search_plan,source_notebook
 
@@ -153,6 +153,7 @@ class Research:
         self.telemetry={'candidates':0,'relevant':0,'fulltext':0,'abstracts':0,'phase':'retrieval'}
         self.notes_key=None
         self.judgement_cache={}
+        self.coverage_cache={}
         self.coverage=list(a.get('research',{}).get('coverage',[]))
         self.citation_expanded=set(prior.get('citation_expanded',[]))
         self.candidates={x['url']:x for x in prior.get('candidates',[])}
@@ -172,6 +173,7 @@ class Research:
         self.plan={}
         self.scope_cache={}
         self.stop_reason=''
+        self.stop_code=''
         self.requested=job.get('request',{}).get('issue_ids',[])
         if not self.requested:
             new=set(a.get('research',{}).get('unassessed_source_ids',[]))
@@ -183,7 +185,7 @@ class Research:
         self.log.append(dict(at=store.now(),message=message,**details))
         store.update_job(self.job_id,message=message,current_step='research',research={'calls':self.calls,'pages':self.pages,'rounds':self.rounds,
             'log':self.log,'blocked_urls':self.blocked,'sources':self.added,'notes':self.notes,'telemetry':self.telemetry,'strategy':self.strategy(),
-            'stats':self.stats,'plan':self.plan,'coverage':self.coverage,'candidates':list(self.candidates.values()),
+            'stats':self.stats,'plan':self.plan,'coverage':self.coverage,'stop_reason':self.stop_reason,'stop_code':self.stop_code,'candidates':list(self.candidates.values()),
             'query_ledger':self.query_ledger,'deferred_candidates':self.deferred,'disabled_channels':sorted(self.disabled),'citation_expanded':sorted(self.citation_expanded),
             'limits':{k:self.cfg[k] for k in ('max_calls','max_pages','max_rounds')}})
         store.event(self.job_id,'research',message=message,calls=self.calls,pages=self.pages)
@@ -415,7 +417,7 @@ class Research:
             '所有事项都是创作建议，不禁止用户继续。priority 为 high 或 normal。旧记录如同一主张同一核实问题重复，保留一个 id 并在 merged_ids 列出被合并 id；不同主张或人工决定不能混并。已有完整 issues 时不重复输出 gaps/conflicts。'
             '没有证据只能保留为 open 或明确解释为何属于 limitation，不能默默删除未处理的核心问题。'
             '对 bounded/waived 遵守已指定 wording，excluded 的主张本篇不使用，不再追查；不能把缺据数字改成概数。'
-            'quote 保留原文语言，不翻译、不改写、不拼接；无法定位的具体断言应删除或弱化。'
+            'quote 保留原文语言，不翻译、不改写、不拼接；无法定位的具体断言应删除或弱化。书目身份直接使用bibliography元数据，不把题名、作者、年份拼成正文引文，不把纯书目确认列为研究结论的evidence。'
             'source_notes 按逐源笔记保存 design/results/counterevidence/limitations/scope：每条 note 带 source_id、category 和可连续定位的原文 quote；只记录实际读到的信息，缺失不能推断为不存在。优先保留反证和限制。'
             '来源附有 sections 索引及表格/脚注/补充材料线索。若当前片段不足，read_requests 指定 source_id、section_id 和理由，最多2段定向回读；不得把未展示章节当作已读。网页按可用小节，不强套实验模板。'
             '每条 evidence 必须填写 source_type、adoption_reason、use_scope、quality，按这条主张评估来源质量；core_claim 仅在该主张为用户目的不可省略时为 true。'
@@ -450,6 +452,19 @@ class Research:
         for e in spans:
             if e['evidence_id'] in self.judgement_cache:e.update(self.judgement_cache[e['evidence_id']])
         self.coverage=research_contract.coverage(self.a,self.notes,self.coverage,self.requested)
+        coverage_key=digest([self.a['research_contract'],self.coverage,spans])
+        if not any(row['evidence_ids'] for row in self.coverage):self.coverage_cache[coverage_key]=[]
+        if coverage_key not in self.coverage_cache:
+            self.update('正在独立核对各项必需条件是否真正得到回答')
+            audit=await structured(self.a,self.stage,
+                '独立核对候选中的每个 coverage 问题是否被整体回答；逐条返回 question_id、status、reason、evidence_ids。'
+                '与问题相关、回答其中一部分、若干背景材料拼在一起，均不代表充分覆盖。用户指定研究设计、场景、人群、时间、原始出处或数字时，必须全部对应；不同研究不能拼成一项并不存在的研究。'
+                '例如要求某干预的随机试验，机制综述加另一干预的随机试验不能替代。要求溯源一个数字，找到同主题的另一个比例不能算完成溯源。'
+                'limited 只用于已回答问题但研究自身存在适用限制；遗漏必需条件、尚未找到所需出处必须 unresolved。contradicted 必须有直接反证，没找到不是反证。'
+                '只能选择该 coverage 已列出的 evidence_ids，具体说明哪项要求仍缺失；书目身份以已核验元数据为准，不要求将题名作者拼成正文引文。',
+                CoverageAudit,self.job_id,[dict(coverage=self.coverage,evidence=spans)],questions=self.questions)
+            self.coverage_cache[coverage_key]=audit['coverage']
+        self.coverage=research_contract.audit_coverage(self.coverage,self.coverage_cache[coverage_key])
         self.notes.setdefault('issues',[]).extend(research_contract.issues(self.coverage))
         for e in spans:
             if not evidence_state.assessed(e):
@@ -630,12 +645,15 @@ class Research:
             '判断本环节是否需要补查。主题改变、来源不足、数字缺据、核心主张的来源质量不适用、研究冲突需要检索；材料足够则 needed=false。'
             'queries 生成3至6个按问题划分的对象（必要时可少于3个），每个包含 query、question、purpose(known_source/explore/counterevidence/updates)、source_type(academic/official/general)、time_scope(all/recent)、channel_queries。学术对象为 pubmed、openalex、crossref、arxiv 分别写简洁适配查询，不把长串概念机械相与；PubMed用少量核心概念与同义词，arxiv保留ti:题名短语或all:概念。已知题名/DOI优先精确定位；盲发现不得编造题名。至少考虑反证和边界，但不虚构争议。只有近期动态使用recent，经典研究和指定文献使用all。英文专业词和中文语境各有所用。'
             'academic 表示是否需要研究论文依据；纯产品公告、即时新闻等无研究判断的问题设为 false，避免冗余论文检索。'
+            'required_evidence 把用户原始要求拆成可分别验收的必需问题，每项 request_quote 必须逐字摘自用户要求或已采用选题，question 保留原始出处、研究设计、数字分母等联合条件。只做原意拆解，不增加自定的数字、作者或场景。'
+            '盲发现不能凭记忆把作者姓名、年份或具体方法加成检索必选条件。至少一条查询联合选题最有区分力的概念，避免拆成泛泛的背景关键词后丢失它们的联系。'
             '不要为追求数量重复检索。仅处理本轮指定的问题（为空则检查全文）：'+store.encode([x for x in self.issues() if x['id'] in self.requested])+ '。用户补充检索要求：'+query,ResearchPlan,self.job_id)
         self.plan=plan
         self.academic_needed=plan['academic']
         self.questions=plan['questions']
         research_contract.ensure(self.a,self.questions)
         self.a['research_contract']['requires_primary']=self.a['research_contract'].get('requires_primary',False) or self.academic_needed
+        research_contract.anchor_requirements(self.a,plan.get('required_evidence',[]))
         # Explicit identifiers are metadata lookups, before broader topical discovery.
         for target in self.a['research_contract'].get('source_targets',[])[:8]:
             if self.pages>=self.cfg['max_pages']:break
@@ -656,7 +674,7 @@ class Research:
             untried=[q for q in queries if digest(search_plan.query(q)) not in self.seen_queries]
             if untried:
                 await self.discover(untried)
-                if before==self.progress_key(): self.stop_reason='本轮未新增有效材料或解决问题；请补充指定原文或调整问题范围。'
+                if before==self.progress_key(): self.stop_code='no_progress';self.stop_reason='本轮未新增有效材料或解决问题；请补充指定原文或调整问题范围。'
         for round_index in range(self.cfg['max_rounds']+1):
             await self.assess()
             if not self.sufficient():await self.trace_citations()
@@ -667,11 +685,13 @@ class Research:
                 targeted=await structured(self.a,self.stage,'仅针对这些尚未处理的核心证据缺口生成定向查询，不补查一般局限：'+json.dumps([x['text'] for x in self.open_targets()],ensure_ascii=False),ResearchPlan,self.job_id)
                 queries=[q for q in targeted['queries'] if digest(search_plan.query(q)) not in self.seen_queries]
             if not queries:
+                self.stop_code='no_queries'
                 self.stop_reason='没有新的可执行查询；请补充原文、明确限定表述或不使用该主张。'
                 self.update(self.stop_reason);break
             before=self.progress_key()
             self.rounds+=1;await self.discover(queries)
             if before==self.progress_key():
+                self.stop_code='no_progress'
                 self.stop_reason='本轮未新增有效材料或问题进展，已停止补查。'
                 self.update(self.stop_reason);break
         for src in self.a['sources']:
@@ -679,12 +699,15 @@ class Research:
             src['evidence_spans']=[e for e in self.notes['evidence'] if e['source_id']==src['id']]
             if src['evidence_spans']:
                 src['summary']='；'.join(e['claim']+('（'+e['boundary']+'）' if e.get('boundary') else '') for e in src['evidence_spans'])[:360]
-        if self.policy_issue and not self.sufficient(): self.stop_reason=self.policy_issue
+        if self.policy_issue and not self.sufficient(): self.stop_code='channel_unavailable';self.stop_reason=self.policy_issue
         pending=not self.sufficient()
         if pending and (self.calls>=self.cfg['max_calls'] or self.pages>=self.cfg['max_pages']):
+            self.stop_code='budget_exhausted'
             self.stop_reason=f"达到本轮上限：搜索 {self.calls}/{self.cfg['max_calls']} 次，读取 {self.pages}/{self.cfg['max_pages']} 页。可调整上限继续，或带限定进入大纲。"
         elif pending and self.rounds>=self.cfg['max_rounds']:
+            self.stop_code='round_limit'
             self.stop_reason=f"已补查 {self.rounds}/{self.cfg['max_rounds']} 轮，可调整上限继续或保留当前建议。"
+        if not pending:self.stop_code='covered';self.stop_reason='核心问题已覆盖，保留反证和适用边界。'
         self.update('核心依据尚未完整核实，可保留问题并继续创作' if pending else '核心问题已有依据，已保留反证和适用边界')
         return pending
 
@@ -710,7 +733,7 @@ async def gather(a,job_id,stage,query=''):
     pending=await worker.run(query)
     result={'input_key':key,'policy_version':source_context.POLICY_VERSION,'analysis_signature':signature,'coverage':worker.coverage,'coverage_sufficient':research_contract.sufficient(worker.coverage),'timestamp':time.time(),'stage':stage,'pending':pending,'task_pending':pending,'requested_issue_ids':worker.requested,'stale':False,'summary':worker.notes.get('summary',''),
             'gaps':worker.notes.get('gaps',[]),'conflicts':worker.notes.get('conflicts',[]),'evidence':worker.notes.get('evidence',[]),
-            'issues':worker.issues(),'next_queries':worker.notes.get('followup_queries',[]),'stop_reason':worker.stop_reason,'exhausted':bool(worker.stop_reason) or worker.calls>=worker.cfg['max_calls'] or worker.pages>=worker.cfg['max_pages'] or worker.rounds>=worker.cfg['max_rounds'],'stats':worker.stats,'plan':worker.plan,'candidates':list(worker.candidates.values()),'query_ledger':worker.query_ledger,'material_key':flow_state.signature(worker.a),'outline_key':digest(a['outline']),
+            'issues':worker.issues(),'next_queries':worker.notes.get('followup_queries',[]),'stop_reason':worker.stop_reason,'stop_code':worker.stop_code,'exhausted':pending and (bool(worker.stop_reason) or worker.calls>=worker.cfg['max_calls'] or worker.pages>=worker.cfg['max_pages'] or worker.rounds>=worker.cfg['max_rounds']),'stats':worker.stats,'plan':worker.plan,'candidates':list(worker.candidates.values()),'query_ledger':worker.query_ledger,'material_key':flow_state.signature(worker.a),'outline_key':digest(a['outline']),
             'calls':worker.calls,'pages':worker.pages,'rounds':worker.rounds,'log':worker.log,'blocked_urls':list(dict.fromkeys(worker.blocked)), 'job_id':job_id,'strategy':worker.strategy()}
     def change(v):
         # Preserve later expression edits and newly uploaded materials; fail safely if a used input changed.

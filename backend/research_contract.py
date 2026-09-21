@@ -3,7 +3,7 @@ import copy
 import re
 from . import creative,evidence_state
 
-VERSION=2
+VERSION=3
 CHECKS=('population','design','quantity','outcome','causality','scope')
 
 
@@ -31,6 +31,34 @@ def ensure(a,questions=()):
                reader_value=selected.get('takeaway') or selected.get('novelty',''),questions=rows[:16],source_targets=source_targets(original))
     a['research_contract']=value
     return value
+
+
+def anchor_requirements(a,items):
+    contract=ensure(a)
+    if contract.get('requirements_anchored'):return
+    available='\n'.join([contract['original_request']]+[q['text'] for q in contract['questions'] if q['required']])
+    for item in items:
+        quote=item['request_quote'].strip();question=item['question'].strip()
+        if not quote or quote not in available or not question:continue
+        qid='Q'+evidence_state.digest([quote,question])[:12]
+        if qid not in {q['id'] for q in contract['questions']}:
+            contract['questions'].append(dict(id=qid,text=question,request_quote=quote,required=True))
+    contract['requirements_anchored']=True
+
+
+def audit_coverage(rows,verdicts):
+    """A relevant span is necessary but not sufficient to answer a compound question."""
+    result=copy.deepcopy(rows)
+    for row in result:
+        matches=[v for v in verdicts if v['question_id']==row['question_id']]
+        if len(matches)!=1:
+            row.update(status='unresolved',reason='尚未完成核心问题的整体覆盖核查');continue
+        v=matches[0];valid=set(row['evidence_ids']);ids=v.get('evidence_ids',[])
+        if v['status']=='unresolved' or not ids or set(ids)-valid:
+            row.update(status='unresolved',reason=v['reason'] or '现有资料仅回答了问题的一部分');continue
+        if row['status']=='unresolved':continue
+        row.update(status=v['status'] if row['status']=='supported' else row['status'],reason=v['reason'],evidence_ids=ids)
+    return result
 
 
 def source_targets(text):
