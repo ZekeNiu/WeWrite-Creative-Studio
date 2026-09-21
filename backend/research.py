@@ -548,12 +548,8 @@ class Research:
             budget=dict(metadata=0,max_metadata=max(0,self.cfg['max_calls']*12-self.stats['metadata_requests']),pages=0,max_pages=0)
             token=READ_BUDGET.set(budget)
             try:
-                normalized=[]
-                for row in rows:
-                    try:normalized.append(await discovery_identity.normalize(row))
-                    except (ValueError,TimeoutError):normalized.append(row)
-                    except Exception:normalized.append(row)
-                rows=normalized
+                self.update('正在解析搜索链接并核对文献身份',channel=channel,candidate_count=len(rows))
+                rows=await discovery_identity.normalize_many(rows)
             finally:
                 READ_BUDGET.reset(token);self.stats['metadata_requests']+=budget['metadata']
             rows=academic.merge_records(rows)
@@ -572,6 +568,7 @@ class Research:
                     adopted=r['url'] in order
                     self.candidates[r['url']]=dict(url=r['url'],title=r.get('title',''),channel=channel,query=query,
                         discovery_url=r.get('discovery_url',''),identity_status=r.get('identity_status','unassessed'),
+                        identity_error=r.get('identity_error',''),
                         status='selected' if adopted else 'not_selected',reason=reasons.get(r['url']) or selection.get('reason') or '未进入本批优先阅读名单')
                 chosen += sorted([r for r in batch if r['url'] in order],key=lambda r:order[r['url']])
             if len(chosen)>8:

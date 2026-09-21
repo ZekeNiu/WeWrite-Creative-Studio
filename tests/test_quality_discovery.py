@@ -44,6 +44,25 @@ def test_unconfirmed_expansion_never_becomes_a_new_hard_requirement():
     assert any(q['required'] and '比较两个实验' in q['text'] for q in research_contract.ensure(a)['questions'])
 
 
+def test_parallel_identity_lookups_are_bounded_and_never_drop_failed_candidates(monkeypatch):
+    from backend import discovery_identity
+    active=0;peak=0
+    async def normalize(row):
+        nonlocal active,peak
+        active+=1;peak=max(peak,active)
+        try:
+            await asyncio.sleep(0)
+            if row['title']=='2':raise ValueError('Temporary metadata failure')
+            return dict(row,identity_status='identified')
+        finally:active-=1
+    monkeypatch.setattr(discovery_identity,'normalize',normalize)
+    rows=[dict(title=str(i),url=f'https://example.org/{i}') for i in range(9)]
+    result=asyncio.run(discovery_identity.normalize_many(rows))
+    assert 1<peak<=4 and active==0
+    assert [r['url'] for r in result]==[r['url'] for r in rows]
+    assert result[2]['identity_status']=='unresolved'
+
+
 def test_questions_get_turns_before_one_query_exhausts_engines(monkeypatch):
     w=worker();seen=[]
     async def channel(name,query):
