@@ -42,6 +42,7 @@ async def main(args):
     store.init();store.set_settings(cfg);store.get_secret=lambda sid:secrets.get(sid)
     payload=args.cases.read_bytes();cases=json.loads(payload)['cases']
     manifest=dict(cases_sha256=hashlib.sha256(payload).hexdigest(),code_root=str(code),mode=args.mode,round=args.round,
+                  code_sha256=hashlib.sha256(b''.join(p.read_bytes() for p in sorted((code/'backend').glob('*.py')))).hexdigest(),
                   search_limits={k:cfg['search'].get(k) for k in ('max_calls','max_pages','max_rounds')},
                   routes={k:dict(service_id=v.get('service_id'),model=v.get('model')) for k,v in cfg.get('routes',{}).items()})
     (output/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),'utf8')
@@ -63,6 +64,8 @@ async def main(args):
                 result.update(status='completed',pending=pending,found=found(case,w.a['sources']))
             except Exception as e:result.update(status='incomplete',error=type(e).__name__+': '+str(e),found=False)
             result.update(case=case['id'],seconds=round(time.monotonic()-start,1),plan=w.plan,notes=w.notes,coverage=getattr(w,'coverage',None),stats=w.stats,
+                          found_readable=found(case,[s for s in w.a['sources'] if s.get('status') in ('retrieved','abstract_only','user_provided')]),
+                          query_ledger=getattr(w,'query_ledger',[]),candidates=list(getattr(w,'candidates',{}).values()),
                           stop_reason=w.stop_reason,sources=w.a['sources'],log=w.log,usage=store.usage(a['id']))
             path.write_text(json.dumps(result,ensure_ascii=False,indent=2),'utf8')
             store.update_job(j['id'],status='completed' if result['status']=='completed' else 'failed',ended=store.now())

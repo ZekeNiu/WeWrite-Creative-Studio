@@ -98,7 +98,9 @@ def candidate_matches(src,identity):
     """A reader-verified work still has to match the discovery candidate."""
     if academic.distinct_versions(src,identity):return False
     expected=academic.normalized_doi(identity.get('doi') or identity.get('bibliography',{}).get('doi',''))
-    if expected:return matches_copy(src,dict(identity,doi=expected))
+    if expected and not expected.startswith('10.48550/arxiv.'):return matches_copy(src,dict(identity,doi=expected))
+    found=academic.identifiers(src);wanted=academic.identifiers(identity)
+    if found & wanted:return True
     for key in ('arxiv_id','pmid','pmcid'):
         want=identity.get(key) or identity.get('bibliography',{}).get(key)
         got=src.get(key) or src.get('bibliography',{}).get(key)
@@ -118,15 +120,27 @@ def xml_source(blob,identity,url):
     pmcid=identity.get('pmcid','')
     if not expected and pmcid and 'PMC'+ids.get('pmc','').removeprefix('PMC')!=pmcid: raise ValueError('公开副本编号不一致，未采用')
     blocks=[]
+    def block(el):
+        if el.tag=='table':
+            blocks.append('\n'.join(' | '.join(' '.join(''.join(cell.itertext()).split()) for cell in tr if cell.tag in ('th','td')) for tr in el.iter('tr')))
+        elif el.tag in ('title','p','caption','fn','label'):
+            blocks.append(' '.join(''.join(el.itertext()).split()))
+        else:
+            for child in el:block(child)
     for node in [meta.find('abstract'),body]:
-        if node is not None:
-            for el in node.iter():
-                if el.tag in ('title','p','table','caption'): blocks.append(' '.join(''.join(el.itertext()).split()))
+        if node is not None:block(node)
     text='\n\n'.join(blocks)
     if len(text)<500: raise ValueError('公开副本正文不足，未标记为全文')
     src=materials.source(identity['title'],text,url,'web')
     src.update(doi=expected,pmcid=pmcid,bibliography=identity['bibliography'],status='retrieved',
         access_scope='fulltext',read_url=url,provider='europepmc',identity_verified=True)
+    src['references']=[]
+    for ref in root.findall('./back/ref-list/ref'):
+        get=lambda path:' '.join(''.join(ref.find(path).itertext()).split()) if ref.find(path) is not None else ''
+        identifier=get('.//pub-id[@pub-id-type="doi"]')
+        title=get('.//article-title') or ' '.join(''.join(ref.itertext()).split())
+        src['references'].append(dict(doi=academic.normalized_doi(identifier),title=title,year=get('.//year')))
+    src['supplementary_material']=[dict(label=' '.join(''.join(el.itertext()).split()),url=el.get('{http://www.w3.org/1999/xlink}href','')) for el in root.iter('supplementary-material')]
     return academic.combine(src,identity)
 
 
@@ -149,11 +163,19 @@ async def read_work(url,hint=None):
             direct=await materials.read_url(url)
         except ValueError as exc: failure=str(exc)
     if direct and direct['status']=='retrieved':
+        identifier=arxiv_identifier(direct.get('url',''))
+        if identifier:
+            if direct.get('pages') and not arxiv_front_matches(direct,identifier):raise ValueError('arXiv 副本首页编号与链接不一致或未能确认')
+            direct.update(arxiv_id=identifier,identity_verified=True)
         expected=re.search(r'10\.\d{4,9}/[^\s?#]+',unquote(url))
         if expected and not matches_copy(direct,dict(doi=expected[0])):
             raise ValueError('读取内容与指定 DOI 未能核对一致，未采用为该论文全文')
         direct.update(original_url=url,read_url=direct['url'],access_scope='fulltext' if direct.get('bibliography',{}).get('document_type') in ('J','C','PP') else 'page')
         return direct
+    arxiv_url=(direct or {}).get('url') or url
+    if arxiv_identifier(arxiv_url):
+        upgraded=await read_arxiv(arxiv_url,direct)
+        if upgraded:return upgraded
     try:
         identity=identity or await identify(url,direct or hint)
         if identity and not direct:
@@ -194,3 +216,47 @@ async def read_work(url,hint=None):
         direct.update(original_url=url,access_scope='abstract' if direct['status']=='abstract_only' else 'metadata',access_error=failure)
         return direct
     raise ValueError((failure or '尚未取得正文')+'；未能确认同一文献的公开副本，可补充 DOI 或上传原文')
+
+
+def arxiv_identifier(url):
+    parsed=urlsplit(url)
+    if parsed.hostname not in ('arxiv.org','www.arxiv.org','export.arxiv.org'):return ''
+    match=re.match(r'/(?:abs|pdf|html)/(\d{4}\.\d{4,5}(?:v\d+)?)(?:\.pdf)?/?$',parsed.path)
+    return match[1] if match else ''
+
+
+def arxiv_front_matches(source,identifier):
+    front=source['pages'][0].get('text','')
+    ids=re.findall(r'arXiv\s*:\s*(\d{4}\.\d{4,5}(?:v\d+)?)',front,re.I)
+    return any(x==identifier or ('v' not in identifier and re.sub(r'v\d+$','',x)==identifier) for x in ids)
+
+
+async def read_arxiv(url,direct=None):
+    wanted=arxiv_identifier(url)
+    if not wanted:return None
+    identity=None
+    try:
+        take('metadata')
+        for row in await academic.arxiv('id:'+wanted):
+            actual=row.get('arxiv_id','')
+            if actual==wanted or ('v' not in wanted and re.sub(r'v\d+$','',actual)==wanted):identity=row;break
+    except ValueError:pass
+    # Official landing metadata is usable when the index is temporarily unavailable.
+    if not identity and direct and direct.get('bibliography',{}).get('title'):
+        identity=dict(title=direct['bibliography']['title'],arxiv_id=wanted,bibliography=direct['bibliography'])
+    if not identity:return None
+    identifier=identity['arxiv_id']
+    for target in ('https://arxiv.org/html/'+identifier,'https://arxiv.org/pdf/'+identifier):
+        try:
+            progress('正在读取 arXiv 论文正文');take('pages')
+            full=await materials.read_url(target)
+            actual=arxiv_identifier(full.get('url',''))
+            if actual!=identifier or full['status']!='retrieved':continue
+            if full.get('pages'):
+                if not arxiv_front_matches(full,identifier):continue
+            full.update(title=identity['title'],arxiv_id=identifier,bibliography=identity['bibliography'],identity_verified=True,
+                original_url=url,read_url=target,access_scope='fulltext')
+            return full
+        except ValueError:continue
+    if direct:direct.update(arxiv_id=identifier,access_scope='abstract' if direct.get('status')=='abstract_only' else 'metadata')
+    return direct

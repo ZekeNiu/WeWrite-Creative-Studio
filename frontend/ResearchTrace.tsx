@@ -1,0 +1,9 @@
+import {useState} from 'react';
+import {Pager} from './MaterialList';
+
+const labels:Record<string,string>={planned:'待查',searched:'已查询',exhausted:'已尝试计划渠道',covered:'问题已有依据',skipped_covered:'依据已足够，未再查询',budget_exhausted:'达到任务上限',candidates:'取得候选',no_results:'零结果',no_relevant_evidence:'未取得新的相关依据',unavailable:'渠道不可用',failed:'调用未完成',timeout:'超时',restricted:'访问受限',identified:'文献已定位',selected:'待阅读',not_selected:'未优先采用',deferred:'已排队，待阅读',retrieved:'已读正文',abstract_only:'仅摘要',metadata_only:'仅文献信息',excerpt_only:'仅搜索片段',unreadable:'读取失败',duplicate:'已有同一来源',excluded:'遵守人工排除'};
+const purposes:Record<string,string>={known_source:'定位指定文献',explore:'探索依据',counterevidence:'寻找反证',updates:'近期变化',citation_graph:'参考文献与后续研究'};
+export default function ResearchTrace({value:r}:{value:any}){
+ const [page,setPage]=useState(1);const rows=r.candidates||[];const current=Math.min(page,Math.max(1,Math.ceil(rows.length/20)));
+ return <>{r.query_ledger?.length>0&&<details><summary>按问题查看检索过程 · {r.query_ledger.length} 项</summary>{r.query_ledger.map((q:any,i:number)=><details key={i}><summary>{q.question||q.query} · {labels[q.status]||q.status}</summary><p>{purposes[q.purpose]||'查找资料'} · {q.time_scope==='recent'?'按近期窗口':'不限近期窗口'}</p><p>{q.query}</p>{q.attempts?.map((x:any,j:number)=><p key={j}>{x.channel} · {labels[x.status]||x.status}{x.count!==undefined?` · ${x.count} 条`:''}<br/>{x.query||x.reason||''}</p>)}</details>)}</details>}{rows.length>0&&<details><summary>候选资料的采用与排除 · {rows.length} 条</summary>{rows.slice((current-1)*20,current*20).map((x:any,i:number)=><details key={x.url||i}><summary>{x.title||x.url} · {labels[x.status]||x.status}</summary><p>{x.reason}</p>{x.read_reason&&<p>读取情况：{x.read_reason}</p>}<p>{x.channel} · {x.query}</p>{/^https?:\/\//.test(x.url)&&<a href={x.url} target="_blank" rel="noreferrer">查看来源</a>}</details>)}<Pager page={current} total={rows.length} pageSize={20} onChange={setPage}/></details>}</>;
+}

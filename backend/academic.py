@@ -79,7 +79,7 @@ def combine(old,new):
     new_authors=(new.get('bibliography') or {}).get('authors',[])
     if new_authors and all(isinstance(a,dict) for a in new_authors) and any(isinstance(a,str) for a in merged['bibliography'].get('authors',[])):
         merged['bibliography']['authors']=new_authors
-    for field in ('discovery_channels','fulltext_urls','metadata_provenance'):
+    for field in ('discovery_channels','fulltext_urls','metadata_provenance','references','citation_paths'):
         values=old.get(field,[])+new.get(field,[])
         if field=='discovery_channels': values += [x for x in (old.get('provider'),new.get('provider')) if x]
         merged[field]=[]
@@ -117,10 +117,13 @@ def crossref_record(w):
     links=[l['URL'] for l in w.get('link',[]) if l.get('URL') and l.get('content-type') in ('application/pdf','text/html')]
     result=row(m,'crossref',abstract,links)
     result['canonical_urls']=[u for u in [w.get('resource',{}).get('primary',{}).get('URL'),w.get('URL')] if u]
+    result['references']=[dict(doi=normalized_doi(x.get('DOI','')),title=x.get('article-title') or x.get('unstructured',''),year=x.get('year','')) for x in w.get('reference',[]) if x.get('DOI') or x.get('article-title') or x.get('unstructured')]
     return result
 
 
 async def crossref(query):
+    identifier=normalized_doi(query.strip().removeprefix('DOI:').strip())
+    if re.fullmatch(r'10\.\d{4,9}/\S+',identifier):return [await lookup_doi(identifier)]
     r=await request('crossref','https://api.crossref.org/works',{'query.bibliographic':query,'rows':6})
     return [crossref_record(w) for w in r.json().get('message',{}).get('items',[])]
 
@@ -136,8 +139,12 @@ async def lookup_doi(doi):
 
 async def openalex(query):
     r=await request('openalex','https://api.openalex.org/works',{'search':query,'per_page':6})
+    return openalex_records(r.json().get('results',[]))
+
+
+def openalex_records(records):
     result=[]
-    for w in r.json().get('results',[]):
+    for w in records:
         inv=w.get('abstract_inverted_index') or {}; words={p:t for t,ps in inv.items() for p in ps};abstract=' '.join(words[p] for p in sorted(words))
         loc=w.get('primary_location') or {};journal=loc.get('source') or {};b=w.get('biblio') or {};doi=normalized_doi(w.get('doi'))
         urls=[]
@@ -151,14 +158,15 @@ async def openalex(query):
             pages=(b.get('first_page') or '')+('-'+b['last_page'] if b.get('last_page') and b.get('last_page')!=b.get('first_page') else ''),
             doi=doi,url=('https://doi.org/'+doi if doi else loc.get('landing_page_url') or w['id']),published_date=w.get('publication_date',''))
         ids=w.get('ids') or {};pmid=urlsplit(ids.get('pmid') or '').path.strip('/')
-        result.append(row(m,'openalex',abstract,urls,pmid=pmid,openalex_id=w['id']))
+        item=row(m,'openalex',abstract,urls,pmid=pmid,openalex_id=w['id'])
+        item['referenced_works']=w.get('referenced_works',[])
+        result.append(item)
     return result
 
 
 async def arxiv(query):
-    # Free text -> all-field search; retain the user's AND/OR only through explicit terms.
-    terms=re.findall(r'[\w-]+',query)[:14]
-    r=await request('arxiv','https://export.arxiv.org/api/query',{'search_query':' AND '.join('all:'+t for t in terms),'start':0,'max_results':6})
+    from .search_plan import arxiv_query
+    r=await request('arxiv','https://export.arxiv.org/api/query',{'search_query':arxiv_query(query),'start':0,'max_results':8,'sortBy':'relevance'})
     ns={'a':'http://www.w3.org/2005/Atom','x':'http://arxiv.org/schemas/atom'};root=ET.fromstring(r.content);result=[]
     for e in root.findall('a:entry',ns):
         get=lambda p:e.findtext(p,'',ns)

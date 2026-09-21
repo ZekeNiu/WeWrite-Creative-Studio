@@ -1,7 +1,7 @@
 """Task-focused excerpts; stored source text is never shortened or rewritten."""
 import re
 
-POLICY_VERSION = 5
+POLICY_VERSION = 6
 POLICY = '''按具体主张判断来源是否适用，不能仅凭域名、论文身份或用户上传就认定可靠。
 待处理建议不阻止创作，但不能因此视为已核实。对 open/stale 或缺少支持的具体数字、机制断言，限定或省略；不要自动联网或将假设写成事实。遵守 bounded 的实际限定说法和 excluded 的弃用决定。保留文章的问题价值，核心方向无法成立时明确原因，不静默改题。
 科研和健康结论优先原始研究、系统综述、专业书籍和权威机构资料；技术实践和产品能力优先官方文档、原始研究、有明确作者与可核对依据的专业博客。
@@ -34,6 +34,16 @@ def excerpts(source, keywords, limit=12000):
     if len(text) <= limit:
         return [dict(start=0,end=len(text),text=text)] if text else []
     candidates = []
+    for section in source.get('_requested_sections',[])[-2:]:
+        candidates.append((2000,section['start'],section['end']))
+    for note in source.get('notebook',{}).get('notes',[]):
+        if text[note['start']:note['end']]==note['quote']:
+            candidates.append((900,max(0,note['start']-250),min(len(text),note['end']+250)))
+    # Design/results/limitations are mandatory reading landmarks across languages.
+    headings=r'(?im)^\s*(?:\d+[.\s]+)?(?:methods?|methodology|results?|discussion|conclusions?|limitations?|weaknesses(?: of (?:the )?study)?|方法|结果|讨论|结论|局限性?)\s*[:：]?\s*$'
+    for m in re.finditer(headings,text):
+        candidates.append((700,max(0,m.start()-80),min(len(text),m.end()+1600)))
+    candidates.append((650,max(0,len(text)-1800),len(text)))
     for e in source.get('evidence_spans', []):
         quote = e.get('quote', '')
         start = e.get('offset', -1)
@@ -48,7 +58,7 @@ def excerpts(source, keywords, limit=12000):
         score = sum(min(chunk.count(k),3) for k in keywords)
         candidates.append((score, start, end))
     # Include orientation, but evidence and task matches take precedence.
-    candidates.append((0.5,0,min(900,len(text))))
+    candidates.append((600,0,min(900,len(text))))
     chosen = []
     for _, start, end in sorted(candidates, key=lambda x:(-x[0],x[1])):
         merged = []
@@ -74,14 +84,18 @@ def sources(a, questions=(), total=65000, per_source=12000):
         selected.append(dict(s,evidence_spans=spans))
     claim_ids = {c for section in a.get('outline',{}).get('sections',[]) for c in section.get('claim_ids',[])}
     preferred = {sid for c in a.get('evidence',{}).get('claims',[]) if c.get('id') in claim_ids for sid in c.get('source_ids',[])}
-    selected.sort(key=lambda s:(s['id'] not in preferred,not bool(s.get('evidence_spans'))))
+    selected.sort(key=lambda s:(not bool(s.get('_requested_sections')),s['id'] not in preferred,not bool(s.get('evidence_spans'))))
     result=[]; remaining=total; keywords=terms(a,questions)
     for i,s in enumerate(selected):
         # Share available context across sources so early long books cannot hide others.
         allowance=min(per_source,remaining,max(1800,remaining//max(1,len(selected)-i)))
+        requested=sum(x['end']-x['start'] for x in s.get('_requested_sections',[])[-2:])
+        allowance=min(per_source,remaining,max(allowance,requested))
         chunks=excerpts(s,keywords,max(0,allowance)) if allowance else []
         remaining-=sum(len(c['text']) for c in chunks)
         row={k:s.get(k) for k in ('id','title','url','kind','status','published_date','bibliography')}
+        from .source_notebook import sections,pointers
+        row.update(sections=sections(s),source_notes=s.get('notebook',{}).get('notes',[]),table_supplement_pointers=pointers(s),supplementary_material=s.get('supplementary_material',[]))
         row.update(text='\n\n[…原文中间部分未展示…]\n\n'.join(c['text'] for c in chunks),
                    excerpts=[dict(start=c['start'],end=c['end']) for c in chunks],
                    excerpt_only=sum(len(c['text']) for c in chunks)<len(s.get('text','')),

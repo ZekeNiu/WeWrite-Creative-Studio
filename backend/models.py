@@ -1,5 +1,5 @@
 from typing import Literal
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator,field_validator
 
 STAGES = ['topic', 'sources', 'outline', 'write', 'review', 'visual', 'layout']
 LABELS = dict(zip(STAGES, ['选题', '素材', '大纲', '写作', '审核修改', '配图', '排版导出']))
@@ -184,10 +184,19 @@ class SearchConfig(BaseModel):
         return value
 
 
+class ResearchQuery(BaseModel):
+    query: str
+    question: str = ''
+    purpose: Literal['known_source','explore','counterevidence','updates'] = 'explore'
+    source_type: Literal['academic','official','general','auto'] = 'auto'
+    time_scope: Literal['all','recent'] = 'all'
+    channel_queries: dict[str,str] = Field(default_factory=dict,max_length=8)
+
+
 class ResearchPlan(BaseModel):
     needed: bool
     academic: bool = True
-    queries: list[str] = Field(default_factory=list, max_length=8)
+    queries: list[str | ResearchQuery] = Field(default_factory=list, max_length=8)
     questions: list[str] = Field(default_factory=list, max_length=12)
     reason: str = ''
 
@@ -230,6 +239,21 @@ class ResearchNotes(BaseModel):
     intent: Topic | None = None
     direction_change: str = ''
     coverage: list['QuestionCoverage'] = Field(default_factory=list,max_length=16)
+    source_notes: list['SourceNote'] = Field(default_factory=list,max_length=64)
+    read_requests: list['SectionRead'] = Field(default_factory=list,max_length=4)
+
+
+class SourceNote(BaseModel):
+    source_id: str
+    category: Literal['design','results','counterevidence','limitations','scope']
+    note: str
+    quote: str
+
+
+class SectionRead(BaseModel):
+    source_id: str
+    section_id: str
+    reason: str
 
 
 class QuestionCoverage(BaseModel):
@@ -245,6 +269,13 @@ class EvidenceJudgement(BaseModel):
     basis: Literal['observed','author_interpretation','external_reference','not_applicable','unassessed'] = 'unassessed'
     question_ids: list[str] = Field(default_factory=list,max_length=16)
     checks: dict[str,Literal['matched','mismatch','unknown','not_applicable']]
+
+    @field_validator('checks',mode='before')
+    @classmethod
+    def conservative_unknown(cls,value):
+        # An unexpected assessment label cannot establish support or abort other sources.
+        if isinstance(value,dict):return {k:v if v in ('matched','mismatch','unknown','not_applicable') else 'unknown' for k,v in value.items()}
+        return value
 
 
 class EvidenceJudgements(BaseModel):
@@ -264,6 +295,12 @@ class IssueScope(BaseModel):
 class SearchSelection(BaseModel):
     urls: list[str] = Field(default_factory=list, max_length=8)
     reason: str = ''
+    decisions: list['CandidateDecision'] = Field(default_factory=list,max_length=32)
+
+
+class CandidateDecision(BaseModel):
+    url: str
+    reason: str
 
 
 class ModelConnection(BaseModel):

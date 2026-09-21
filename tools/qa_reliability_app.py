@@ -12,7 +12,7 @@ parent=ROOT/'output/test-workspaces';parent.mkdir(parents=True,exist_ok=True)
 os.environ['WEWRITE_STUDIO_DATA']=tempfile.mkdtemp(prefix='qa-v1412-',dir=parent)
 os.environ['WEWRITE_HOME']=str(Path(os.environ['WEWRITE_STUDIO_DATA'])/'wewrite')
 from backend.app import app
-from backend import store, providers, materials
+from backend import store, providers, materials,source_notebook
 from backend.models import Settings
 from tests.quality_fixtures import judgements
 import httpx
@@ -59,9 +59,11 @@ providers.image_generate=image_generate
 a=store.create_article(dict(topic='模拟排除与长证据'))
 def seed(v):
     v['sources']=[dict(materials.source('长证据资料','研究只支持关联。'+'完整原文内容。'*1500),id='S1')]
+    source_notebook.save(v['sources'][0],[dict(category='limitations',note='不能推断因果',quote='研究只支持关联。')],'synthetic',[dict(start=0,end=8)])
     v['content']='开头。\n\n训练必定有效。[S1]\n\n保留其他段落。'
     v['evidence']=dict(claims=[dict(id='C1',text='训练必定有效',status='unsupported',type='fact',source_ids=['S1'],evidence=[])])
     v['research']=dict(policy_version=4,summary='确定因果判断缺少依据。',issues=[dict(id='Q1',text='因果主张需要处理',kind='blocking',claim='训练必定有效',claim_id='C1',source_ids=['S1'],status='open'),dict(id='L1',text='样本有限',kind='limitation',claim='适用范围',source_ids=['S1'],status='open')],pending=True,stale=False)
+    v['research'].update(query_ledger=[dict(query='causal evidence',question='因果关系是否成立',purpose='counterevidence',time_scope='all',status='exhausted',attempts=[dict(channel='pubmed',status='no_results',query='causal evidence',count=0)])],candidates=[dict(title='模拟候选',url='https://example.org/fixture',channel='pubmed',query='causal evidence',status='not_selected',reason='未回答核心问题')])
     v['stages']['write']='done';v['current_stage']='sources'
 store.save_article(a['id'],a['revision'],seed,'synthetic fixture')
 app.state.fixture_id=a['id']

@@ -2,6 +2,7 @@ import {useEffect,useRef,useState} from 'react';
 import {api} from './api';
 import {type Article,type Job,LABELS,type ResearchStats,type ResearchIssue} from './types';
 import SearchStrategy from './SearchStrategy';
+import ResearchTrace from './ResearchTrace';
 import {Pager,readView,remember} from './MaterialList';
 
 const STATUS:Record<string,string>={needs_input:'待处理',completed:'已完成',failed:'未完成',cancelled:'已停止',interrupted:'运行中断',conflict:'内容已变化，需重新开始',queued:'等待执行',running:'进行中'};
@@ -10,7 +11,7 @@ const COVERAGE:Record<string,string>={supported:'已有支持',limited:'有限�
 function category(x:ResearchIssue){if(x.application_state==='partial'||x.application_state==='pending')return 'pending';if(['open','stale'].includes(x.status))return x.kind==='limitation'?'boundaries':'pending';return 'handled'}
 function Activity({r}:{r:any}){
  const s:ResearchStats|undefined=r.stats;
- return <>{s?<><p>{s.search_requests===0?(s.search_cache_hits?'本次复用已有检索结果':'本次仅核对已有材料'):`本次新增搜索 ${s.search_requests} 次`} · 检查已有材料 {s.existing_checked} 条</p><p>搜索缓存复用 {s.search_cache_hits} 次 · 网页读取尝试 {s.page_attempts} 次 · 页面缓存复用 {s.page_cache_hits} 次</p><p>取得全文 {s.fulltext} 篇 · 取得摘要 {s.abstracts} 篇 · 文献信息查询 {s.metadata_requests} 次（缓存 {s.metadata_cache_hits} 次）</p></>:<p>旧版记录：{r.calls??0} 次调用，{r.pages??0} 次读取计数。</p>}{r.limits&&<p>本次上限：搜索 {r.limits.max_calls} 次 · 读取 {r.limits.max_pages} 页 · 补查 {r.limits.max_rounds} 轮</p>}<details><summary>策略与执行记录</summary><SearchStrategy value={r.strategy}/>{r.plan?.reason&&<p>{r.plan.reason}</p>}{r.log?.map((x:any,i:number)=><p key={i}>{x.message} {x.query} {x.reason}</p>)}</details></>;
+ return <>{s?<><p>{s.search_requests===0?(s.search_cache_hits?'本次复用已有检索结果':'本次仅核对已有材料'):`本次新增搜索 ${s.search_requests} 次`} · 检查已有材料 {s.existing_checked} 条</p><p>搜索缓存复用 {s.search_cache_hits} 次 · 网页读取尝试 {s.page_attempts} 次 · 页面缓存复用 {s.page_cache_hits} 次</p><p>取得全文 {s.fulltext} 篇 · 取得摘要 {s.abstracts} 篇 · 文献信息查询 {s.metadata_requests} 次（缓存 {s.metadata_cache_hits} 次）</p></>:<p>旧版记录：{r.calls??0} 次调用，{r.pages??0} 次读取计数。</p>}{r.limits&&<p>本次上限：搜索 {r.limits.max_calls} 次 · 读取 {r.limits.max_pages} 页 · 补查 {r.limits.max_rounds} 轮</p>}{s&&s.version>=2&&<p>供应商内部子查询 {s.provider_queries??0} 次（与搜索请求分别记录）</p>}<ResearchTrace value={r}/><details><summary>策略与执行记录</summary><SearchStrategy value={r.strategy}/>{r.plan?.reason&&<p>{r.plan.reason}</p>}{r.log?.map((x:any,i:number)=><p key={i}>{x.message} {x.query} {x.reason} {x.provider_queries?.join("；")}</p>)}</details></>;
 }
 
 export default function ResearchDetails({a,busy,act,update,onJob,run,onSupply,focus,prepare,onInspect}:{a:Article;busy:boolean;act:(fn:()=>Promise<void>)=>Promise<void>;update:(a:Article)=>void;onJob:(j:Job)=>void;run:(stage:string,extra?:Record<string,unknown>)=>Promise<void>;onSupply:(ids:string[])=>void;onInspect:(id:string)=>void;focus?:{token:number;id?:string};prepare:()=>Promise<Article>}){
