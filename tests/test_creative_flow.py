@@ -11,7 +11,7 @@ def seeded(client):
     a=new(client)
     def fill(v):
         v['sources']=[dict(materials.source('原文 '+str(i),'Original evidence '+str(i)),id='S'+str(i)) for i in (1,2)]
-        v['evidence']=dict(summary='已有结论',claims=[dict(id='C'+str(i),text='主张'+str(i),source_ids=['S'+str(i)],status='supported',type='inference',evidence=[]) for i in (1,2)])
+        v['evidence']=dict(summary='已有结论',claims=[dict(id='C'+str(i),text='主张'+str(i),source_ids=['S'+str(i)],status='supported',type='inference',evidence=[dict(claim_id='C'+str(i),source_id='S'+str(i),quote='Original evidence '+str(i),claim='主张'+str(i),quality='suitable',verification='quote_matched',source_type='original',adoption_reason='direct',use_scope='study')]) for i in (1,2)])
         v['research']=dict(policy_version=3,summary='当前结论',pending=False,stale=False,evidence=[],issues=[dict(id='Q'+str(i),text='问题'+str(i),claim='主张'+str(i),claim_id='C'+str(i),kind='blocking',source_ids=['S'+str(i)],status='resolved',resolution='已核实') for i in (1,2)])
         v['stages']['sources']='done'
     return store.save_article(a['id'],a['revision'],fill,'fixture')
@@ -99,7 +99,7 @@ def test_existing_upload_checked_before_search_and_single_evidence_model(client,
     async def structured(a,stage,instruction,schema,job,candidates=None,questions=()):
         called.append(schema.__name__)
         if schema.__name__=='ResearchPlan': return dict(needed=True,academic=True,queries=['query'],questions=[],reason='Check first')
-        return dict(summary='核实完成',evidence=[dict(source_id='S1',quote='Original evidence 1',claim='主张1',claim_id='C1',type='inference',quality='suitable',boundary='')],issues=[dict(a['research']['issues'][0],status='resolved')],gaps=[],conflicts=[],followup_queries=[])
+        return dict(summary='核实完成',evidence=[dict(source_id='S1',quote='Original evidence 1',claim='主张1',claim_id='C1',type='inference',quality='suitable',boundary='',source_type='original',adoption_reason='direct',use_scope='study')],issues=[dict(a['research']['issues'][0],status='resolved')],gaps=[],conflicts=[],followup_queries=[])
     async def forbid(*args): raise AssertionError('已足够的上传材料不得先联网')
     monkeypatch.setattr(research,'structured',structured);monkeypatch.setattr(research.Research,'discover',forbid)
     saved,pending=asyncio.run(research.gather(a,j['id'],'research','只核实问题一'))
@@ -143,7 +143,7 @@ def test_no_progress_stops_after_one_attempt(client,monkeypatch):
 def test_generic_no_material_message_resolves_with_evidence(client):
     a=seeded(client)
     a['research']['issues'].append(dict(id='old-empty',text='未取得可用于当前主题的资料；可补充材料或检查检索渠道后重试。',kind='blocking',source_ids=[],claim='',status='open'))
-    rows=evidence_state.merge_issues(a,dict(evidence=[dict(source_id='S1',quote='Original evidence 1',claim='主张1')]),['Q1'])
+    rows=evidence_state.merge_issues(a,dict(evidence=[dict(source_id='S1',quote='Original evidence 1',claim='主张1',quality='suitable',verification='quote_matched',source_type='original',adoption_reason='direct',use_scope='study')]),['Q1'])
     assert next(x for x in rows if x['id']=='old-empty')['status']=='resolved'
 
 

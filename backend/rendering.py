@@ -92,11 +92,21 @@ def theme_preview(id):
 
 def export_zip(a):
     from .review_state import label as review_label
+    from . import bibliography
+    from urllib.parse import urlsplit
     result=render(a,True); output=io.BytesIO()
+    cited=set(bibliography.citation_ids(a['content']));sources=[]
+    for source in a['sources']:
+        if source['id'] not in cited:continue
+        metadata=bibliography.metadata(source)
+        metadata={k:v for k,v in metadata.items() if k in bibliography.FIELDS}
+        if metadata.get('url') and urlsplit(metadata['url']).scheme not in ('http','https'):metadata.pop('url')
+        metadata['authors']=[{k:v for k,v in author.items() if k in ('family','given')} if isinstance(author,dict) else author for author in metadata.get('authors',[])]
+        sources.append(dict(id=source['id'],bibliography=metadata))
     with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as z:
         z.writestr('文章.md',result['markdown']); z.writestr('排版.html',result['html'])
-        z.writestr('来源清单.json',json.dumps(a['sources'],ensure_ascii=False,indent=2))
-        z.writestr('使用说明.txt','打开排版.html 查看完整排版。复制正文到公众号编辑器后，请按图示位置上传 images 中的本地图片。\n审核状态：'+review_label(a)+'\nAI 审核只作辅助，请最终核对正文与引用。')
+        z.writestr('来源清单.json',json.dumps(sources,ensure_ascii=False,indent=2))
+        z.writestr('使用说明.txt','文章分享包：仅含正文、排版、采用图片与实际引用的文献信息，不含素材全文或内部备注，不是创作数据备份。\n打开排版.html 查看完整排版。复制正文到公众号编辑器后，请按图示位置上传 images 中的本地图片。\n审核状态：'+review_label(a)+'\nAI 审核只作辅助，请最终核对正文与引用。')
         for im in a['images']:
             if im.get('selected',True):
                 p=store.article_dir(a['id'])/'assets'/im['filename']

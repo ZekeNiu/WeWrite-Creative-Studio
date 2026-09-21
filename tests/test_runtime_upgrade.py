@@ -34,6 +34,25 @@ def test_launch_opens_fresh_versioned_tab_without_closing_old_tab(launcher,monke
         assert query['v']==['1.4.6'] and query['opened'][0].isdigit()
 
 
+@pytest.mark.parametrize('fail_install',[False,True])
+def test_dependency_fingerprint_written_only_after_success(launcher,monkeypatch,fail_install):
+    (launcher.ROOT/'requirements-lock.txt').write_text('synthetic==1\n')
+    marker=launcher.DATA/'dependencies.sha256';marker.write_text('old')
+    calls=[]
+    def run(command,**kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=1 if fail_install and 'pip' in command else 0)
+    monkeypatch.setattr(launcher.subprocess,'run',run)
+    if fail_install:
+        with pytest.raises(RuntimeError):launcher.ensure_dependencies('python',{},None)
+        assert marker.read_text()=='old'
+    else:
+        launcher.ensure_dependencies('python',{},None)
+        assert len(calls)==3 and marker.read_text()!='old'
+        calls.clear();launcher.ensure_dependencies('python',{},None)
+        assert len(calls)==1 and 'pip' not in calls[0]
+
+
 @pytest.mark.parametrize('version,reused',[('1.4.6',True),('1.4.4',False),('1.4.5',False)])
 def test_launcher_reuses_only_current_version(launcher,monkeypatch,version,reused):
     stopped=[]

@@ -54,7 +54,7 @@ def effective_service(kind,cfg=None):
 def save_settings(value: Settings):
     value=Settings.model_validate(value.model_dump())
     old=settings(); previous={s['id']:s for s in old['services']}
-    ids=set()
+    ids=set(); secrets={}
     for s in value.services:
         if not s.id or s.id in ('tavily','openalex') or s.id in ids: raise ValueError('服务编号重复或无效')
         ids.add(s.id); s.base_url=security.validate_base(s.base_url)
@@ -62,15 +62,22 @@ def save_settings(value: Settings):
         changed=any(getattr(s,k)!=old_s.get(k) for k in ('base_url','protocol','model')) or s.key is not None
         s.status='untested' if changed else old_s.get('status','untested')
         s.image_status='untested' if changed else old_s.get('image_status','untested')
-        security.save_key(s.id,s.key)
-        s.key=None; s.key_set=bool(store.get_secret(s.id))
     value.search.base_url=security.validate_base(value.search.base_url)
-    security.save_key('tavily',value.search.key)
+    referenced=[value.default_service,value.search.native_service_id]+[r.service_id for r in value.routes.values()]+[c.service_id for c in value.model_connections]
+    if any(sid and sid not in ids for sid in referenced):raise ValueError('有流程仍引用已删除或不存在的服务，请重新选择后保存')
+    for s in value.services:
+        if s.key is not None:secrets[s.id]=security.encode_key(s.key)
+        s.key=None;s.key_set=bool(secrets.get(s.id,store.get_secret(s.id)))
+    if value.search.key is not None:secrets['tavily']=security.encode_key(value.search.key)
     value.search.key=None
-    security.save_key('openalex',value.search.openalex_key)
+    if value.search.openalex_key is not None:secrets['openalex']=security.encode_key(value.search.openalex_key)
     value.search.openalex_key=None
-    store.set_settings(value.model_dump(exclude_none=True))
-    for removed in set(previous)-ids: store.put_secret(removed,None)
+    for removed in set(previous)-ids:secrets[removed]=None
+    with store.connection() as db:
+        for sid,secret in secrets.items():
+            if secret is None:db.execute('DELETE FROM secrets WHERE id=?',(sid,))
+            else:db.execute('INSERT OR REPLACE INTO secrets VALUES(?,?)',(sid,secret))
+        db.execute('INSERT OR REPLACE INTO settings VALUES(1,?)',(store.encode(value.model_dump(exclude_none=True)),))
     return settings()
 
 

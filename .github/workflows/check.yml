@@ -1,0 +1,45 @@
+name: Windows acceptance
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: python -m pip install -r requirements-lock.txt
+      - run: npm ci
+      - run: python -m pytest -q --disable-warnings
+      - run: npm run build
+      - name: Verify shipped interface
+        run: git diff --exit-code -- dist
+      - name: Offline browser acceptance
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force output/diagnostics | Out-Null
+          $qa = Start-Process -FilePath python -ArgumentList 'tools/qa_reliability_app.py' -PassThru -WindowStyle Hidden -RedirectStandardOutput output/diagnostics/qa-server.txt -RedirectStandardError output/diagnostics/qa-server-error.txt
+          try {
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 40; $attempt++) {
+              try { Invoke-RestMethod http://127.0.0.1:8977/api/health | Out-Null; $ready = $true; break } catch { Start-Sleep -Milliseconds 500 }
+            }
+            if (-not $ready) { throw 'QA server did not start' }
+            python tools/check_reliability_ui.py
+            if ($LASTEXITCODE -ne 0) { throw 'Browser acceptance failed' }
+          } finally {
+            if (-not $qa.HasExited) { Stop-Process -Id $qa.Id }
+          }

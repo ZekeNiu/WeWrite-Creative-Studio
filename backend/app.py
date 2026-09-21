@@ -8,14 +8,14 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit,quote
-from fastapi import FastAPI,Request,UploadFile,File,Form,HTTPException
+from fastapi import FastAPI,Request,UploadFile,File,Form,HTTPException,Query
 from fastapi.responses import JSONResponse,FileResponse,Response,StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import ValidationError
 from . import store,providers,security,materials,rendering,workflow,prompts,search_tools,browser_search,search_check,bibliography,outputs,capabilities
 from . import flow_state,issue_actions,source_imports
-from .models import IssueAction,Settings,Brief,Layout,VisualSettings,ArticlePatch,JobRequest,STAGES,OutlineResult,ImagePlan,CapabilityTest
+from .models import IssueAction,Settings,Brief,Layout,VisualSettings,ArticlePatch,JobRequest,STAGES,OutlineResult,ImagePlan,CapabilityTest,ResearchLimits
 
 APP_VERSION=json.loads((store.ROOT/'package.json').read_text('utf-8'))['version']
 
@@ -164,9 +164,9 @@ def get_search_check(id:str):
 
 
 @app.get('/api/articles')
-def articles(state:str='active'):
+def articles(state:str='active',page:int|None=Query(None,ge=1),page_size:int=Query(20,ge=1,le=100),query:str=''):
     if state not in ('active','trash'):raise ValueError('文章列表分类无效')
-    return store.list_articles(state)
+    return store.list_articles(state,page,page_size,query)
 
 
 @app.post('/api/articles/{id}/trash')
@@ -212,9 +212,10 @@ def article(id:str): return store.get_article(id)
 def patch(id:str,payload:ArticlePatch):
     stage=payload.stage
     if stage not in ['setup',*STAGES,'preferences']: raise ValueError('未知编辑环节')
-    allowed={'title','brief','auto','outline','content','layout','visual','image_plans','images','sources','current_stage'}
+    allowed={'title','brief','auto','outline','content','layout','visual','image_plans','images','sources','current_stage','research_limits'}
     if set(payload.changes)-allowed: raise ValueError('包含不可修改的字段')
     c=payload.changes.copy()
+    if c.get('research_limits') is not None:c['research_limits']=ResearchLimits.model_validate(c['research_limits']).model_dump()
     if 'brief' in c: c['brief']=Brief.model_validate(c['brief']).model_dump()
     if 'layout' in c:
         c['layout']=Layout.model_validate(c['layout']).model_dump()
@@ -496,7 +497,7 @@ def download_archive(id:str,digest:str,kind:str):
 
 
 @app.get('/api/articles/{id}/versions')
-def get_versions(id:str): return store.versions(id)
+def get_versions(id:str,page:int|None=Query(None,ge=1),page_size:int=Query(50,ge=1,le=100)): return store.versions(id,page,page_size)
 
 
 @app.post('/api/articles/{id}/restore')

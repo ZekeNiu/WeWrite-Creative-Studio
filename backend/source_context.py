@@ -61,13 +61,14 @@ def excerpts(source, keywords, limit=12000):
 
 
 def sources(a, questions=(), total=65000, per_source=12000):
-    extra=list(a.get('research',{}).get('evidence',[]))
-    for claim in a.get('evidence',{}).get('claims',[]): extra.extend(claim.get('evidence',[]))
+    from .evidence_state import current_spans
+    canonical='claims' in a.get('evidence',{})
+    extra=current_spans(a) if canonical else list(a.get('research',{}).get('evidence',[]))
     selected=[]
     for s in a['sources']:
         if not s.get('selected'): continue
         spans=[];seen=set()
-        for e in list(s.get('evidence_spans',[]))+[e for e in extra if e.get('source_id')==s['id']]:
+        for e in ([] if canonical else list(s.get('evidence_spans',[])))+[e for e in extra if e.get('source_id')==s['id']]:
             key=(e.get('quote'),e.get('claim'),e.get('boundary'))
             if key not in seen: spans.append(e);seen.add(key)
         selected.append(dict(s,evidence_spans=spans))

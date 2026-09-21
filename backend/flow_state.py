@@ -38,6 +38,7 @@ def issues(a):
         if valid:
             x.update(status=d.get('handling','bounded'),wording=d.get('wording',''))
             if d.get('application'):x['application']=d['application']
+            x['application_state']=d.get('application_state') or ('applied' if d.get('application',{}).get('edits') and not d.get('application',{}).get('unapplied') else 'pending' if a.get('content') or a.get('outline') else 'not_needed')
         elif x.get('status') in ('waived','bounded','excluded'):
             x['status']='stale'
         result.append(x)
@@ -59,6 +60,8 @@ def ready(a):
 
 
 def present(a):
+    from .evidence_state import sync
+    sync(a)
     from .review_state import present as review_present
     review_present(a)
     a['visual'].pop('budget',None)

@@ -25,7 +25,11 @@ def crypt(value: bytes, decrypt=False):
 
 def save_key(id, key):
     if key is None: return
-    store.put_secret(id,base64.b64encode(crypt(key.encode())).decode() if key else None)
+    store.put_secret(id,encode_key(key))
+
+
+def encode_key(key):
+    return base64.b64encode(crypt(key.encode())).decode() if key else None
 
 
 def key(id):

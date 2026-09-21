@@ -5,8 +5,8 @@ import {Field,Tag} from './ui';
 
 export function readView<T>(key:string,fallback:T):T{try{return {...fallback,...JSON.parse(sessionStorage.getItem(key)||'{}')}}catch{return fallback}}
 export function remember(key:string,value:unknown){try{sessionStorage.setItem(key,JSON.stringify(value))}catch{/* Browsing still works without storage. */}}
-export function Pager({page,total,onChange}:{page:number;total:number;onChange:(p:number)=>void}){
- const pages=Math.max(1,Math.ceil(total/10));return <div className="material-pager"><span>共 {total} 条 · 第 {page} / {pages} 页</span><button className="button secondary" disabled={page<=1} onClick={()=>onChange(page-1)}>上一页</button><button className="button secondary" disabled={page>=pages} onClick={()=>onChange(page+1)}>下一页</button></div>
+export function Pager({page,total,onChange,pageSize=10}:{page:number;total:number;pageSize?:number;onChange:(p:number)=>void}){
+ const pages=Math.max(1,Math.ceil(total/pageSize));return <div className="material-pager"><span>共 {total} 条 · 第 {page} / {pages} 页</span><button className="button secondary" disabled={page<=1} onClick={()=>onChange(page-1)}>上一页</button><button className="button secondary" disabled={page>=pages} onClick={()=>onChange(page+1)}>下一页</button></div>
 }
 
 export default function MaterialList({a,save,busy,act,inspect,onContext,prepare}:{a:Article;save:Save;busy:boolean;act:(fn:()=>Promise<void>)=>Promise<void>;inspect:(id:string)=>void;onContext?:(id:string,explicit?:boolean)=>void;prepare?:()=>Promise<Article>}){

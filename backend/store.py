@@ -75,10 +75,22 @@ def get_article(id,include_trash=False):
         return present(legacy(a, db))
 
 
-def list_articles(state='active'):
+def list_articles(state='active', page=None, page_size=20, query=''):
+    fields=('title','revision','updated','brief','current_stage','stages','trashed_at')
+    select='id,'+','.join(f"json_extract(data,'$.{k}') AS {k}" for k in fields)
+    where="coalesce(json_extract(data,'$.diagnostic'),0)=0 AND (json_extract(data,'$.trashed_at') IS NOT NULL)=?"
+    params=[state=='trash']
+    if query.strip():
+        where+=" AND (instr(lower(json_extract(data,'$.title')),lower(?))>0 OR instr(lower(json_extract(data,'$.brief.topic')),lower(?))>0)"
+        params += [query.strip(),query.strip()]
     with connection() as db:
-        data = [json.loads(r['data']) for r in db.execute('SELECT data FROM articles')]
-    return sorted([dict({k:a[k] for k in ('id','title','revision','updated','brief','current_stage','stages')},trashed_at=a.get('trashed_at')) for a in data if not a.get('diagnostic') and bool(a.get('trashed_at'))==(state=='trash')],key=lambda a:a['updated'],reverse=True)
+        total=db.execute('SELECT count(*) FROM articles WHERE '+where,params).fetchone()[0]
+        sql='SELECT '+select+' FROM articles WHERE '+where+" ORDER BY json_extract(data,'$.updated') DESC,id DESC"
+        if page is not None: sql+=' LIMIT ? OFFSET ?';params += [page_size,(page-1)*page_size]
+        rows=[dict(r) for r in db.execute(sql,params)]
+    for row in rows:
+        for key in ('brief','stages'):row[key]=json.loads(row[key])
+    return rows if page is None else dict(items=rows,total=total,page=page,page_size=page_size)
 
 
 def trash_article(id,revision,restore=False):
@@ -126,6 +138,8 @@ class Conflict(Exception):
 
 
 def save_article(id, expected_revision, mutate, label, invalidate=None, review_action=False,allow_trash=False):
+    from . import snapshots
+    with LOCK: snapshots.prepare(DATA)
     with connection() as db:
         row=db.execute('SELECT data FROM articles WHERE id=?',(id,)).fetchone()
         if not row: raise KeyError('文章不存在')
@@ -133,7 +147,7 @@ def save_article(id, expected_revision, mutate, label, invalidate=None, review_a
         if a.get('trashed_at') and not allow_trash:raise Conflict('这篇文章已在回收站，请恢复后继续')
         if a['revision'] != expected_revision:
             raise Conflict('文章已有更新，为避免覆盖，未应用本次修改。请先查看最新版本。')
-        db.execute('INSERT INTO versions VALUES(?,?,?,?,?)',(uid(),id,now(),label,encode(a)))
+        db.execute('INSERT INTO versions VALUES(?,?,?,?,?)',(uid(),id,now(),label,snapshots.encode(a)))
         from . import evidence_state
         before=copy.deepcopy(a)
         # Upgrade a legacy decision only when this article is explicitly edited.
@@ -163,6 +177,7 @@ def save_article(id, expected_revision, mutate, label, invalidate=None, review_a
         if r.get('resume_stage') and a['stages'].get('outline' if r['resume_stage']=='sources' else r['resume_stage'])=='done':
             r.pop('resume_job_id',None);r.pop('resume_stage',None)
         from . import review_state
+        evidence_state.sync(a)
         if review_action: review_state.finish_action(a)
         else: review_state.present(a)
         review_state.sync_job(db,a)
@@ -172,18 +187,29 @@ def save_article(id, expected_revision, mutate, label, invalidate=None, review_a
         return present(a)
 
 
-def versions(id):
+def versions(id, page=None, page_size=50):
     with connection() as db:
-        return [dict(r) for r in db.execute('SELECT id,created,label FROM versions WHERE article_id=? ORDER BY created DESC LIMIT 100',(id,))]
+        rows=[dict(r) for r in db.execute('SELECT id,created,label FROM versions WHERE article_id=? ORDER BY rowid DESC LIMIT ? OFFSET ?',(id,100 if page is None else page_size,0 if page is None else (page-1)*page_size))]
+        total=db.execute('SELECT count(*) FROM versions WHERE article_id=?',(id,)).fetchone()[0]
+        return rows if page is None else dict(items=rows,total=total,page=page,page_size=page_size)
 
 
 def restore(id, version, revision):
+    from .snapshots import decode
     with connection() as db:
         row=db.execute('SELECT data FROM versions WHERE id=? AND article_id=?',(version,id)).fetchone()
         if not row: raise KeyError('历史版本不存在')
-        old=json.loads(row['data'])
+        old=decode(row['data'])
     def change(a):
-        a.update({k:v for k,v in old.items() if k not in ('id','revision','created','updated')})
+        if any(j['status'] in ('queued','running') for j in jobs(id)):raise Conflict('文章仍有活动任务，不能恢复历史版本')
+        identity={k:a[k] for k in ('id','revision','created','updated')}
+        defaults=dict(brief=Brief().model_dump(),stages={s:'idle' for s in STAGES},auto={s:False for s in STAGES},
+                      visual=VisualSettings().model_dump(),layout=Layout().model_dump(),sources=[],topics=[],evidence={},
+                      outline={},content='',review={},suggestions=[],images=[],image_plans=[],layout_advice='',current_stage='topic',title='未命名文章')
+        restored={**defaults,**copy.deepcopy(old),**identity}
+        for key in ('brief','stages','auto','visual','layout'):restored[key]={**defaults[key],**old.get(key,{})}
+        for key in ('materials_state','workflow','pending_issue_attachments'):restored.pop(key,None)
+        a.clear();a.update(restored)
     return save_article(id,revision,change,'恢复历史版本')
 
 
@@ -286,6 +312,7 @@ def cache_get(key):
 def cache_put(key,value,ttl=86400):
     import time
     with connection() as db:
+        db.execute('DELETE FROM research_cache WHERE expires<=?',(time.time(),))
         db.execute('INSERT OR REPLACE INTO research_cache VALUES(?,?,?)',(key,time.time()+ttl,encode(value)))
 
 

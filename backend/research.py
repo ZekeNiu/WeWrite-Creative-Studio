@@ -126,6 +126,7 @@ class Research:
     def __init__(self,a,job_id,stage):
         self.a=a;self.job_id=job_id;self.stage=stage;self.cfg=dict(providers.settings()['search'])
         job=store.job(job_id);prior=job.get('research',{})
+        self.cfg.update(a.get('research_limits') or {})
         self.cfg.update(job.get('request',{}).get('research_limits') or {})
         resume=job.get('request',{}).get('research_parent_id') or job.get('request',{}).get('resume_job_id')
         if not prior and resume: prior=store.job(resume).get('research',{})
@@ -350,7 +351,7 @@ class Research:
         return src
 
     async def assess(self):
-        key=digest([context(self.a,self.stage),self.requirements,self.questions])
+        key=digest([context(self.a,self.stage),self.requirements,self.questions,sorted(self.requested)])
         if self.notes_key==key: return
         self.update('正在核对关键结论与原文证据')
         self.notes=validate_spans(await structured(self.a,self.stage,
@@ -385,7 +386,10 @@ class Research:
         return evidence_state.merge_issues(self.a,self.notes,self.requested)
 
     def sufficient(self):
-        return not any(x['kind']=='blocking' and x['status'] in ('open','stale') for x in self.issues()) and bool(self.notes.get('evidence') or self.a.get('evidence',{}).get('claims'))
+        return not self.open_targets() and bool(self.notes.get('evidence') or self.a.get('evidence',{}).get('claims'))
+
+    def open_targets(self):
+        return [x for x in self.issues() if x['kind']=='blocking' and x['status'] in ('open','stale') and (not self.requested or x['id'] in self.requested)]
 
     async def discover(self,queries):
         for query in queries:
@@ -463,7 +467,7 @@ class Research:
             '判断本环节是否需要补查。主题改变、来源不足、数字缺据、核心主张的来源质量不适用、研究冲突需要检索；材料足够则 needed=false。'
             '依据当前日期和 recent_days 查询近期动态；经典研究、基础机制及用户指定文献不受近期窗口排除。选题反馈也用于调整检索方向，避开已展示角度。queries 最多3条，研究问题使用中英文检索词：英文查询放首位，适合跨库论文发现；中文查询补充本地语境，覆盖反方及适用边界。'
             'academic 表示是否需要研究论文依据；纯产品公告、即时新闻等无研究判断的问题设为 false，避免冗余论文检索。'
-            '不要为追求数量重复检索。用户补充检索要求：'+query,ResearchPlan,self.job_id)
+            '不要为追求数量重复检索。仅处理本轮指定的问题（为空则检查全文）：'+store.encode([x for x in self.issues() if x['id'] in self.requested])+ '。用户补充检索要求：'+query,ResearchPlan,self.job_id)
         self.plan=plan
         self.academic_needed=plan['academic']
         self.questions=plan['questions']
@@ -483,7 +487,7 @@ class Research:
             if self.rounds>=self.cfg['max_rounds'] or self.calls>=self.cfg['max_calls'] or self.pages>=self.cfg['max_pages']: break
             queries=[q for q in self.notes['followup_queries'] if q not in self.seen_queries]
             if not queries and self.calls==0 and self.rounds==0:
-                targeted=await structured(self.a,self.stage,'仅针对这些尚未处理的核心证据缺口生成定向查询，不补查一般局限：'+json.dumps([x['text'] for x in self.issues() if x['kind']=='blocking' and x['status'] in ('open','stale')],ensure_ascii=False),ResearchPlan,self.job_id)
+                targeted=await structured(self.a,self.stage,'仅针对这些尚未处理的核心证据缺口生成定向查询，不补查一般局限：'+json.dumps([x['text'] for x in self.open_targets()],ensure_ascii=False),ResearchPlan,self.job_id)
                 queries=[q for q in targeted['queries'] if q not in self.seen_queries]
             if not queries:
                 self.stop_reason='没有新的可执行查询；请补充原文、明确限定表述或不使用该主张。'
@@ -507,9 +511,9 @@ class Research:
         return pending
 
 
-def input_key(a,stage,query,search_signature):
+def input_key(a,stage,query,search_signature,requested=()):
     return digest([source_context.POLICY_VERSION,stage,evidence_state.objective(a),a['content'] if stage=='review' else '',a['outline'],
-                   evidence_state.selected(a),query,search_signature])
+                   evidence_state.selected(a),query,search_signature,sorted(requested)])
 
 
 async def gather(a,job_id,stage,query=''):
@@ -521,11 +525,11 @@ async def gather(a,job_id,stage,query=''):
     original=copy.deepcopy(a);worker=Research(copy.deepcopy(a),job_id,stage)
     search_signature=digest([worker.cfg,providers.fingerprint(worker.search_model,'search') if worker.search_model else None])
     # Repeated runs with identical inputs reuse completed evidence, not paid searches.
-    key=input_key(a,stage,query,search_signature)
+    key=input_key(a,stage,query,search_signature,worker.requested)
     previous=a.get('research',{})
-    if previous.get('input_key')==key and not previous.get('stale') and time.time()-previous.get('timestamp',0)<3600: return a,bool(previous.get('pending'))
+    if previous.get('input_key')==key and not previous.get('stale') and time.time()-previous.get('timestamp',0)<3600: return a,bool(previous.get('task_pending',previous.get('pending')))
     pending=await worker.run(query)
-    result={'input_key':key,'policy_version':source_context.POLICY_VERSION,'timestamp':time.time(),'stage':stage,'pending':pending,'stale':False,'summary':worker.notes.get('summary',''),
+    result={'input_key':key,'policy_version':source_context.POLICY_VERSION,'timestamp':time.time(),'stage':stage,'pending':pending,'task_pending':pending,'requested_issue_ids':worker.requested,'stale':False,'summary':worker.notes.get('summary',''),
             'gaps':worker.notes.get('gaps',[]),'conflicts':worker.notes.get('conflicts',[]),'evidence':worker.notes.get('evidence',[]),
             'issues':worker.issues(),'next_queries':worker.notes.get('followup_queries',[]),'stop_reason':worker.stop_reason,'exhausted':bool(worker.stop_reason) or worker.calls>=worker.cfg['max_calls'] or worker.pages>=worker.cfg['max_pages'] or worker.rounds>=worker.cfg['max_rounds'],'stats':worker.stats,'plan':worker.plan,'material_key':flow_state.signature(worker.a),'outline_key':digest(a['outline']),
             'calls':worker.calls,'pages':worker.pages,'rounds':worker.rounds,'log':worker.log,'blocked_urls':list(dict.fromkeys(worker.blocked)), 'job_id':job_id,'strategy':worker.strategy()}
@@ -578,7 +582,7 @@ async def gather(a,job_id,stage,query=''):
             for downstream in ('outline','write','review','visual','layout'):
                 if v['stages'][downstream] in ('done','needs_input','stale'): v['stages'][downstream]='stale'
         # Key reflects the newly gathered material for the next run.
-        result['input_key']=input_key(v,stage,query,search_signature)
+        result['input_key']=input_key(v,stage,query,search_signature,worker.requested)
         if pending: v['stages'][stage if stage in v['stages'] else 'sources']='needs_input'
     latest=store.get_article(a['id'])
     saved=store.save_article(a['id'],latest['revision'],change,'整理检索资料')

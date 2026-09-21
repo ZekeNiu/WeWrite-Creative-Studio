@@ -19,7 +19,7 @@ def parent(a):
 def apply(id,value):
     with store.LOCK:
         for j in store.jobs(id):
-            if value.action in ('verify','bound_auto') and j['request'].get('action_id')==value.action_id:
+            if value.action in ('verify','bound_auto','exclude') and j['request'].get('action_id')==value.action_id:
                 return dict(article=store.get_article(id),job=flow_state.job_view(j))
         a=store.get_article(id)
         if a['revision']!=value.revision: raise store.Conflict('资料已更新，请刷新核实问题后重试')
@@ -29,14 +29,14 @@ def apply(id,value):
         if value.action in ('bound','waive') and not value.wording.strip():
             raise ValueError('请填写本篇保留的限定表述，或选择本篇不使用该主张')
         if value.action=='attach': return dict(article=a,job=None)
-        if value.action=='bound_auto':
+        if value.action=='bound_auto' or (value.action=='exclude' and (a.get('content') or a.get('outline'))):
             from . import bounded
             return dict(article=a,job=bounded.start(a,value))
         original=parent(a)
         if value.action=='verify':
             instruction='只核实以下问题；可解释的局限保留边界，不追求不存在的研究：\n'+'\n'.join(lookup[i]['text'] for i in value.issue_ids)
             request=JobRequest(stage='research',revision=a['revision'],instruction=instruction,issue_ids=value.issue_ids,
-                action_id=value.action_id,chain=False,continuation_job_id=original['id'] if original else '')
+                action_id=value.action_id,research_limits=value.research_limits,chain=False,continuation_job_id=original['id'] if original else '')
             return dict(article=a,job=workflow.start(id,request))
         def change(v):
             decisions=v.setdefault('research_decisions',{})
@@ -45,7 +45,7 @@ def apply(id,value):
                 undo(v,value.issue_ids)
             for iid in value.issue_ids:
                 if value.action in ('waive','bound','exclude'):
-                    decisions[iid]=dict(dependency_key=evidence_state.dependency(v,lookup[iid]),at=store.now(),handling='excluded' if value.action=='exclude' else 'bounded',wording=value.wording.strip(),text=lookup[iid]['text'])
+                    decisions[iid]=dict(dependency_key=evidence_state.dependency(v,lookup[iid]),at=store.now(),handling='excluded' if value.action=='exclude' else 'bounded',wording=value.wording.strip(),text=lookup[iid]['text'],application_state='pending' if v.get('content') or v.get('outline') else 'not_needed')
             v['research']['issues']=flow_state.issues(v)
             v['research']['pending']=any(x['kind']=='blocking' and x['status'] in ('open','stale') for x in v['research']['issues'])
             if original:

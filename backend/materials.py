@@ -1,4 +1,5 @@
 import io
+import re
 import zipfile
 from pathlib import Path
 from urllib.parse import urlsplit,urljoin
@@ -50,8 +51,18 @@ def extract_file(name,blob):
         z=zipfile.ZipFile(io.BytesIO(blob))
         if sum(x.file_size for x in z.infolist())>100*1024*1024: raise ValueError('解压后的文档过大')
         doc=Document(io.BytesIO(blob))
-        text='\n\n'.join(p.text for p in doc.paragraphs)
-        for table in doc.tables: text+='\n'+'\n'.join(' | '.join(c.text for c in row.cells) for row in table.rows)
+        from docx.text.paragraph import Paragraph
+        from docx.table import Table
+        blocks=[]
+        for block in doc.iter_inner_content():
+            if isinstance(block,Paragraph):
+                heading=re.match(r'Heading ([1-6])',block.style.name or '')
+                blocks.append(('#'*int(heading[1])+' ' if heading else '')+block.text)
+            elif isinstance(block,Table):blocks.append('\n'.join(' | '.join(c.text for c in row.cells) for row in block.rows))
+        if any(name.startswith('word/media/') for name in z.namelist()):
+            if not any(b.strip() for b in blocks):raise ValueError('此 Word 仅包含图片或扫描内容，未读到正文，请先 OCR 或补充文字。')
+            blocks.append('[导入提示：文档中的图片未进行文字或图表识别，请另行补充图中信息。]')
+        text='\n\n'.join(blocks)
     elif suffix in ('.md','.txt'):
         try: text=blob.decode('utf-8-sig')
         except UnicodeDecodeError: text=blob.decode('gb18030')

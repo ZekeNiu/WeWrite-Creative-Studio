@@ -108,6 +108,10 @@ def format_reference(s):
     return {'text': out, 'complete': not missing, 'missing': missing, 'metadata': m}
 
 
+def citation_ids(content):
+    return list(dict.fromkeys(sid for match in MARKER.finditer(content) for sid in re.split(r'\s*[,，;；]\s*',match[1])))
+
+
 def citations(content, sources):
     lookup = {s['id']: s for s in sources}; order = []; unknown = []
     def replace(match):

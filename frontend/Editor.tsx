@@ -1,3 +1,4 @@
+import {registerField,notifyFields} from './fieldChanges';
 import {useEffect,useRef,useState} from 'react';
 import {useEditor,EditorContent} from '@tiptap/react';
 import {Node} from '@tiptap/core';
@@ -33,14 +34,15 @@ export default function Editor({content,onSave,registerFlush,onSelection,highlig
  const dirty=useRef(false);const latest=useRef(content);const timer=useRef<ReturnType<typeof setTimeout>|null>(null);const saveRef=useRef(onSave);saveRef.current=onSave;
  const selectionRef=useRef(onSelection);selectionRef.current=onSelection;
  const saving=useRef<Promise<unknown>>(Promise.resolve());
- const flush=async()=>{if(timer.current)clearTimeout(timer.current);if(dirty.current){const text=latest.current;dirty.current=false;setStatus('保存中…');saving.current=saveRef.current(text).then(()=>setStatus(dirty.current?'有修改':'已保存')).catch(e=>{dirty.current=true;setStatus('保存失败，请重试');throw e})}await saving.current};
- const change=(text:string)=>{latest.current=text;dirty.current=true;setRaw(text);setCount(text.replace(/\s/g,'').length);setStatus('有修改');if(timer.current)clearTimeout(timer.current);timer.current=setTimeout(()=>{void flush().catch(()=>{})},800)};
+ const flush=async()=>{if(timer.current)clearTimeout(timer.current);if(dirty.current){const text=latest.current;dirty.current=false;setStatus('保存中…');saving.current=saveRef.current(text).then(()=>setStatus(dirty.current?'有修改':'已保存')).catch(e=>{dirty.current=true;setStatus('保存失败，请重试');throw e})}try{await saving.current}finally{notifyFields()}};
+ const change=(text:string)=>{latest.current=text;dirty.current=true;notifyFields();setRaw(text);setCount(text.replace(/\s/g,'').length);setStatus('有修改');if(timer.current)clearTimeout(timer.current);timer.current=setTimeout(()=>{void flush().catch(()=>{})},800)};
  const editor=useEditor({extensions:[StarterKit,Placeholder.configure({placeholder:'在这里写下你的观点，或让 AI 按大纲生成初稿…'}),TableKit,Image,Citation.configure({getSources:()=>sourcesRef.current})],content:toHtml(content),
    onUpdate:({editor})=>change(td.turndown(editor.getHTML())),
    onSelectionUpdate:({editor})=>{const {from,to}=editor.state.selection;if(from===to)return;const text=editor.state.doc.textBetween(from,to,'\n\n');let original=text;
      if(!latest.current.includes(text)){const range=window.getSelection()?.rangeCount?window.getSelection()!.getRangeAt(0):null;if(range){const div=document.createElement('div');div.appendChild(range.cloneContents());original=td.turndown(div.innerHTML)}}selectionRef.current(original)},
    editorProps:{handleClickOn:(_view,_pos,node)=>{if(node.type.name==='sourceCitation'){setInspect(String(node.attrs.sourceId).split(/[,，;；]/)[0]);return true}return false},attributes:{class:'prose-editor','aria-label':'文章正文'}}});
  useEffect(()=>{registerFlush(flush)},[registerFlush,content]);
+ const fieldFlush=useRef(flush);fieldFlush.current=flush;useEffect(()=>registerField(()=>fieldFlush.current(),()=>dirty.current),[]);
  useEffect(()=>{if(!dirty.current&&content!==latest.current){latest.current=content;setRaw(content);setCount(content.replace(/\s/g,'').length);editor?.commands.setContent(toHtml(content),{emitUpdate:false})}},[content,editor]);
  useEffect(()=>{const warn=(e:BeforeUnloadEvent)=>{if(dirty.current){e.preventDefault();e.returnValue=''}};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn)},[]);
  useEffect(()=>{let cancelled=false;const timer=setTimeout(()=>{void api('/references/preview','POST',{content:raw,sources}).then(r=>{if(!cancelled)setReferences(r.references)}).catch(()=>{})},400);return()=>{cancelled=true;clearTimeout(timer)}},[raw,sources]);

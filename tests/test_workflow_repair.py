@@ -107,7 +107,7 @@ def test_selective_verification_cannot_silently_drop_other_blockers(client):
     w.notes['issues']=[dict(old,status='resolved',resolution='claimed success',source_ids=['S1'])]
     assert not w.sufficient()  # No located original evidence.
     w.notes['issues'][0]['claim']='范围已明确'
-    w.notes['evidence']=[{'source_id':'S1','claim':'范围已明确'}]
+    w.notes['evidence']=[{'source_id':'S1','claim':'范围已明确','quality':'suitable','verification':'quote_matched','source_type':'original','adoption_reason':'direct','use_scope':'study'}]
     assert w.sufficient()
 
 

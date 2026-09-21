@@ -19,6 +19,6 @@ export default function SearchPreferences({cfg,onChange}:{cfg:Settings;onChange:
  <Field label="OpenAlex 可选 Key" type="password" value={s.openalex_key??''} placeholder={s.openalex_key_set?'已加密保存，留空保持不变':'可不填写'} onCommit={v=>onChange({openalex_key:v||undefined})}/>
  <details><summary>Tavily 后备搜索</summary><Toggle checked={s.tavily_enabled} onChange={v=>onChange({tavily_enabled:v})} label="启用 Tavily"/><Field label="Tavily 调用地址" value={s.base_url} onCommit={v=>onChange({base_url:v})}/><Field label="Tavily API Key" type="password" value={s.key??''} placeholder={s.key_set?'已加密保存，留空保持不变':'可不填写'} onCommit={v=>onChange({key:v||undefined})}/><Field label="每次 Tavily 搜索价格 / 元" type="number" value={s.tavily_price??''} onCommit={v=>onChange({tavily_price:v===''?null:Number(v)})}/></details>
  <div className="form-grid"><Field label="每次任务最多搜索调用" type="number" value={s.max_calls} onCommit={v=>onChange({max_calls:Number(v)})}/><Field label="每次任务最多读取页面" type="number" value={s.max_pages} onCommit={v=>onChange({max_pages:Number(v)})}/><Field label="最多补查轮数" type="number" value={s.max_rounds} onCommit={v=>onChange({max_rounds:Number(v)})}/></div>
- <p className="small-text muted">模型 Token 费用另计；未知价格不会视为免费。金额限额与次数限额继续生效。</p>
+ <p className="small-text muted">模型 Token 费用另计；未知价格不会视为免费。仅按搜索次数、页数和补查轮数控制工作量，不设金额门槛。</p>
  </details></section>;
 }

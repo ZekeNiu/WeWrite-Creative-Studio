@@ -38,7 +38,8 @@ def validate_result(stage,result,a):
             if items and result['decision']=='pass': result['decision']='revise'
             if any(i['severity']=='blocker' for i in items): result['decision']='revise'
     if stage=='write':
-        citations=re.findall(r'\[(S[a-zA-Z0-9]+)\]',result)
+        from .bibliography import citation_ids
+        citations=citation_ids(result)
         if any(c not in sources for c in citations): raise ValueError('正文引用了不存在的来源编号，结果已保留但未应用')
 
 

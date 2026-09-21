@@ -295,12 +295,16 @@ class JobRequest(BaseModel):
     research_parent_id: str = ''
 
 
+ApplicationState = Literal['applied','partial','pending','not_needed']
+
+
 class IssueAction(BaseModel):
     revision: int
     issue_ids: list[str] = Field(min_length=1,max_length=40)
     action: Literal['verify','waive','bound','bound_auto','exclude','undo','attach']
     action_id: str = Field(min_length=1,max_length=80)
     wording: str = Field(default='', max_length=3000)
+    research_limits: ResearchLimits | None = None
 
 
 SCHEMAS = {'topic': TopicsResult, 'sources': EvidenceResult, 'outline': OutlineResult,

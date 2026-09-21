@@ -78,6 +78,21 @@ def state():
     except Exception: return {}
 
 
+def ensure_dependencies(python,env,handle):
+    lock=ROOT/'requirements-lock.txt'
+    fingerprint=hashlib.sha256(lock.read_bytes()).hexdigest()
+    marker=DATA/'dependencies.sha256'
+    installed=marker.read_text('utf-8').strip() if marker.exists() else ''
+    command=[str(python),'-c','import fastapi,uvicorn,httpx,bleach,tinycss2,wewrite,pypdf,docx,playwright,bibtexparser;from backend.app import app']
+    options=dict(cwd=ROOT,env=env,stdout=handle,stderr=handle,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+    check=subprocess.run(command,**options)
+    if check.returncode or installed!=fingerprint:
+        result=subprocess.run([str(python),'-m','pip','install','-r',str(lock)],**options)
+        if result.returncode:raise RuntimeError('依赖更新未完成。请检查网络后重试；原安装标记未改变。详细记录：data/logs/setup.log')
+        if subprocess.run(command,**options).returncode:raise RuntimeError('依赖安装后自检未通过，请查看 data/logs/setup.log')
+        temporary=marker.with_suffix('.pending');temporary.write_text(fingerprint,'utf-8');temporary.replace(marker)
+
+
 def main():
     DATA.mkdir(exist_ok=True)
     # The OS releases this mutex even if setup crashes, avoiding stale lock files.
@@ -105,10 +120,7 @@ def main():
             import venv
             venv.EnvBuilder(with_pip=True).create(ROOT/'.venv')
         with log.open('a',encoding='utf-8') as handle:
-            check=subprocess.run([str(python),'-c','import fastapi,uvicorn,httpx,bleach,tinycss2,wewrite,pypdf,docx,playwright,bibtexparser;from backend.app import app'],cwd=ROOT,env=env,stdout=handle,stderr=handle,creationflags=subprocess.CREATE_NO_WINDOW)
-            if check.returncode:
-                result=subprocess.run([str(python),'-m','pip','install','-r','requirements-lock.txt'],cwd=ROOT,env=env,stdout=handle,stderr=handle,creationflags=subprocess.CREATE_NO_WINDOW)
-                if result.returncode: raise RuntimeError('首次安装依赖未完成。请检查网络后重新启动。详细记录：data/logs/setup.log')
+            ensure_dependencies(python,env,handle)
         if not (ROOT/'dist/index.html').exists(): raise RuntimeError('缺少预构建界面 dist。请重新解压完整工作台，或按开发说明构建。')
         port=None
         for candidate in range(8765,8865):

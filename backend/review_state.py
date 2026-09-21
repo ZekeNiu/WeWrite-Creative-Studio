@@ -5,7 +5,9 @@ import json
 
 def signature(a):
     from .flow_state import material_sources
-    return hashlib.sha256(json.dumps([a['content'], a['title'], a['brief'], material_sources(a)],
+    from .evidence_state import current_spans
+    decisions={k:{f:v.get(f) for f in ('handling','wording','dependency_key','application_state')} for k,v in a.get('research_decisions',{}).items()}
+    return hashlib.sha256(json.dumps([a['content'], a['title'], a['brief'], material_sources(a),current_spans(a),decisions],
                                     sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -65,7 +67,8 @@ def legacy(a, db):
     rows = db.execute("SELECT data,label FROM versions WHERE article_id=? AND label IN ('接受审核修改','拒绝审核意见') ORDER BY rowid DESC LIMIT 1", (a['id'],)).fetchall()
     if not rows:
         return a
-    before = json.loads(rows[0]['data'])
+    from .snapshots import decode
+    before = decode(rows[0]['data'])
     prior = before.get('review') or {}
     pending = [x for x in prior.get('issues', []) if x.get('status') == 'pending']
     if len(pending) != 1 or prior.get('content_revision') != review.get('content_revision'):

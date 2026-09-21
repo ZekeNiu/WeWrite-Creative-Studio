@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from . import store, rendering
 
+ARCHIVE_FORMAT = 'share-v2'
+
 
 def root():
     configured=os.environ.get('WEWRITE_STUDIO_OUTPUT')
@@ -39,16 +41,16 @@ def archive(a):
             # Missing selected images must not produce a deceptively complete snapshot.
             if any('images/'+im['filename'] not in entries for im in a['images'] if im.get('selected',True)):
                 raise ValueError('部分配图文件缺失，请重新上传或取消采用后再导出')
-            digest=hashlib.sha256(store.encode([a['revision'],sorted((k,hashlib.sha256(v).hexdigest()) for k,v in entries.items())]).encode()).hexdigest()
+            digest=hashlib.sha256(store.encode([ARCHIVE_FORMAT,a['revision'],sorted((k,hashlib.sha256(v).hexdigest()) for k,v in entries.items())]).encode()).hexdigest()
             parent=root()/'articles'/a['id'];parent.mkdir(parents=True,exist_ok=True)
             for record in parent.glob('*/manifest.json'):
                 info=json.loads(record.read_text('utf-8'))
-                if info.get('digest')==digest and all((record.parent/n).is_file() for n in [*entries,info['files']['zip']]):
+                if info.get('format')==ARCHIVE_FORMAT and info.get('digest')==digest and all((record.parent/n).is_file() for n in [*entries,info['files']['zip']]):
                     return dict(info,path=str(record.parent))
             stamp=datetime.now().strftime('%Y%m%d-%H%M%S-%f')
             base=f'{safe_title(a["title"])}_{stamp}_r{a["revision"]}'
             folder=parent/f'{stamp}_{safe_title(a["title"])}_r{a["revision"]}'
-            info=dict(article_id=a['id'],revision=a['revision'],title=a['title'],created=store.now(),digest=digest,
+            info=dict(format=ARCHIVE_FORMAT,article_id=a['id'],revision=a['revision'],title=a['title'],created=store.now(),digest=digest,
                       basename=base,files={'md':'文章.md','html':'排版.html','zip':base+'.zip'})
             with tempfile.TemporaryDirectory(prefix='.pending-',dir=parent) as temporary:
                 p=Path(temporary)
