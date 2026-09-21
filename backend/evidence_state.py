@@ -169,6 +169,7 @@ def changed(a, before):
 
 def material_view(a):
     from .flow_state import issues
+    from .source_context import POLICY_VERSION
     r=a.get('research',{});rows=issues(a)
     required=[x for x in rows if (x.get('kind')=='blocking' and x.get('status') in ('open','stale')) or x.get('application_state') in ('pending','partial')]
     boundaries=[x for x in rows if x.get('kind')=='limitation' and x.get('status') in ('open','stale') or x.get('status')=='bounded']
@@ -177,10 +178,12 @@ def material_view(a):
     legacy_ready=not r.get('policy_version') and ((bool(r) and not r.get('pending')) or (a['stages']['sources']=='done' and bool(a.get('evidence'))))
     usable=bool(claims or r.get('evidence') or legacy_ready) and not r.get('stale')
     unassessed=sum(bool(c.get('assessment_pending')) for c in claims)
+    policy_changed=bool(r.get('policy_version') and r['policy_version']!=POLICY_VERSION)
     if new: state='new_materials';message=f'{len(new)} 条新采用的材料尚未纳入判断';action='verify_new'
     elif r.get('stale'): state='changed';message='相关依据或文章目标已变化，需要更新对应判断';action='verify'
     elif required: state='gaps';message=f'{len(required)} 项建议或稿件改动待处理，可带限定继续创作';action='continue' if r.get('next_queries') and not r.get('exhausted') else 'supplement'
     elif unassessed: state='gaps';message=f'{unassessed} 项主张适用性待复核，可查找并整理资料或带限定继续创作';action='verify'
+    elif policy_changed: state='gaps';message='这份核查使用了旧证据政策，可继续创作，关键依据需要复核';action='verify'
     elif usable: state='ready';message='当前资料可进入大纲，请保留以下写作边界';action='outline'
     else: state='initial';message='先检查已有材料，再按缺口查找资料';action='collect'
     delta=r.get('delta')
@@ -200,6 +203,7 @@ def sync(a):
     a['research']['issues']=issues(a)
     view=material_view(a)
     a['research']['pending']=bool(view['required'])
-    from .research_contract import sufficient
-    a['research']['coverage_sufficient']=sufficient(a['research'].get('coverage',[])) and not a['research'].get('stale',False)
+    from .research_contract import sufficient,VERSION
+    from .source_context import POLICY_VERSION
+    a['research']['coverage_sufficient']=sufficient(a['research'].get('coverage',[])) and not a['research'].get('stale',False) and a['research'].get('policy_version')==POLICY_VERSION and a.get('research_contract',{}).get('version')==VERSION
     a['stages']['sources']='stale' if a['research'].get('stale') else 'needs_input' if view['pending'] or view['new_source_ids'] else 'done' if view['ready'] else 'idle'

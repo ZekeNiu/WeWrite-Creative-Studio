@@ -338,6 +338,8 @@ class Research:
                         if candidate_matches(full,r):
                             src=full;src['identity_verified']=True;break
                         self.update('公开副本与候选文献身份不一致或尚未确认，未采用其正文',url=fullurl,reason='identity_unverified')
+                    elif full.get('status')=='abstract_only' and src.get('status')=='metadata_only' and candidate_matches(full,r):
+                        src=full;src['identity_verified']=True
             elif r.get('provider')=='pubmed':
                 src=materials.source(r['title'],r.get('content',''),url,'search');src['status']='abstract_only' if src['text'] else 'unreadable'
             else:
@@ -358,7 +360,7 @@ class Research:
                 src['status']='abstract_only' if r.get('academic') and src['text'] else 'excerpt_only' if src['text'] else 'metadata_only'
             src.update(provider=r.get('provider',''),published_date=r.get('published_date') or src.get('published_date',''),doi=r.get('doi') or src.get('doi',''),retrieved_at=store.now())
             if src['status'] in ('retrieved','abstract_only'): store.cache_put(key,src,3600 if self.stage=='topic' else 86400)
-        src.update(research_job=self.job_id,discovery_query=r.get('query',''),evidence_spans=[],discovery_record={k:r.get(k,'') for k in ('title','url','content','provider','snippet_kind')})
+        src.update(research_job=self.job_id,discovery_query=r.get('query',''),evidence_spans=[],discovery_record={k:r.get(k,'') for k in ('title','url','discovery_url','content','provider','snippet_kind')})
         for field in ('bibliography','pmid','arxiv_id','openalex_id','related_publication_doi','fulltext_urls','discovery_channels','metadata_provenance','references','citation_paths','citation_depth'):
             if r.get(field): src[field]=r[field]
         if r.get('academic') and r.get('title'): src['title']=r['title'].removesuffix(' [开放全文]')
@@ -438,12 +440,13 @@ class Research:
                 'checks 必须包含 population/design/quantity/outcome/causality/scope，分别核对人群、研究设计、数字及分母、结局、因果强度、适用范围；'
                 '无关维度标 not_applicable，缺少判断所必需的信息标 unknown，矛盾标 mismatch；不能用模型记忆补充材料。'
                 '必须给出 basis：observed=本研究实测结果，author_interpretation=作者机制解释或推测，external_reference=转述另一研究，not_applicable=非研究来源的直接陈述。原文写了某个机制不等于本研究测量或验证了它；须结合研究设计识别，无法判断时 unassessed。'
+                'source_origin 逐条区分 primary 原始研究/原始官方记录、secondary 二手解读、background 背景资料、unassessed 未能判定。百科、机构对另一论文的介绍仍是二手来源，不能因权威域名而标原始研究；转述另一研究的结果必须 basis=external_reference。系统综述自身的综合分析是其原始结果，但其中转述单项试验仍属转引。'
                 'supported 仅限来源直接支持且无必要条件缺失；limited 必须有明确边界；contradicted 是原文否定该判断；其他为 unsupported。'
                 'question_ids 只能列确实回答了任务书核心问题的ID，背景介绍不能算回答。reason 简述可核查理由，不输出思考过程。',
                 EvidenceJudgements,self.job_id,[{k:e.get(k) for k in ('evidence_id','source_id','quote','claim','boundary','location','source_status')} for e in unknown],questions=self.questions)
             # Bind cached verdicts to both claim and exact source contents through evidence_id.
             research_contract.apply_judgements(unknown,checked['judgements'])
-            for e in unknown:self.judgement_cache[e['evidence_id']]={k:e.get(k) for k in ('support','support_reason','support_checks','support_basis','question_ids','assessment_version','quality','type','boundary')}
+            for e in unknown:self.judgement_cache[e['evidence_id']]={k:e.get(k) for k in ('support','support_reason','support_checks','support_basis','source_origin','question_ids','assessment_version','quality','type','boundary')}
         for e in spans:
             if e['evidence_id'] in self.judgement_cache:e.update(self.judgement_cache[e['evidence_id']])
         self.coverage=research_contract.coverage(self.a,self.notes,self.coverage,self.requested)
@@ -525,6 +528,19 @@ class Research:
         readable=0
         self.telemetry['phase']='retrieval'
         if rows and not selected:
+            from . import discovery_identity
+            from .source_reader import READ_BUDGET
+            budget=dict(metadata=0,max_metadata=max(0,self.cfg['max_calls']*12-self.stats['metadata_requests']),pages=0,max_pages=0)
+            token=READ_BUDGET.set(budget)
+            try:
+                normalized=[]
+                for row in rows:
+                    try:normalized.append(await discovery_identity.normalize(row))
+                    except (ValueError,TimeoutError):normalized.append(row)
+                    except Exception:normalized.append(row)
+                rows=normalized
+            finally:
+                READ_BUDGET.reset(token);self.stats['metadata_requests']+=budget['metadata']
             rows=academic.merge_records(rows)
             self.telemetry['candidates']+=len(rows);self.telemetry['phase']='selection'
             self.update('正在分批比较候选来源，优先回答尚未解决的问题')
@@ -540,6 +556,7 @@ class Research:
                 for r in batch:
                     adopted=r['url'] in order
                     self.candidates[r['url']]=dict(url=r['url'],title=r.get('title',''),channel=channel,query=query,
+                        discovery_url=r.get('discovery_url',''),identity_status=r.get('identity_status','unassessed'),
                         status='selected' if adopted else 'not_selected',reason=reasons.get(r['url']) or selection.get('reason') or '未进入本批优先阅读名单')
                 chosen += sorted([r for r in batch if r['url'] in order],key=lambda r:order[r['url']])
             if len(chosen)>8:
@@ -618,6 +635,18 @@ class Research:
         self.academic_needed=plan['academic']
         self.questions=plan['questions']
         research_contract.ensure(self.a,self.questions)
+        self.a['research_contract']['requires_primary']=self.a['research_contract'].get('requires_primary',False) or self.academic_needed
+        # Explicit identifiers are metadata lookups, before broader topical discovery.
+        for target in self.a['research_contract'].get('source_targets',[])[:8]:
+            if self.pages>=self.cfg['max_pages']:break
+            if any(research_contract.target_matches(s,target) and s.get('status')=='retrieved' for s in self.a['sources']):continue
+            self.stats['metadata_requests']+=1
+            self.update('正在精确定位用户指定文献',query=target['value'],channel='crossref' if target['kind']=='doi' else 'arxiv')
+            try:
+                rows=[await academic.lookup_doi(target['value'])] if target['kind']=='doi' else await academic.arxiv('id:'+target['value'])
+                self.query_readable=set()
+                await self.collect(rows,target['value'],rows[0].get('provider','metadata') if rows else 'metadata',selected=True)
+            except ValueError as exc:self.update('指定文献定位未完成，将继续其他渠道',query=target['value'],reason=str(exc))
         # Uploaded/adopted material is checked before spending on discovery.
         if any(x.get('selected',True) and x.get('text') for x in self.a['sources']):
             await self.assess()

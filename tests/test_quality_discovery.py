@@ -160,3 +160,57 @@ def test_arxiv_verified_pdf_matches_discovery_identity():
     src.update(arxiv_id='2307.03172v3',bibliography={'document_type':'PP'})
     assert source_reader.candidate_matches(src,dict(title='Study',arxiv_id='2307.03172v3',bibliography={'document_type':'PP'}))
     assert not source_reader.candidate_matches(src,dict(title='Study',arxiv_id='2307.03172v2',bibliography={'document_type':'PP'}))
+
+
+def test_named_doi_cannot_be_completed_by_a_secondary_description():
+    from backend import research_contract
+    from tests.quality_fixtures import assessment
+    a=store.create_article({'topic':'定位 DOI 10.1234/example，说明研究条件。'})
+    contract=research_contract.ensure(a);qid=contract['questions'][0]['id']
+    s=materials.source('An expert summary','A secondary summary mentions the requested paper.');a['sources']=[s]
+    e=dict(assessment(),source_id=s['id'],evidence_id='E1',quote=s['text'],claim='Study conditions',quality='suitable',question_ids=[qid])
+    rows=research_contract.coverage(a,dict(evidence=[e],coverage=[dict(question_id=qid,status='supported',reason='Reported in summary')]))
+    assert not research_contract.sufficient(rows) and rows[-1]['question_id'].startswith('K')
+    assert rows[-1]['status']=='unresolved'
+
+
+def test_research_question_needs_primary_support_not_repeated_transfers():
+    from backend import research_contract
+    from tests.quality_fixtures import assessment
+    a=store.create_article({'topic':'追溯原始实验，核查结论'})
+    contract=research_contract.ensure(a);contract['requires_primary']=True;qid=contract['questions'][0]['id']
+    e=dict(assessment(),source_id='S1',evidence_id='E1',quote='Secondary account.',claim='Claim',quality='limited',source_origin='secondary',support_basis='external_reference',question_ids=[qid])
+    rows=research_contract.coverage(a,dict(evidence=[e],coverage=[dict(question_id=qid,status='supported',reason='Repeated secondary account')]))
+    assert rows[0]['status']=='unresolved' and not research_contract.sufficient(rows)
+
+
+def test_metadata_candidate_keeps_real_abstract_from_failed_fulltext_path(monkeypatch):
+    from backend import browser_search
+    w=worker();w.disabled.add('crossref')
+    async def public(url):return True
+    async def fetch(url):
+        w.pages+=1
+        s=materials.source('Original work','Indexed abstract describes original results.',url,'web')
+        s.update(doi='10.1234/target',status='abstract_only');return s
+    monkeypatch.setattr(browser_search,'public_url',public);monkeypatch.setattr(w,'fetch',fetch)
+    r=dict(title='Original work',url='https://doi.org/10.1234/target',doi='10.1234/target',academic=True,provider='crossref',content='')
+    result=asyncio.run(w.read(r))
+    assert result['status']=='abstract_only' and result['text']=='Indexed abstract describes original results.'
+
+
+def test_opaque_redirect_is_identified_before_selection(monkeypatch):
+    from backend import discovery_identity,source_reader,public_network
+    real=httpx.AsyncClient;seen=[]
+    async def public(url):return True
+    def response(req):
+        seen.append(str(req.url))
+        return httpx.Response(302,headers={'location':'https://pubmed.ncbi.nlm.nih.gov/123/'}) if 'vertexaisearch' in str(req.url) else httpx.Response(403)
+    async def identify(url):
+        assert url=='https://pubmed.ncbi.nlm.nih.gov/123/'
+        return dict(title='Exact original',url=url,content='Actual indexed abstract.',doi='10.1234/original',academic=True,status='abstract_only',provider='europepmc')
+    monkeypatch.setattr(public_network,'public_url',public);monkeypatch.setattr(source_reader,'identify',identify)
+    monkeypatch.setattr(httpx,'AsyncClient',lambda **kw:real(transport=httpx.MockTransport(response),**kw))
+    row=dict(url='https://vertexaisearch.cloud.google.com/grounding-api-redirect/example',title='nih.gov',content='Model-generated paraphrase',status='excerpt_only',provider='native')
+    result=asyncio.run(discovery_identity.normalize(row))
+    assert result['doi']=='10.1234/original' and result['content']=='Actual indexed abstract.'
+    assert result['discovery_url']==row['url'] and len(seen)==2

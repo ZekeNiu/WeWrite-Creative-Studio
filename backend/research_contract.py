@@ -1,8 +1,9 @@
 """Stable reader questions and evidence coverage, independent of permission to write."""
 import copy
+import re
 from . import creative,evidence_state
 
-VERSION=1
+VERSION=2
 CHECKS=('population','design','quantity','outcome','causality','scope')
 
 
@@ -14,7 +15,7 @@ def objective(a):
 
 def ensure(a,questions=()):
     key=evidence_state.digest(objective(a));old=a.get('research_contract',{})
-    if old.get('objective_key')==key:return old
+    if old.get('objective_key')==key and old.get('version')==VERSION:return old
     intent=creative.intent(a);selected=intent.get('selected',{})
     # The user's original demand is always a question, even if the planner omits it.
     original='；'.join(str(a['brief'].get(k,'')) for k in ('topic','purpose','include') if a['brief'].get(k))
@@ -27,9 +28,25 @@ def ensure(a,questions=()):
         if text and normal not in seen:
             seen.add(normal);rows.append(dict(id='Q'+evidence_state.digest(text)[:12],text=text,required=required))
     value=dict(version=VERSION,objective_key=key,original_request=intent.get('original_request') or original,
-               reader_value=selected.get('takeaway') or selected.get('novelty',''),questions=rows[:16])
+               reader_value=selected.get('takeaway') or selected.get('novelty',''),questions=rows[:16],source_targets=source_targets(original))
     a['research_contract']=value
     return value
+
+
+def source_targets(text):
+    targets=[]
+    for match in re.finditer(r'10\.\d{4,9}/[A-Za-z0-9._;()/:-]+',text):
+        value=match[0].rstrip('.,;')
+        targets.append(dict(kind='doi',value=value.lower()))
+    for match in re.finditer(r'(?i)(?:arxiv\s*:\s*|arxiv.org/(?:abs|pdf|html)/)(\d{4}\.\d{4,5}(?:v\d+)?)',text):
+        targets.append(dict(kind='arxiv_id',value=match[1]))
+    return [dict(t,id='K'+evidence_state.digest(t)[:12]) for t in targets]
+
+
+def target_matches(source,target):
+    from .academic import identifiers,distinct_versions
+    value=re.sub(r'v\d+$','',target['value']) if target['kind']=='arxiv_id' else target['value']
+    return (target['kind'],value) in identifiers(source) and not distinct_versions(source,{target['kind']:target['value']})
 
 
 def semantic_valid(e):
@@ -58,6 +75,7 @@ def apply_judgements(spans,rows):
             support='limited';e['type']='inference'
             e['boundary']='；'.join(x for x in [e.get('boundary'), '这是作者的解释或转引，不能当作本研究直接验证的结果'] if x)
         e.update(support=support,support_basis=basis,support_reason=row.get('reason') or '独立核查未提供完整判断',
+                 source_origin=row.get('source_origin','unassessed'),
                  support_checks=checks,question_ids=row.get('question_ids',[]),assessment_version=1)
         if support=='limited' and e.get('quality')=='suitable':e['quality']='limited'
         if support in ('unsupported','contradicted'):e['quality']='insufficient'
@@ -77,11 +95,20 @@ def coverage(a,notes,previous=(),requested=()):
         v=verdicts.get(qid,{})
         spans=[e for e in notes.get('evidence',[]) if qid in e.get('question_ids',[]) and semantic_valid(e)
                and (evidence_state.assessed(e) or e.get('support')=='contradicted')]
+        if q['required'] and a.get('research_contract',{}).get('requires_primary'):
+            spans=[e for e in spans if e.get('source_origin')=='primary' and e.get('support_basis')!='external_reference']
         status=v.get('status','unresolved') if spans and v.get('reason') else 'unresolved'
         if status=='supported' and not any(e.get('support')=='supported' and evidence_state.assessed(e) for e in spans):status='limited' if any(evidence_state.assessed(e) for e in spans) else 'unresolved'
         rows.append(dict(question_id=qid,question=q['text'],required=q['required'],status=status,
             reason=v.get('reason') or '尚无能回答此问题的独立核查依据',
             evidence_ids=[e['evidence_id'] for e in spans],source_ids=list(dict.fromkeys(e['source_id'] for e in spans))))
+    for target in ensure(a).get('source_targets',[]):
+        matched=[s for s in a['sources'] if s.get('selected') and target_matches(s,target)]
+        ids={s['id'] for s in matched if s.get('status') in ('retrieved','abstract_only','user_provided')}
+        spans=[e for e in notes.get('evidence',[]) if e['source_id'] in ids and evidence_state.assessed(e)]
+        rows.append(dict(question_id=target['id'],question='指定来源：'+target['value'],required=True,status='supported' if spans else 'unresolved',
+            reason='指定文献已定位并取得可核查原文' if spans else '尚未取得指定文献的可核查依据；提及它的二手介绍不能替代原文',
+            evidence_ids=[e['evidence_id'] for e in spans],source_ids=sorted(ids)))
     return rows
 
 

@@ -267,6 +267,7 @@ class EvidenceJudgement(BaseModel):
     support: Literal['supported','limited','contradicted','unsupported']
     reason: str
     basis: Literal['observed','author_interpretation','external_reference','not_applicable','unassessed'] = 'unassessed'
+    source_origin: Literal['primary','secondary','background','unassessed'] = 'unassessed'
     question_ids: list[str] = Field(default_factory=list,max_length=16)
     checks: dict[str,Literal['matched','mismatch','unknown','not_applicable']]
 

@@ -13,6 +13,7 @@ def arguments():
     p.add_argument('--round',type=int,default=1)
     p.add_argument('--ids',default='')
     p.add_argument('--concurrency',type=int,default=2)
+    p.add_argument('--timeout',type=int,default=1200)
     return p.parse_args()
 
 
@@ -43,6 +44,7 @@ async def main(args):
     payload=args.cases.read_bytes();cases=json.loads(payload)['cases']
     manifest=dict(cases_sha256=hashlib.sha256(payload).hexdigest(),code_root=str(code),mode=args.mode,round=args.round,
                   code_sha256=hashlib.sha256(b''.join(p.read_bytes() for p in sorted((code/'backend').glob('*.py')))).hexdigest(),
+                  timeout_seconds=args.timeout,
                   search_limits={k:cfg['search'].get(k) for k in ('max_calls','max_pages','max_rounds')},
                   routes={k:dict(service_id=v.get('service_id'),model=v.get('model')) for k,v in cfg.get('routes',{}).items()})
     (output/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),'utf8')
@@ -60,7 +62,7 @@ async def main(args):
             print(json.dumps(dict(event='start',case=case['id'],mode=args.mode)),flush=True)
             result={}
             try:
-                async with asyncio.timeout(1200):pending=await w.run('')
+                async with asyncio.timeout(args.timeout):pending=await w.run('')
                 result.update(status='completed',pending=pending,found=found(case,w.a['sources']))
             except Exception as e:result.update(status='incomplete',error=type(e).__name__+': '+str(e),found=False)
             result.update(case=case['id'],seconds=round(time.monotonic()-start,1),plan=w.plan,notes=w.notes,coverage=getattr(w,'coverage',None),stats=w.stats,
