@@ -1,9 +1,11 @@
 """Task-focused excerpts; stored source text is never shortened or rewritten."""
 import re
 
-POLICY_VERSION = 12
+POLICY_VERSION = 13
 COVERAGE_COMPLETENESS_POLICY = ('reported_limits 是本轮整理报告明确披露的摘要、缺口、冲突与限制，必须与已核实证据一起交叉核对，不能在整体覆盖审查时丢弃。'
     '这些陈述及其blocking/limitation标签不是裁决，需回到用户原句判断是否关联其明确要求。'
+    'reported_limits中的自由摘要、claim及resolution不是已核实事实；rejected_evidence是未获支持的主张，不能从这些内容重新引入被否定的事实或解释。'
+    '覆盖reason只能依据evidence中已核实的判断及其边界，不得新增事实或因果链。解释因果边界时，观察性数据只能支持观察关系；必须明确哪些机制没有被直接测量或验证，不能以另一条未验证的中介机制替代原假说并称已核实。'
     '用户明确要求说明一组入选/排除条件、适用标准或条件清单时，必须核查这组条件，不能把当前摘要列出的几个示例当成完整集合；'
     '如果报告同时承认该要求的条件细则仍在未取得的正文/附录中，对应要求必须unresolved，不能以普通研究局限或额外可选问题的名义宣布已经充分。'
     '只有用户明确限定为摘要概览或局部说明时，才能按该较窄范围验收。'

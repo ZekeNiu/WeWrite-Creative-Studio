@@ -44,6 +44,17 @@ def assessed(e):
     return evaluated(e) and e.get('support') in ('supported','limited') and e.get('quality') in ('suitable','limited')
 
 
+def span_summary(spans):
+    """Summaries preserve verified wording and never silently promote rejected claims."""
+    rows=[]
+    for e in spans:
+        label=('适用性待复核' if not evaluated(e) else '缺少支持' if not assessed(e)
+               else '有限支持' if e.get('support')=='limited' or e.get('quality')=='limited' or e.get('boundary') else '已有支持')
+        row=label+'：'+e['claim']+('；边界：'+e['boundary'] if e.get('boundary') else '')
+        if row not in rows:rows.append(row)
+    return '\n'.join(rows)
+
+
 def current_spans(a):
     return [e for c in a.get('evidence',{}).get('claims',[]) if not c.get('stale') for e in c.get('evidence',[])]
 
@@ -65,7 +76,7 @@ def project(a):
             issue.update(status='open',resolution='原核实记录缺少完整的适用性评估，请复核')
     for source in a['sources']:
         source['evidence_spans']=[copy.deepcopy(e) for e in spans if e['source_id']==source['id']]
-        source['summary']='；'.join(e['claim']+('（'+e['boundary']+'）' if e.get('boundary') else '') for e in source['evidence_spans'])[:360]
+        source['summary']=span_summary(source['evidence_spans'])
     summary='\n'.join(('依据待更新' if c.get('stale') else '适用性待复核' if c.get('assessment_pending') else '有限支持' if c.get('status')=='bounded' else '缺少支持' if c.get('status')=='unsupported' else '已有支持')+'：'+c['text']+('；边界：'+c['boundary'] if c.get('boundary') else '') for c in a['evidence']['claims'])
     a['evidence']['summary']=summary
     if a.get('research'):

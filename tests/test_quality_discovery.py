@@ -133,6 +133,53 @@ def test_independent_audit_can_recover_omitted_question_label_without_auto_suppo
     assert not research_contract.sufficient(research_contract.audit_coverage(candidates,[dict(yes,evidence_ids=['invented'])],[span]))
 
 
+def test_report_summary_cannot_reintroduce_unverified_numbers_or_rejected_claims(monkeypatch):
+    from backend import evidence_state
+    from tests.quality_fixtures import notes,judgements,coverage_audit
+    w=worker()
+    source=materials.source('Original study','Events: 18 (12%). Outcome was observed. Mechanism is unknown.')
+    w.a['sources']=[source]
+    draft='The sample denominator was 150. The mechanism is proven. Requested criteria remain unread.'
+    audits=[]
+    async def structured(a,stage,instruction,schema,job_id,candidates=None,questions=()):
+        if schema.__name__=='ResearchNotes':
+            return schema.model_validate(notes(a,dict(summary=draft,evidence=[
+                dict(source_id=source['id'],quote='Events: 18 (12%).',claim='There were 18 events (12%).'),
+                dict(source_id=source['id'],quote='Mechanism is unknown.',claim='The mechanism is proven.')]))).model_dump()
+        if schema.__name__=='EvidenceJudgements':
+            response=judgements(candidates,a['research_contract'])
+            response['judgements'][1].update(support='contradicted',reason='The source explicitly says the mechanism is unknown.')
+            return response
+        if schema.__name__=='CoverageAudit':
+            audits.append(candidates[0]['reported_limits']['summary'])
+            assert len(candidates[0]['evidence'])==1
+            assert candidates[0]['evidence'][0]['claim']=='There were 18 events (12%).'
+            assert candidates[0]['rejected_evidence'][0]['claim']=='The mechanism is proven.'
+            return coverage_audit(candidates)
+        raise AssertionError(schema.__name__)
+    monkeypatch.setattr(research,'structured',structured)
+    asyncio.run(w.assess())
+    assert audits==[draft]  # Keep draft limitations available to the independent audit.
+    summary=w.notes['summary']
+    assert '150' not in summary and '18 events (12%)' in summary
+    assert '缺少支持：The mechanism is proven.' in summary
+    evidence_state.project(dict(w.a,evidence=dict(claims=evidence_state.merge_claims(w.a,w.notes['evidence']))))
+    assert '150' not in source['summary']
+    assert '缺少支持：The mechanism is proven.' in source['summary']
+
+
+def test_source_summary_preserves_complete_scope_and_pending_status():
+    from backend import evidence_state
+    from tests.quality_fixtures import assessment
+    boundary='Only the stated population; '+('observational design; '*25)+'causality was not measured.'
+    span=dict(assessment(),claim='Association observed.',quality='limited',boundary=boundary,
+              verification='quote_matched',source_type='original',adoption_reason='Direct result',use_scope='Study')
+    summary=evidence_state.span_summary([span,dict(span,claim='Old unassessed claim.',assessment_version=0)])
+    assert '有限支持：Association observed.' in summary
+    assert boundary in summary and 'causality was not measured.' in summary
+    assert '适用性待复核：Old unassessed claim.' in summary
+
+
 def test_audit_candidates_exclude_unverified_and_wrong_named_sources():
     from backend import research_contract
     from tests.quality_fixtures import assessment

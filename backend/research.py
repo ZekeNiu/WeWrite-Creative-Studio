@@ -462,7 +462,8 @@ class Research:
         self.coverage=research_contract.coverage(self.a,self.notes,self.coverage,self.requested)
         target_ids={x.get('question_id') for x in self.a.get('research',{}).get('issues',[]) if x['id'] in self.requested}-{None,''}
         audit_rows=research_contract.audit_candidates(self.a,[row for row in self.coverage if not target_ids or row['question_id'] in target_ids],spans)
-        audit_context=dict(coverage=audit_rows,evidence=spans,reported_limits={
+        audit_context=dict(coverage=audit_rows,evidence=[e for e in spans if evidence_state.assessed(e)],
+            rejected_evidence=[{k:e.get(k) for k in ('evidence_id','claim','support','support_reason')} for e in spans if not evidence_state.assessed(e)],reported_limits={
             k:copy.deepcopy(self.notes.get(k)) for k in ('summary','gaps','conflicts','issues','direction_change')})
         coverage_key=digest([self.a['research_contract'],audit_context])
         if not any(row['candidate_evidence_ids'] for row in audit_rows):self.coverage_cache[coverage_key]=[]
@@ -492,6 +493,9 @@ class Research:
             self.notes.setdefault('issues',[]).append(dict(id='material-empty',text=text,kind='blocking',claim='',source_ids=[],status='open',system_kind='no_evidence'))
         if self.notes.get('direction_change'):
             self.notes['issues'].append(dict(id='direction',text=self.notes['direction_change'],kind='blocking',source_ids=[],claim='',status='open'))
+        # The draft summary reaches the coverage audit as a possible limitation,
+        # but must not bypass independent verdicts in reports or downstream writing.
+        self.notes['summary']=evidence_state.span_summary(spans)
         # Scope and evidence are assessed together, against the retained creative intent.
         # A second, context-free scope classifier used to silently lower the article goal.
         self.notes_key=digest([context(self.a,self.stage),self.requirements,self.questions,sorted(self.requested)])
@@ -715,7 +719,7 @@ class Research:
             src.pop('_requested_sections',None)
             src['evidence_spans']=[e for e in self.notes['evidence'] if e['source_id']==src['id']]
             if src['evidence_spans']:
-                src['summary']='；'.join(e['claim']+('（'+e['boundary']+'）' if e.get('boundary') else '') for e in src['evidence_spans'])[:360]
+                src['summary']=evidence_state.span_summary(src['evidence_spans'])
         if self.policy_issue and not self.sufficient(): self.stop_code='channel_unavailable';self.stop_reason=self.policy_issue
         pending=not self.sufficient()
         if pending and (self.calls>=self.cfg['max_calls'] or self.pages>=self.cfg['max_pages']):
