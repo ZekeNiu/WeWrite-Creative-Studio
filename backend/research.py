@@ -89,25 +89,27 @@ def validate_spans(notes,sources):
     spans=[]; lookup={s['id']:s for s in sources if s['selected']}
     for e in notes['evidence']:
         s=lookup.get(e['source_id']); quote=e['quote'].strip()
-        if s and quote and quote not in s.get('text',''):
+        bibliographic=bool(s and quote and quote==(s.get('bibliography') or {}).get('title','').strip())
+        if s and quote and not bibliographic and quote not in s.get('text',''):
             # PDF extraction can retain ligatures and discretionary line-end hyphens.
             # Match only formatting equivalences, then return the actual original slice.
             text=s.get('text','');normalized,positions=pdf_match_text(text,bool(s.get('pages')))
             needle,_=pdf_match_text(quote,bool(s.get('pages')));at=normalized.find(needle) if needle else -1
             if at>=0: quote=text[positions[at]:positions[at+len(needle)-1]+1]
-        if not s or s.get('status') in ('metadata_only','unreadable','excerpt_only') or not quote or quote not in s.get('text',''):
+        if not s or s.get('status') in ('metadata_only','unreadable','excerpt_only') or not quote or (not bibliographic and quote not in s.get('text','')):
             message='未在原文中定位到证据：'+e['claim']
             kind='blocking' if e.get('core_claim') else 'limitation'
             if kind=='blocking':notes['gaps'].append(message)
             notes.setdefault('issues',[]).append(dict(text=message,kind=kind,claim=e['claim'],claim_id=e.get('claim_id',''),source_ids=[e['source_id']]))
             continue
-        offset=s['text'].index(quote)
-        page=next((p['page'] for p in s.get('pages',[]) if quote in p['text']),None)
+        offset=None if bibliographic else s['text'].index(quote)
+        page=None if bibliographic else next((p['page'] for p in s.get('pages',[]) if quote in p['text']),None)
         label={'abstract_only':'摘要','excerpt_only':'搜索片段'}.get(s.get('status'),'正文')
-        spans.append(dict(e,quote=quote,offset=offset,page=page,location=f'第 {page} 页' if page else f'{label}字符 {offset+1}',
+        spans.append(dict(e,quote=quote,offset=offset,page=page,quote_origin='bibliography' if bibliographic else 'source_text',
+                          location='书目题名（非摘要或正文）' if bibliographic else f'第 {page} 页' if page else f'{label}字符 {offset+1}',
                           verification='quote_matched',source_status=s.get('status',''),
                           support='unassessed',support_reason='',assessment_version=1,
-                          evidence_id='E'+digest([s['id'],s.get('text',''),quote,e['claim']])[:16]))
+                          evidence_id='E'+digest([s['id'],s.get('text',''),s.get('bibliography'),quote,e['claim']])[:16]))
         if e.get('quality')=='insufficient':
             message='来源不足以支持主张：'+e['claim']
             kind='blocking' if e.get('core_claim') else 'limitation'
@@ -417,7 +419,7 @@ class Research:
             '所有事项都是创作建议，不禁止用户继续。priority 为 high 或 normal。旧记录如同一主张同一核实问题重复，保留一个 id 并在 merged_ids 列出被合并 id；不同主张或人工决定不能混并。已有完整 issues 时不重复输出 gaps/conflicts。'
             '没有证据只能保留为 open 或明确解释为何属于 limitation，不能默默删除未处理的核心问题。'
             '对 bounded/waived 遵守已指定 wording，excluded 的主张本篇不使用，不再追查；不能把缺据数字改成概数。'
-            'quote 保留原文语言，不翻译、不改写、不拼接；无法定位的具体断言应删除或弱化。书目身份直接使用bibliography元数据，不把题名、作者、年份拼成正文引文，不把纯书目确认列为研究结论的evidence。'
+            'quote 保留原文语言，不翻译、不改写、不拼接；无法定位的具体断言应删除或弱化。书目身份直接使用bibliography元数据；需要确认身份时可以逐字引用bibliography.title，但claim仅描述文献身份，不能凭题名断言真实研究结果或具体样本构成；不能把题名、作者、年份拼成正文引文。'
             'source_notes 按逐源笔记保存 design/results/counterevidence/limitations/scope：每条 note 带 source_id、category 和可连续定位的原文 quote；只记录实际读到的信息，缺失不能推断为不存在。优先保留反证和限制。'
             '来源附有 sections 索引及表格/脚注/补充材料线索。若当前片段不足，read_requests 指定 source_id、section_id 和理由，最多2段定向回读；不得把未展示章节当作已读。网页按可用小节，不强套实验模板。'
             '每条 evidence 必须填写 source_type、adoption_reason、use_scope、quality，按这条主张评估来源质量；core_claim 仅在该主张为用户目的不可省略时为 true。'
@@ -442,13 +444,14 @@ class Research:
                 'checks 必须包含 population/design/quantity/outcome/causality/scope，分别核对人群、研究设计、数字及分母、结局、因果强度、适用范围；'
                 '无关维度标 not_applicable，缺少判断所必需的信息标 unknown，矛盾标 mismatch；不能用模型记忆补充材料。'
                 '必须给出 basis：observed=本研究实测结果，author_interpretation=作者机制解释或推测，external_reference=转述另一研究，not_applicable=非研究来源的直接陈述。原文写了某个机制不等于本研究测量或验证了它；须结合研究设计识别，无法判断时 unassessed。'
+                'quote_origin=bibliography 的引文只位于书目题名，不是摘要或正文。只有纯文献身份确认才 identity_only=true 且 basis=not_applicable；不能由题名证明疗效、因果或实际研究结果，含此类主张必须 unsupported，身份之外的事实需要另外引用真实摘要/正文。普通正文证据 identity_only=false。'
                 'source_origin 逐条区分 primary 原始研究/原始官方记录、secondary 二手解读、background 背景资料、unassessed 未能判定。百科、机构对另一论文的介绍仍是二手来源，不能因权威域名而标原始研究；转述另一研究的结果必须 basis=external_reference。系统综述自身的综合分析是其原始结果，但其中转述单项试验仍属转引。'
                 'supported 仅限来源直接支持且无必要条件缺失；limited 必须有明确边界；contradicted 是原文否定该判断；其他为 unsupported。'
                 'question_ids 只能列确实回答了任务书核心问题的ID，背景介绍不能算回答。reason 简述可核查理由，不输出思考过程。',
-                EvidenceJudgements,self.job_id,[{k:e.get(k) for k in ('evidence_id','source_id','quote','claim','boundary','location','source_status')} for e in unknown],questions=self.questions)
+                EvidenceJudgements,self.job_id,[{k:e.get(k) for k in ('evidence_id','source_id','quote','claim','boundary','location','source_status','quote_origin')} for e in unknown],questions=self.questions)
             # Bind cached verdicts to both claim and exact source contents through evidence_id.
             research_contract.apply_judgements(unknown,checked['judgements'])
-            for e in unknown:self.judgement_cache[e['evidence_id']]={k:e.get(k) for k in ('support','support_reason','support_checks','support_basis','source_origin','question_ids','assessment_version','quality','type','boundary')}
+            for e in unknown:self.judgement_cache[e['evidence_id']]={k:e.get(k) for k in ('support','support_reason','support_checks','support_basis','support_identity_only','source_origin','question_ids','assessment_version','quality','type','boundary')}
         for e in spans:
             if e['evidence_id'] in self.judgement_cache:e.update(self.judgement_cache[e['evidence_id']])
         self.coverage=research_contract.coverage(self.a,self.notes,self.coverage,self.requested)
@@ -465,6 +468,7 @@ class Research:
                 'limited 只用于已回答问题但研究自身存在适用限制；遗漏必需条件、尚未找到所需出处必须 unresolved。contradicted 必须有直接反证，没找到不是反证。'
                 '仅验收用户原句和明确采用方案的条件。不能把检索规划自行扩展的机制、作者、后续实验设想变成新要求；解释证据边界不等于必须找到已经证明因果的实验。'
                 'candidate_evidence_ids 是已逐条独立核实、可供判读的证据池，不表示它们都回答了这个问题。逐个问题重新核对适用性，只选择真正回答该问题的候选编号作为 evidence_ids。之前 evidence_ids 或 question_ids 漏标不代表证据不存在。'
+                'requires_source_content 只有问题纯粹要求定位或核对文献身份时才为false；要求说明研究条件、核对数字、机制或研究结论时必须true，书目题名不能替代正文或摘要中的事实。'
                 '具体说明用户原句中的哪项要求仍缺失；不能要求用户未指定的细分项目、对照实验或机制。书目身份以已核验元数据为准，不要求将题名作者拼成正文引文。',
                 CoverageAudit,self.job_id,[dict(coverage=audit_rows,evidence=spans)],questions=self.questions)
             self.coverage_cache[coverage_key]=audit['coverage']

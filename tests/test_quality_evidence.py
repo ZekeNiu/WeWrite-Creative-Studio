@@ -25,6 +25,51 @@ def test_quote_location_alone_cannot_establish_support():
     assert not evidence_state.assessed(result['evidence'][0])
 
 
+def test_exact_bibliographic_title_can_identify_a_work_without_rewriting_original():
+    title='Synthetic Review of Training Programmes'
+    s=materials.source(title,'Research question: a synthetic abstract.')
+    s.update(status='abstract_only',bibliography=dict(title=title,doi='10.1234/synthetic'))
+    raw=dict(evidence(s),quote=title,claim='论文题名为 Synthetic Review of Training Programmes。')
+    result=research.validate_spans(dict(evidence=[raw],gaps=[],issues=[]),[s])
+    e=result['evidence'][0]
+    assert e['quote_origin']=='bibliography' and e['offset'] is None and '书目' in e['location']
+    assert s['text']=='Research question: a synthetic abstract.'
+    assert not evidence_state.assessed(e)
+    verdict=dict(evidence_id=e['evidence_id'],support='supported',basis='not_applicable',identity_only=True,source_origin='primary',
+        reason='The title matches the supplied bibliographic record',checks=dict.fromkeys(research_contract.CHECKS,'not_applicable'),question_ids=[])
+    research_contract.apply_judgements([e],[verdict])
+    assert evidence_state.assessed(e)
+
+
+def test_bibliographic_quote_cannot_establish_an_experimental_result():
+    title='A Programme Prevents All Injuries'
+    s=materials.source(title,'The actual study only describes a protocol.')
+    s.update(status='abstract_only',bibliography=dict(title=title))
+    raw=dict(evidence(s),quote=title,claim='实验证明能预防所有损伤')
+    result=research.validate_spans(dict(evidence=[raw],gaps=[],issues=[]),[s]);e=result['evidence'][0]
+    verdict=dict(evidence_id=e['evidence_id'],support='supported',basis='observed',identity_only=False,source_origin='primary',
+        reason='A heading is not an experimental result',checks=dict.fromkeys(research_contract.CHECKS,'matched'),question_ids=[])
+    research_contract.apply_judgements([e],[verdict])
+    assert not evidence_state.assessed(e)
+    assert evidence_state.evaluated(e)
+
+
+def test_identity_only_evidence_cannot_complete_a_content_question():
+    span=dict(evidence_id='E1',source_id='S1',quote_origin='bibliography')
+    row=dict(question_id='Q1',required=True,status='unresolved',reason='',evidence_ids=[],candidate_evidence_ids=['E1'],source_ids=[])
+    verdict=dict(question_id='Q1',status='supported',reason='Bibliographic identity found',evidence_ids=['E1'])
+    assert not research_contract.sufficient(research_contract.audit_coverage([row],[verdict],[span]))
+    accepted=research_contract.audit_coverage([row],[dict(verdict,requires_source_content=False)],[span])
+    assert research_contract.sufficient(accepted)
+
+
+def test_unmatched_bibliographic_title_remains_a_core_gap():
+    s=materials.source('Actual title','Original abstract.')
+    s.update(status='abstract_only',bibliography=dict(title='Actual title'))
+    result=research.validate_spans(dict(evidence=[dict(evidence(s),quote='Invented title')],gaps=[],issues=[]),[s])
+    assert not result['evidence'] and result['issues'][0]['kind']=='blocking'
+
+
 def test_system_core_gap_survives_model_issue_list():
     a=store.create_article({'topic':'核心疗效'})
     notes=dict(evidence=[],issues=[dict(id='L1',text='小样本',kind='limitation',source_ids=[],status='open')],

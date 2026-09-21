@@ -270,6 +270,7 @@ class QuestionCoverage(BaseModel):
 
 class CoverageVerdict(QuestionCoverage):
     evidence_ids: list[str] = Field(default_factory=list,max_length=40)
+    requires_source_content: bool = True
 
 
 class CoverageAudit(BaseModel):
@@ -282,6 +283,7 @@ class EvidenceJudgement(BaseModel):
     reason: str
     basis: Literal['observed','author_interpretation','external_reference','not_applicable','unassessed'] = 'unassessed'
     source_origin: Literal['primary','secondary','background','unassessed'] = 'unassessed'
+    identity_only: bool = False
     question_ids: list[str] = Field(default_factory=list,max_length=16)
     checks: dict[str,Literal['matched','mismatch','unknown','not_applicable']]
 

@@ -3,7 +3,7 @@ import copy
 import re
 from . import creative,evidence_state
 
-VERSION=6
+VERSION=7
 CHECKS=('population','design','quantity','outcome','causality','scope')
 
 
@@ -70,6 +70,7 @@ def audit_coverage(rows,verdicts,spans=()):
     """A relevant span is necessary but not sufficient to answer a compound question."""
     result=copy.deepcopy(rows)
     sources={e['evidence_id']:e['source_id'] for e in spans}
+    content={e['evidence_id'] for e in spans if e.get('quote_origin')!='bibliography'}
     for row in result:
         valid=set(row.pop('candidate_evidence_ids',row['evidence_ids']))
         matches=[v for v in verdicts if v['question_id']==row['question_id']]
@@ -78,6 +79,8 @@ def audit_coverage(rows,verdicts,spans=()):
         v=matches[0];ids=v.get('evidence_ids',[])
         if v['status']=='unresolved' or not ids or set(ids)-valid:
             row.update(status='unresolved',reason=v['reason'] or '现有资料仅回答了问题的一部分');continue
+        if spans and v.get('requires_source_content',True) and not content.intersection(ids):
+            row.update(status='unresolved',reason='仅有书目身份信息，不能替代本问题要求的研究内容。');continue
         row.update(status=v['status'] if row['status']=='supported' else row['status'],reason=v['reason'],evidence_ids=ids)
         if row['status']=='unresolved':row['status']=v['status']
         if spans:row['source_ids']=list(dict.fromkeys(sources[eid] for eid in ids))
@@ -102,6 +105,7 @@ def target_matches(source,target):
 
 def semantic_valid(e):
     checks=e.get('support_checks',{})
+    if e.get('quote_origin')=='bibliography' and e.get('support')!='unsupported' and not (e.get('support_identity_only') and e.get('support_basis')=='not_applicable'):return False
     return (e.get('assessment_version')==1 and e.get('support_basis') in ('observed','author_interpretation','external_reference','not_applicable')
             and bool(e.get('support_reason')) and all(k in checks for k in CHECKS))
 
@@ -121,11 +125,13 @@ def apply_judgements(spans,rows):
         if support in ('supported','limited') and any(checks.get(k) in ('mismatch','unknown') for k in CHECKS):support='unsupported'
         if support=='limited' and not e.get('boundary'):support='unsupported'
         basis=row.get('basis','unassessed')
+        if e.get('quote_origin')=='bibliography' and not (row.get('identity_only') and basis=='not_applicable'):support='unsupported'
         if basis=='unassessed':support='unsupported'
         if basis in ('author_interpretation','external_reference') and support in ('supported','limited'):
             support='limited';e['type']='inference'
             e['boundary']='；'.join(x for x in [e.get('boundary'), '这是作者的解释或转引，不能当作本研究直接验证的结果'] if x)
         e.update(support=support,support_basis=basis,support_reason=row.get('reason') or '独立核查未提供完整判断',
+                 support_identity_only=bool(row.get('identity_only')),
                  source_origin=row.get('source_origin','unassessed'),
                  support_checks=checks,question_ids=row.get('question_ids',[]),assessment_version=1)
         if support=='limited' and e.get('quality')=='suitable':e['quality']='limited'
