@@ -176,7 +176,7 @@ def test_quality_policy_reaches_all_editorial_stages(client):
 
 
 def test_updated_policy_reuses_completed_assessment_but_not_legacy(client,model,monkeypatch):
-    from tests.quality_fixtures import judgements,notes as quality_notes
+    from tests.quality_fixtures import judgements,scope_audit,notes as quality_notes
     a=new(client);source=materials.source('原文','可定位证据。')
     a=store.save_article(a['id'],a['revision'],lambda v:v.update(sources=[source],research={'stale':False,'gaps':[],'conflicts':[]}), 'fixture')
     cfg=providers.settings();cfg['search']['enabled']=True;providers.save_settings(Settings.model_validate(cfg))
@@ -188,11 +188,12 @@ def test_updated_policy_reuses_completed_assessment_but_not_legacy(client,model,
             from tests.quality_fixtures import coverage_audit
             return coverage_audit(candidates)
         if schema.__name__=='EvidenceJudgements':return judgements(candidates,a['research_contract'])
+        if schema.__name__=='EvidenceScopeAudit':return scope_audit(candidates)
         return quality_notes(a,{'summary':'已核对','evidence':[dict(source_id=source['id'],quote=source['text'],claim='证据',quality='suitable')],'gaps':[],'conflicts':[],'followup_queries':[],'issues':[]})
     monkeypatch.setattr(research,'structured',structured)
     j=store.create_job(a['id'],{'stage':'outline'})
     a,pending=asyncio.run(research.gather(a,j['id'],'outline'))
-    assert not pending and calls==['ResearchPlan','ResearchNotes','EvidenceJudgements','CoverageAudit']
+    assert not pending and calls==['ResearchPlan','ResearchNotes','EvidenceJudgements','EvidenceScopeAudit','CoverageAudit']
     assert a['research']['policy_version']==source_context.POLICY_VERSION
     before=len(calls)
     a,pending=asyncio.run(research.gather(a,j['id'],'outline'))

@@ -11,6 +11,10 @@ def judgements(candidates,contract):
                     checks=dict.fromkeys(CHECKS,'matched'),question_ids=[q['id'] for q in contract['questions']]) for e in candidates])
 
 
+def scope_audit(candidates):
+    return dict(judgements=[dict(evidence_id=e['evidence_id'],conditions=[],scope='matched',reason='Synthetic scope comparison') for e in candidates])
+
+
 def notes(a,result):
     contract=ensure(a)
     result['coverage']=[dict(question_id=q['id'],status='supported',reason='Synthetic covered question') for q in contract['questions']]

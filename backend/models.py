@@ -299,6 +299,24 @@ class EvidenceJudgements(BaseModel):
     judgements: list[EvidenceJudgement] = Field(max_length=40)
 
 
+class EvidenceCondition(BaseModel):
+    source_condition: str
+    claim_condition: str
+    status: Literal['matched','missing','changed']
+    reason: str
+
+
+class EvidenceScopeJudgement(BaseModel):
+    evidence_id: str
+    conditions: list[EvidenceCondition]
+    scope: Literal['matched','unknown','mismatch']
+    reason: str
+
+
+class EvidenceScopeAudit(BaseModel):
+    judgements: list[EvidenceScopeJudgement] = Field(max_length=40)
+
+
 class ScopeDecision(BaseModel):
     id: str
     kind: Literal['blocking','limitation']

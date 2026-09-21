@@ -3,7 +3,7 @@ import argparse, asyncio, copy, hashlib, json, os, re, sqlite3, sys, time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-METRIC_VERSION=2
+METRIC_VERSION=3
 
 
 def arguments():
@@ -23,17 +23,28 @@ def arguments():
 def found(case,sources):
     def normal(s):return re.sub(r'[^a-z0-9]+','',s.lower())
     for s in sources:
-        meta=s.get('bibliography',{})
+        meta=s.get('bibliography') or {}
         if case.get('doi') and case['doi'].lower() in (s.get('doi','').lower(),meta.get('doi','').lower()):return True
         if case.get('arxiv') and case['arxiv'] in (s.get('arxiv_id','')+' '+s.get('url','')):return True
-        if any(u in s.get('url','') for u in case.get('urls',[])):return True
-        if normal(case['title']) in normal(s.get('title','')):return True
+        actual=urlsplit(s.get('url',''))
+        expected=[urlsplit('https://'+u) for u in case.get('urls',[])]
+        host=(actual.hostname or '').removeprefix('www.')
+        if any(host==(u.hostname or '').removeprefix('www.') and actual.path.rstrip('/')==u.path.rstrip('/') for u in expected):return True
+        # A secondary page can repeat the exact paper title. Its title alone does
+        # not establish the original publication's identity.
         # A publisher PDF may retain its filename as title. Check its own first-page
         # heading on the already accepted official host, never mentions in body/references.
-        host=(urlsplit(s.get('url','')).hostname or '').removeprefix('www.')
-        official={(urlsplit('https://'+u).hostname or '').removeprefix('www.') for u in case.get('urls',[])}
-        front=(s.get('pages') or [{}])[0].get('text','')[:500]
-        if host in official and normal(case['title']) in normal(front):return True
+        official={(u.hostname or '').removeprefix('www.') for u in expected}
+        front=(s.get('pages') or [{}])[0].get('text','')
+        heading=normal(case['title']) in normal(front[:500])
+        if not heading:continue
+        if re.search(r'\b(presented\s+by|presenter|lecture|slides)\b',front[:500],re.I):continue
+        if host in official:return True
+        # Author-hosted original PDFs may have filenames rather than title/DOI
+        # metadata. Require the heading and abstract on the same first page;
+        # a lecture cover or a bibliography mention cannot satisfy this path.
+        # This is a discovery metric; original-source review remains mandatory.
+        if normal(front).startswith(normal(case['title'])) and re.search(r'\babstract\b',front,re.I) and len(front)>1000:return True
     return False
 
 

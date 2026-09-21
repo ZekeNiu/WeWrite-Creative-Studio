@@ -81,7 +81,11 @@ def audit_coverage(rows,verdicts,spans=()):
             row.update(status='unresolved',reason=v['reason'] or '现有资料仅回答了问题的一部分');continue
         if spans and v.get('requires_source_content',True) and not content.intersection(ids):
             row.update(status='unresolved',reason='仅有书目身份信息，不能替代本问题要求的研究内容。');continue
-        row.update(status=v['status'] if row['status']=='supported' else row['status'],reason=v['reason'],evidence_ids=ids)
+        # Coverage chooses verified answers; it cannot introduce a second set of
+        # unchecked facts, numbers or causal links through its free-form reason.
+        answers=[e for e in spans if e['evidence_id'] in ids and e.get('claim')]
+        reason=evidence_state.span_summary(answers) if answers else '已取得能回答本问题的核实证据。'
+        row.update(status=v['status'] if row['status']=='supported' else row['status'],reason=reason,evidence_ids=ids)
         if row['status']=='unresolved':row['status']=v['status']
         if spans:row['source_ids']=list(dict.fromkeys(sources[eid] for eid in ids))
     return result

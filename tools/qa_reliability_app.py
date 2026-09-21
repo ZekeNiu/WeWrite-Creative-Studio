@@ -14,7 +14,7 @@ os.environ['WEWRITE_HOME']=str(Path(os.environ['WEWRITE_STUDIO_DATA'])/'wewrite'
 from backend.app import app
 from backend import store, providers, materials,source_notebook
 from backend.models import Settings
-from tests.quality_fixtures import judgements
+from tests.quality_fixtures import judgements,scope_audit
 import httpx
 
 async def deny_network(*args,**kwargs):raise RuntimeError('模拟验收不允许外部网络请求')
@@ -33,6 +33,7 @@ async def generate(s,system,prompt,emit=None):
         from tests.quality_fixtures import coverage_audit
         r=coverage_audit(value['candidates'])
     elif schema=='EvidenceJudgements':r=judgements(value['candidates'],ctx['research_contract'])
+    elif schema=='EvidenceScopeAudit':r=scope_audit(value['candidates'])
     elif schema=='ResearchNotes':
         r=dict(summary='研究支持关联；适用范围仍需保留。',evidence=[dict(source_id=x['id'],quote='研究只支持关联。',claim='研究支持关联',claim_id='C1',quality='suitable',source_type='原始资料',adoption_reason='原文明示关联',use_scope='研究人群',boundary='不能解释为因果') for x in sources if '研究只支持关联。' in x.get('text','')],issues=[dict(id='L1',text='样本有限，只适用于原研究人群。',kind='limitation',claim='适用范围',source_ids=[],status='open')],gaps=[],conflicts=[],followup_queries=[])
     elif schema=='OutlineResult':r=dict(thesis='研究支持关联',reader_question='如何理解研究',takeaway='保留适用条件',counterpoint='存在其他解释',boundary='不推断因果',sections=[dict(id='sec1',title='证据与应用',purpose='解释边界',points=['研究支持关联'],claim_ids=['C1'])])

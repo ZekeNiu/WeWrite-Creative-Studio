@@ -79,7 +79,7 @@ def test_targeted_coverage_preserves_unrelated_verified_question():
 def test_current_report_limits_reach_coverage_audit_and_invalidate_cached_verdict(monkeypatch):
     import copy
     from backend import research_contract
-    from tests.quality_fixtures import notes,judgements
+    from tests.quality_fixtures import notes,judgements,scope_audit
     w=worker();w.a['brief']['topic']='说明实验的入选和排除条件'
     source=materials.source('Original study','Criterion A is described. Detailed criteria are in the appendix.')
     w.a['sources']=[source];research_contract.ensure(w.a)
@@ -90,6 +90,7 @@ def test_current_report_limits_reach_coverage_audit_and_invalidate_cached_verdic
                 source_id=source['id'],quote='Criterion A is described.',claim='Criterion A is stated.')],
                 issues=copy.deepcopy(limits)))).model_dump()
         if schema.__name__=='EvidenceJudgements':return judgements(candidates,a['research_contract'])
+        if schema.__name__=='EvidenceScopeAudit':return scope_audit(candidates)
         if schema.__name__=='CoverageAudit':
             snapshot=copy.deepcopy(candidates[0]);audits.append(snapshot)
             missing=bool(snapshot['reported_limits']['issues'])
@@ -135,7 +136,7 @@ def test_independent_audit_can_recover_omitted_question_label_without_auto_suppo
 
 def test_report_summary_cannot_reintroduce_unverified_numbers_or_rejected_claims(monkeypatch):
     from backend import evidence_state
-    from tests.quality_fixtures import notes,judgements,coverage_audit
+    from tests.quality_fixtures import notes,judgements,coverage_audit,scope_audit
     w=worker()
     source=materials.source('Original study','Events: 18 (12%). Outcome was observed. Mechanism is unknown.')
     w.a['sources']=[source]
@@ -150,6 +151,7 @@ def test_report_summary_cannot_reintroduce_unverified_numbers_or_rejected_claims
             response=judgements(candidates,a['research_contract'])
             response['judgements'][1].update(support='contradicted',reason='The source explicitly says the mechanism is unknown.')
             return response
+        if schema.__name__=='EvidenceScopeAudit':return scope_audit(candidates)
         if schema.__name__=='CoverageAudit':
             audits.append(candidates[0]['reported_limits']['summary'])
             assert len(candidates[0]['evidence'])==1
@@ -166,6 +168,34 @@ def test_report_summary_cannot_reintroduce_unverified_numbers_or_rejected_claims
     evidence_state.project(dict(w.a,evidence=dict(claims=evidence_state.merge_claims(w.a,w.notes['evidence']))))
     assert '150' not in source['summary']
     assert '缺少支持：The mechanism is proven.' in source['summary']
+
+
+def test_condition_rejection_reaches_next_notes_and_changed_boundary_gets_new_review(monkeypatch):
+    from tests.quality_fixtures import notes,judgements,scope_audit,coverage_audit
+    w=worker();source=materials.source('Protocol','Use B only if A is unavailable.');w.a['sources']=[source]
+    feedback=[];reviewed=[];corrected=False
+    async def structured(a,stage,instruction,schema,job_id,candidates=None,questions=()):
+        if schema.__name__=='ResearchNotes':
+            feedback.append(candidates)
+            return schema.model_validate(notes(a,dict(summary='Synthetic report',evidence=[dict(source_id=source['id'],quote=source['text'],
+                claim='可使用B',boundary='仅在A不可用时' if corrected else '',core_claim=True)]))).model_dump()
+        if schema.__name__=='EvidenceJudgements':
+            reviewed.extend(e['evidence_id'] for e in candidates)
+            return judgements(candidates,a['research_contract'])
+        if schema.__name__=='EvidenceScopeAudit':
+            result=scope_audit(candidates)
+            result['judgements'][0]['conditions']=[dict(source_condition='only if A is unavailable',claim_condition='仅在A不可用时' if corrected else '',
+                status='matched' if corrected else 'missing',reason='候补条件必须保留')]
+            return result
+        if schema.__name__=='CoverageAudit':return coverage_audit(candidates)
+        raise AssertionError(schema.__name__)
+    monkeypatch.setattr(research,'structured',structured)
+    asyncio.run(w.assess())
+    assert not w.sufficient() and w.notes['evidence'][0]['support']=='unsupported'
+    corrected=True;w.requirements='保留原文限定后重新核查'
+    asyncio.run(w.assess())
+    assert w.sufficient() and len(set(reviewed))==2
+    assert feedback[0]==[] and '候补条件' in feedback[1][0]['support_reason']
 
 
 def test_source_summary_preserves_complete_scope_and_pending_status():
