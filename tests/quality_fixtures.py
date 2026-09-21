@@ -19,3 +19,7 @@ def notes(a,result):
             if not e.get(key):e[key]=value
         if e.get('quality')=='unassessed':e['quality']='suitable'
     return result
+
+
+def coverage_audit(candidates):
+    return dict(coverage=[dict(question_id=r['question_id'],status=r['status'],reason='Synthetic coverage check',evidence_ids=r['evidence_ids']) for r in candidates[0]['coverage']])

@@ -48,6 +48,9 @@ def network(monkeypatch):
         value=json.loads(prompt);kind=value['schema']['title'];ctx=value['context']
         if kind=='ResearchPlan': result={'needed':True,'queries':['exercise evidence'],'questions':['适用范围']}
         elif kind=='SearchSelection':result={'urls':[x['url'] for x in value['candidates']]}
+        elif kind=='CoverageAudit':
+            from tests.quality_fixtures import coverage_audit
+            result=coverage_audit(value['candidates'])
         elif kind=='EvidenceJudgements':result=judgements(value['candidates'],ctx['research_contract'])
         else:
             src=ctx['sources']

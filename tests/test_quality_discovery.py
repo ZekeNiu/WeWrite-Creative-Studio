@@ -12,6 +12,27 @@ def worker():
     return w
 
 
+def test_required_subquestions_are_anchored_and_do_not_drift():
+    from backend import research_contract
+    a=store.create_article(dict(topic='寻找随机试验，核对死亡分母'))
+    research_contract.anchor_requirements(a,[dict(request_quote='随机试验',question='是否为该干预的随机试验？'),dict(request_quote='不存在的要求',question='增设不相关目标')])
+    anchored=[q for q in a['research_contract']['questions'] if q.get('request_quote')]
+    assert len(anchored)==1 and anchored[0]['required']
+    research_contract.anchor_requirements(a,[dict(request_quote='死亡分母',question='改成其他要求')])
+    assert [q for q in a['research_contract']['questions'] if q.get('request_quote')]==anchored
+
+
+def test_related_evidence_cannot_complete_a_partially_answered_question():
+    from backend import research_contract
+    row=dict(question_id='Q1',question='追溯数字和原始试验',required=True,status='supported',reason='原始结果相关',evidence_ids=['E1'],source_ids=['S1'])
+    verdict=dict(question_id='Q1',status='unresolved',reason='只有同主题的另一个比例，未完成指定数字溯源',evidence_ids=['E1'])
+    result=research_contract.audit_coverage([row],[verdict])
+    assert not research_contract.sufficient(result)
+    for verdicts in ([],[verdict,verdict],[dict(verdict,status='supported',evidence_ids=['invented'])]):
+        assert not research_contract.sufficient(research_contract.audit_coverage([row],verdicts))
+    assert research_contract.sufficient(research_contract.audit_coverage([row],[dict(verdict,status='limited')]))
+
+
 def test_questions_get_turns_before_one_query_exhausts_engines(monkeypatch):
     w=worker();seen=[]
     async def channel(name,query):

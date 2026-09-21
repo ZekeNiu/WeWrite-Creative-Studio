@@ -90,6 +90,9 @@ def test_research_keeps_existing_evidence_flow_without_purpose_generation(client
         calls.append(schema.__name__)
         assert 'source_uses' not in instruction
         if schema is ResearchPlan:return ResearchPlan(needed=False,queries=[],questions=[]).model_dump()
+        if schema.__name__=='CoverageAudit':
+            from tests.quality_fixtures import coverage_audit
+            return coverage_audit(candidates)
         if schema.__name__=='EvidenceJudgements':return judgements(candidates,a['research_contract'])
         assert schema is ResearchNotes
         return quality_notes(a,ResearchNotes(summary='已核对',evidence=[dict(source_id=a['sources'][0]['id'],quote='研究只适用于给定条件。',claim='有适用范围')]).model_dump())
@@ -97,5 +100,5 @@ def test_research_keeps_existing_evidence_flow_without_purpose_generation(client
     cfg=store.get_settings();cfg['search']['enabled']=True;store.set_settings(cfg)
     j=store.create_job(a['id'],{'stage':'sources','revision':a['revision']})
     result,pending=asyncio.run(research.gather(a,j['id'],'sources'))
-    assert not pending and calls==['ResearchPlan','ResearchNotes','EvidenceJudgements']
+    assert not pending and calls==['ResearchPlan','ResearchNotes','EvidenceJudgements','CoverageAudit']
     assert result['sources'][0]['ai_use']==a['sources'][0]['ai_use'] and not result['research']['stale']

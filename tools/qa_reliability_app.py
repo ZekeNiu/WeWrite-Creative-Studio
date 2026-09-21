@@ -31,6 +31,9 @@ async def generate(s,system,prompt,emit=None):
     if schema in ('ArgumentSynthesis','FactAudit','EditedDraft'):r=editorial_reply(schema,ctx)
     elif schema=='TopicsResult':r=dict(topics=[dict(id='T'+str(i),title='模拟选题 '+str(i),angle='保留研究适用条件',reason='回答具体问题',reader_question='如何理解证据',novelty='解释范围',takeaway='不外推',source_ids=[]) for i in range(1,7)])
     elif schema=='ResearchPlan':r=dict(needed=False,academic=False,queries=[],questions=[],reason='核对用户已提供资料')
+    elif schema=='CoverageAudit':
+        from tests.quality_fixtures import coverage_audit
+        r=coverage_audit(value['candidates'])
     elif schema=='EvidenceJudgements':r=judgements(value['candidates'],ctx['research_contract'])
     elif schema=='ResearchNotes':
         r=dict(summary='研究支持关联；适用范围仍需保留。',evidence=[dict(source_id=x['id'],quote='研究只支持关联。',claim='研究支持关联',claim_id='C1',quality='suitable',source_type='原始资料',adoption_reason='原文明示关联',use_scope='研究人群',boundary='不能解释为因果') for x in sources if '研究只支持关联。' in x.get('text','')],issues=[dict(id='L1',text='样本有限，只适用于原研究人群。',kind='limitation',claim='适用范围',source_ids=[],status='open')],gaps=[],conflicts=[],followup_queries=[])
