@@ -60,7 +60,7 @@ def prompt(stage,a,request):
     src=source_context.sources(a,total=100000,per_source=18000)
     from .flow_state import issues
     notes=a.get('research',{})
-    context=dict(current_date=date.today().isoformat(),creative_intent=creative.context(a),issue_decisions=issues(a),brief=a['brief'],title=a['title'],sources=src,evidence=source_context.evidence(a),outline=a['outline'],
+    context=dict(current_date=date.today().isoformat(),creative_intent=creative.context(a),research_contract=a.get('research_contract',{}),question_coverage=notes.get('coverage',[]),issue_decisions=issues(a),brief=a['brief'],title=a['title'],sources=src,evidence=source_context.evidence(a),outline=a['outline'],
                  research={k:notes[k] for k in ('summary','gaps','conflicts') if k in notes})
     if stage in ('review','revise','visual'): context['article']=a['content']
     if stage=='revise': context['review']=a['review']

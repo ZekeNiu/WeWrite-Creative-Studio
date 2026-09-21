@@ -139,7 +139,9 @@ class Conflict(Exception):
 
 def save_article(id, expected_revision, mutate, label, invalidate=None, review_action=False,allow_trash=False):
     from . import snapshots
-    with LOCK: snapshots.prepare(DATA)
+    with LOCK:
+        snapshots.prepare(DATA)
+        snapshots.prepare(DATA,'quality-evidence-v1')
     with connection() as db:
         row=db.execute('SELECT data FROM articles WHERE id=?',(id,)).fetchone()
         if not row: raise KeyError('文章不存在')

@@ -10,20 +10,20 @@ FORMAT = 'zlib-json-v1'
 _ready = set()
 
 
-def prepare(data):
+def prepare(data,version='snapshot-v1'):
     """Called under the store lock, before opening a write transaction."""
-    key = str(data.resolve())
+    key = (str(data.resolve()),version)
     if key in _ready: return
     folder = data / 'backups'; folder.mkdir(parents=True, exist_ok=True)
-    backup = folder / 'before-snapshot-v1.sqlite'
-    marker = folder / 'snapshot-v1.json'
+    backup = folder / ('before-'+version+'.sqlite')
+    marker = folder / (version+'.json')
     try:
         if marker.exists():
             info = json.loads(marker.read_text('utf-8'))
             if hashlib.sha256(backup.read_bytes()).hexdigest() != info['sha256']:
                 raise ValueError('升级前数据库副本校验失败，请保留数据并检查备份文件')
         else:
-            temporary = folder / 'before-snapshot-v1.pending.sqlite'
+            temporary = folder / ('before-'+version+'.pending.sqlite')
             with closing(sqlite3.connect(data / 'studio.sqlite')) as source, closing(sqlite3.connect(temporary)) as target:
                 source.backup(target)
                 if target.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':

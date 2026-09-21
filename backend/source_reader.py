@@ -94,6 +94,19 @@ def matches_copy(src,identity):
     return False
 
 
+def candidate_matches(src,identity):
+    """A reader-verified work still has to match the discovery candidate."""
+    if academic.distinct_versions(src,identity):return False
+    expected=academic.normalized_doi(identity.get('doi') or identity.get('bibliography',{}).get('doi',''))
+    if expected:return matches_copy(src,dict(identity,doi=expected))
+    for key in ('arxiv_id','pmid','pmcid'):
+        want=identity.get(key) or identity.get('bibliography',{}).get(key)
+        got=src.get(key) or src.get('bibliography',{}).get(key)
+        if want and got:return str(want).lower()==str(got).lower()
+    # Title agreement can link a discovery page, but conflicting stable IDs always win.
+    return academic.same(dict(src,url=''),dict(identity,url=''))
+
+
 def xml_source(blob,identity,url):
     # ElementTree does not resolve external entities. Reject documents with entity declarations.
     if b'<!ENTITY' in blob: raise ValueError('全文 XML 包含不支持的实体声明')
@@ -136,6 +149,9 @@ async def read_work(url,hint=None):
             direct=await materials.read_url(url)
         except ValueError as exc: failure=str(exc)
     if direct and direct['status']=='retrieved':
+        expected=re.search(r'10\.\d{4,9}/[^\s?#]+',unquote(url))
+        if expected and not matches_copy(direct,dict(doi=expected[0])):
+            raise ValueError('读取内容与指定 DOI 未能核对一致，未采用为该论文全文')
         direct.update(original_url=url,read_url=direct['url'],access_scope='fulltext' if direct.get('bibliography',{}).get('document_type') in ('J','C','PP') else 'page')
         return direct
     try:

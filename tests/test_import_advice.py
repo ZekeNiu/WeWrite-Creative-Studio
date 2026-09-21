@@ -83,7 +83,7 @@ def test_no_blank_delta_and_new_sources_not_global_stale(client):
 
 def test_full_issues_do_not_duplicate_legacy_gaps(client):
     a=seeded(client)
-    notes=dict(issues=[dict(a['research']['issues'][0],text='New wording',status='open')],gaps=['Different wording of same gap'],conflicts=[],evidence=[])
+    notes=dict(issues=[dict(a['research']['issues'][0],text='New wording',status='open')],gaps=['New wording'],conflicts=[],evidence=[])
     rows=evidence_state.merge_issues(a,notes)
     assert len(rows)==2 and sum(i['id']=='Q1' for i in rows)==1
 

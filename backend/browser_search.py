@@ -123,7 +123,13 @@ async def read(url):
                 const root=roots.sort((a,b)=>b.textContent.length-a.textContent.length)[0]||document.body;
                 const copy=root.cloneNode(true);
                 copy.querySelectorAll('script,style,nav,footer,form,noscript').forEach(x=>x.remove());
-                return {title:document.title,text:copy.innerText||copy.textContent||'',url:location.href};
+                const scope=copy.cloneNode(true);
+                scope.querySelectorAll('[id*="abstract" i],.abstract,abstract').forEach(x=>x.remove());
+                const meta=n=>document.querySelector('meta[name="'+n+'"]')?.content||'';
+                return {title:document.title,text:copy.innerText||copy.textContent||'',url:location.href,
+                  headings:[...scope.querySelectorAll('h1,h2,h3,h4')].map(x=>x.textContent||''),
+                  bibliography:{title:meta('citation_title'),doi:meta('citation_doi'),venue:meta('citation_journal_title'),
+                    document_type:meta('citation_journal_title')?'J':meta('citation_conference_title')?'C':'EB'}};
             }''')
             from .materials import blocked_page
             if len(data['text'].strip())<300 or blocked_page(data['title'],data['text']):

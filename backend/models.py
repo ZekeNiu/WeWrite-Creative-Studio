@@ -193,6 +193,7 @@ class ResearchPlan(BaseModel):
 
 
 class EvidenceSpan(BaseModel):
+    question_ids: list[str] = Field(default_factory=list,max_length=12)
     claim_id: str = ''
     type: Literal['fact', 'inference', 'opinion', 'user_experience'] = 'fact'
     source_id: str
@@ -228,6 +229,26 @@ class ResearchNotes(BaseModel):
     issues: list[ResearchIssue] = Field(default_factory=list, max_length=24)
     intent: Topic | None = None
     direction_change: str = ''
+    coverage: list['QuestionCoverage'] = Field(default_factory=list,max_length=16)
+
+
+class QuestionCoverage(BaseModel):
+    question_id: str
+    status: Literal['supported','limited','contradicted','unresolved']
+    reason: str
+
+
+class EvidenceJudgement(BaseModel):
+    evidence_id: str
+    support: Literal['supported','limited','contradicted','unsupported']
+    reason: str
+    basis: Literal['observed','author_interpretation','external_reference','not_applicable','unassessed'] = 'unassessed'
+    question_ids: list[str] = Field(default_factory=list,max_length=16)
+    checks: dict[str,Literal['matched','mismatch','unknown','not_applicable']]
+
+
+class EvidenceJudgements(BaseModel):
+    judgements: list[EvidenceJudgement] = Field(default_factory=list,max_length=40)
 
 
 class ScopeDecision(BaseModel):

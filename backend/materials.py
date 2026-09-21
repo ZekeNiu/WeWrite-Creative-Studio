@@ -83,6 +83,30 @@ async def from_url(url):
     return await read(url)
 
 
+def access_status(url,text,bibliography=None,headings=(),academic_hint=False):
+    """Same conservative scholarly scope classification for static and rendered pages."""
+    b=bibliography or {};host=(urlsplit(url).hostname or '').lower();path=urlsplit(url).path
+    if host=='pubmed.ncbi.nlm.nih.gov' or (host in ('arxiv.org','www.arxiv.org') and path.startswith('/abs/')):
+        return 'abstract_only'
+    scholarly=academic_hint or b.get('document_type') in ('J','C','PP') or bool(b.get('doi')) or bool(re.search(r'10\.\d{4,9}/',url))
+    scholarly=scholarly or any(host==h or host.endswith('.'+h) for h in ('nature.com','sciencedirect.com','springer.com','bmj.com','nejm.org','sciencemag.org','science.org'))
+    if scholarly:
+        sections=' '.join(headings)
+        full=bool(re.search(r'\b(methods?|methodology|results?|discussion|conclusions?)\b|方法|结果|讨论|结论',sections,re.I))
+        if not full or len(text)<4000:return 'abstract_only'
+    return 'retrieved'
+
+
+def from_dynamic(data,academic_hint=False):
+    text=data['text'][:200000];meta=data.get('bibliography') or {}
+    if blocked_page(data['title'],text) or len(text.strip())<300:raise ValueError('网页需要验证或未取得正文')
+    s=source(data['title'],text,data['url'],'web')
+    s.update(bibliography=meta,doi=meta.get('doi',''),
+             status=access_status(data['url'],text,meta,data.get('headings',[]),academic_hint))
+    s['access_scope']='abstract' if s['status']=='abstract_only' else 'page'
+    return s
+
+
 async def read_url(url):
     try: blob,final=await fetch_bytes(url)
     except httpx.HTTPError: raise ValueError('网页读取失败，可改为粘贴正文或上传文件') from None
@@ -113,13 +137,10 @@ async def read_url(url):
     if not bib['doi'] and len(body.select('a'))>30 and len(body.select('a'))>len(body.select('p'))*3:
         result['status']='metadata_only'
     # A bibliographic landing page is not the full research paper.
-    host=(urlsplit(final).hostname or '').lower()
-    if host=='pubmed.ncbi.nlm.nih.gov' or (host in ('arxiv.org','www.arxiv.org') and urlsplit(final).path.startswith('/abs/')):
-        result['status']='abstract_only'
-    elif bib['document_type'] in ('J','C','PP'):
-        headings=' '.join(h.get_text(' ',strip=True).lower() for h in body.select('h1,h2,h3,h4'))
-        full_sections=any(k in headings for k in ('methods','methodology','results','discussion','conclusion','方法','结果','讨论','结论'))
-        if not full_sections or len(text)<4000: result['status']='abstract_only'
+    if result['status']!='metadata_only':
+        scope=BeautifulSoup(str(body),'html.parser')
+        for abstract in scope.select('[id*="abstract" i],.abstract,abstract'):abstract.decompose()
+        result['status']=access_status(final,text,bib,[h.get_text(' ',strip=True) for h in scope.select('h1,h2,h3,h4')])
     result['doi']=citation_doi.get('content','') if citation_doi else ''
     result['published_date']=published.get('content','') if published else ''
     result['bibliography']=bib

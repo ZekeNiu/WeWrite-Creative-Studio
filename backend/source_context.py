@@ -1,7 +1,7 @@
 """Task-focused excerpts; stored source text is never shortened or rewritten."""
 import re
 
-POLICY_VERSION = 4
+POLICY_VERSION = 5
 POLICY = '''按具体主张判断来源是否适用，不能仅凭域名、论文身份或用户上传就认定可靠。
 待处理建议不阻止创作，但不能因此视为已核实。对 open/stale 或缺少支持的具体数字、机制断言，限定或省略；不要自动联网或将假设写成事实。遵守 bounded 的实际限定说法和 excluded 的弃用决定。保留文章的问题价值，核心方向无法成立时明确原因，不静默改题。
 科研和健康结论优先原始研究、系统综述、专业书籍和权威机构资料；技术实践和产品能力优先官方文档、原始研究、有明确作者与可核对依据的专业博客。

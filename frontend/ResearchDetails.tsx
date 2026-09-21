@@ -6,6 +6,7 @@ import {Pager,readView,remember} from './MaterialList';
 
 const STATUS:Record<string,string>={needs_input:'待处理',completed:'已完成',failed:'未完成',cancelled:'已停止',interrupted:'运行中断',conflict:'内容已变化，需重新开始',queued:'等待执行',running:'进行中'};
 const APPLICATION={applied:'正文／大纲已更新',partial:'部分已更新，仍有位置待处理',pending:'约束已保存，现有稿件仍待处理',not_needed:'约束已保存，目前没有稿件需要修改'};
+const COVERAGE:Record<string,string>={supported:'已有支持',limited:'有限支持',contradicted:'发现反证',unresolved:'尚未解决'};
 function category(x:ResearchIssue){if(x.application_state==='partial'||x.application_state==='pending')return 'pending';if(['open','stale'].includes(x.status))return x.kind==='limitation'?'boundaries':'pending';return 'handled'}
 function Activity({r}:{r:any}){
  const s:ResearchStats|undefined=r.stats;
@@ -23,7 +24,9 @@ export default function ResearchDetails({a,busy,act,update,onJob,run,onSupply,fo
  const filtered=rows.filter(x=>category(x)===view.filter),page=Math.min(view.page,Math.max(1,Math.ceil(filtered.length/10))),visible=filtered.slice((page-1)*10,page*10);
  const eligible=visible.filter(x=>['open','stale'].includes(x.status)&&x.kind==='blocking').map(x=>x.id);
  const action=(kind:string,ids:string[])=>{if(lock.current||busy)return;if(kind==='attach'){onSupply(ids);return}lock.current=true;void act(async()=>{const current=await prepare();const result=await api<{article:Article;job:Job|null}>(`/articles/${a.id}/research/issues/actions`,'POST',{revision:current.revision,issue_ids:ids,action:kind==='bound'?'bound_auto':kind,action_id:crypto.randomUUID(),research_limits:current.research_limits});update(result.article);if(result.job)onJob(result.job)}).finally(()=>{lock.current=false})};
- return <div className="research-details" ref={root}>{rows.length>0&&<>
+ return <div className="research-details" ref={root}>
+ {r.coverage?.length?<section className="service-card" aria-label="核心问题覆盖"><h4>核心问题与依据</h4><p role="status">{r.stale?'文章目标或依据已变化，以下是历史核对结果':r.coverage_sufficient?'各核心问题已有可定位依据，请保留反证和适用条件':'部分核心问题尚未解决；你仍可继续创作，但不能将它们视为已核实'}</p>{r.coverage.map(q=><details key={q.question_id}><summary>{q.required?'核心':'补充'} · {COVERAGE[q.status]||'待复核'} · {q.question}</summary><p>{q.reason}</p>{q.source_ids.map(id=><button className="text-button" key={id} onClick={()=>onInspect(id)}>{a.sources.find(s=>s.id===id)?.title||'来源已删除'}</button>)}</details>)}</section>:<p className="muted">这份记录尚无逐问题独立核查结果；继续创作不等于所有主张已核实。</p>}
+ {rows.length>0&&<>
   <div className="row between"><h4>创作建议</h4><span className="muted">建议不阻止创作；研究局限作为写作条件保留</span></div>
   <div className="material-toolbar wrap">{[['pending','待处理'],['handled','已处理'],['boundaries','写作边界']].map(([id,label])=><button key={id} className={'button '+(view.filter===id?'secondary':'ghost')} aria-pressed={view.filter===id} onClick={()=>change({filter:id,page:1})}>{label} · {rows.filter(x=>category(x)===id).length}</button>)}</div>
   {view.filter==='pending'&&eligible.length>0&&<div className="material-toolbar wrap"><label><input type="checkbox" aria-label="全选当前页待处理项" disabled={busy} checked={eligible.every(id=>selected.includes(id))} onChange={e=>setSelected(e.target.checked?eligible:[])}/>全选当前页待核实项</label><span className="muted">已选 {selected.length} 项</span><button className="button secondary" disabled={busy||!selected.length} onClick={()=>action('verify',selected)}>核实所选问题（{selected.length}）</button><button className="text-button" disabled={busy||!selected.length||r.stale} onClick={()=>action('exclude',selected)}>本篇不使用所选主张（{selected.length}）</button></div>}

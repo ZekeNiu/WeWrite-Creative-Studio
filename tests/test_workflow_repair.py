@@ -108,6 +108,8 @@ def test_selective_verification_cannot_silently_drop_other_blockers(client):
     assert not w.sufficient()  # No located original evidence.
     w.notes['issues'][0]['claim']='范围已明确'
     w.notes['evidence']=[{'source_id':'S1','claim':'范围已明确','quality':'suitable','verification':'quote_matched','source_type':'original','adoption_reason':'direct','use_scope':'study'}]
+    from tests.quality_fixtures import assessment
+    w.notes['evidence'][0].update(assessment())
     assert w.sufficient()
 
 
@@ -165,6 +167,8 @@ def test_scope_and_evidence_share_intent_without_second_classifier(client,monkey
     w.notes={'summary':'资料已读','gaps':[],'conflicts':[],
         'evidence':[{'source_id':'S1','claim':'核对来源有帮助'}],
         'issues':[dict(id='L1',text='没有核对顺序最优的研究',kind='limitation',status='open',source_ids=[],claim='')]}
+    assert not w.sufficient()  # A background claim alone no longer establishes coverage.
+    w.coverage=[dict(question_id='Q1',required=True,status='supported',evidence_ids=['E1'])]
     assert w.sufficient() and w.issues()[0]['status']=='open'
     w.notes['evidence']=[];w.notes['gaps']=['没有任何可定位依据']
     assert not w.sufficient()

@@ -11,11 +11,12 @@ from backend import store, creative, rendering, materials, providers, security, 
 from backend.models import Settings, EvidenceSpan
 from tests.test_studio import client, new, patch, H, wait
 from tests.test_creative_flow import seeded
+from tests.quality_fixtures import assessment
 
 
 def span(cid='C1', sid='S1', quote='Original evidence 1'):
     return dict(claim_id=cid,source_id=sid,quote=quote,claim='主张'+cid[1:],quality='suitable',
-                source_type='original',adoption_reason='Direct evidence',use_scope='Studied group',verification='quote_matched',boundary='')
+                source_type='original',adoption_reason='Direct evidence',use_scope='Studied group',verification='quote_matched',boundary='',**assessment())
 
 
 def test_restore_removes_future_fields_and_rejects_active_job(client):

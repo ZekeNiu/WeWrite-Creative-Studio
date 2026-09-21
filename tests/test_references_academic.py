@@ -131,6 +131,9 @@ def test_source_upgrade_and_excluded_doi_are_safe(client,network,monkeypatch):
     a['sources']=[old];a['content']='引用[Sold]';j=store.create_job(a['id'],{'stage':'research'})
     w=research.Research(a,j['id'],'sources')
     r=source('Snew');r.update(doi='10.1000/paper',url='https://example.org/full',provider='openalex',academic=True,content='摘要',fulltext_urls=['https://example.org/full'])
+    async def verified_copy(url):
+        return dict(materials.source('Verified study','Verified study findings.',url,'web'),doi='10.1000/paper')
+    monkeypatch.setattr(materials,'from_url',verified_copy)
     out=asyncio.run(w.read(r))
     assert out['id']=='Sold' and a['sources'][0]['status']=='retrieved'
     assert bib.citations(a['content'],a['sources'])[1][0]['id']=='Sold'
@@ -152,7 +155,7 @@ def test_citation_version_restore(client):
 def test_metadata_cannot_be_evidence():
     s=source('Sa');s['status']='metadata_only'
     n=research.validate_spans({'evidence':[{'source_id':'Sa','quote':'Verified study findings.','claim':'a claim'}],'gaps':[]},[s])
-    assert not n['evidence'] and n['gaps']
+    assert not n['evidence'] and n['issues']
 
 
 def test_model_preface_single_valid_json(client,network,monkeypatch):
@@ -178,4 +181,4 @@ def test_pdf_ligatures_and_linebreaks_recover_original_quote():
     n=research.validate_spans({'evidence':[{'source_id':'Sa','quote':'We explore a fine-tuning method with memory and evidence.','claim':'method'}],'gaps':[]},[s])
     assert n['evidence'][0]['quote']==text and n['evidence'][0]['page']==1
     n=research.validate_spans({'evidence':[{'source_id':'Sa','quote':'We explore a wrong method with memory and evidence.','claim':'wrong'}],'gaps':[]},[s])
-    assert not n['evidence'] and n['gaps']
+    assert not n['evidence'] and n['issues']

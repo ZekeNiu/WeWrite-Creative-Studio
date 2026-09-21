@@ -91,6 +91,9 @@ def cancel(id):
 
 
 async def call(job_id,stage,a,request):
+    if stage=='sources' and a.get('research',{}).get('analysis_signature')==research.analysis_signature() and a.get('evidence',{}).get('claims'):
+        # Research already owns verified claim/evidence pairs. A second summary must not replace them.
+        return dict(a['evidence'],intent=None,direction_change=a.get('creative_intent',{}).get('direction_change',''))
     store.update_job(job_id,current_step='generation',generation_revision=a['revision'],message='正在生成'+LABELS.get(stage,'当前环节'))
     s=providers.service_for(stage); text=''; last=0
     async def emit(delta):

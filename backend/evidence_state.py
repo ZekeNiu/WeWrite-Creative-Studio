@@ -33,13 +33,15 @@ def normal(text):
 
 
 def evaluated(e):
-    return (e.get('quality') in ('suitable','limited','insufficient') and e.get('verification')=='quote_matched' and
+    from .research_contract import semantic_valid
+    return (semantic_valid(e) and e.get('support') in ('supported','limited','contradicted','unsupported') and
+            e.get('quality') in ('suitable','limited','insufficient') and e.get('verification')=='quote_matched' and
             all(str(e.get(k,'')).strip() for k in ('source_type','adoption_reason','use_scope')) and
             (e.get('quality')!='limited' or bool(e.get('boundary','').strip())))
 
 
 def assessed(e):
-    return evaluated(e) and e.get('quality') in ('suitable','limited')
+    return evaluated(e) and e.get('support') in ('supported','limited') and e.get('quality') in ('suitable','limited')
 
 
 def current_spans(a):
@@ -102,8 +104,8 @@ def merge_issues(a, notes, requested=()):
              (item.get('claim') and normal(item['claim'])==normal(e['claim'])))]
         supported=bool(evidence) and bool(item.get('resolution'))
         item.update(id=iid,status='resolved' if item.get('status')=='resolved' and supported else 'open')
-        rows[iid]=item;seen.add(item['text'])
-    for kind,key in ([] if notes.get('issues') else [('blocking','gaps'),('limitation','conflicts')]):
+        rows[iid]={**lookup.get(iid,{}),**item};seen.add(item['text'])
+    for kind,key in [('blocking','gaps'),('limitation','conflicts')]:
         for text in notes.get(key,[]):
             if text in seen or any(normal(x['text'])==normal(text) for x in rows.values()): continue
             iid=issue_id(text);rows[iid]=dict(id=iid,text=text,kind=kind,status='open',source_ids=[],claim='')
@@ -198,4 +200,6 @@ def sync(a):
     a['research']['issues']=issues(a)
     view=material_view(a)
     a['research']['pending']=bool(view['required'])
+    from .research_contract import sufficient
+    a['research']['coverage_sufficient']=sufficient(a['research'].get('coverage',[])) and not a['research'].get('stale',False)
     a['stages']['sources']='stale' if a['research'].get('stale') else 'needs_input' if view['pending'] or view['new_source_ids'] else 'done' if view['ready'] else 'idle'

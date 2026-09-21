@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from backend.app import app
 from backend import store,providers,research,materials,search_tools,browser_search
 from backend.models import Settings,JobRequest
+from tests.quality_fixtures import judgements,notes as quality_notes
 
 H={'X-Studio-Request':'1'}
 
@@ -47,10 +48,14 @@ def network(monkeypatch):
         value=json.loads(prompt);kind=value['schema']['title'];ctx=value['context']
         if kind=='ResearchPlan': result={'needed':True,'queries':['exercise evidence'],'questions':['适用范围']}
         elif kind=='SearchSelection':result={'urls':[x['url'] for x in value['candidates']]}
+        elif kind=='EvidenceJudgements':result=judgements(value['candidates'],ctx['research_contract'])
         else:
             src=ctx['sources']
             result={'summary':'已核对适用条件','evidence':[{'source_id':src[0]['id'],'quote':'研究只适用于给定条件。','claim':'只能在研究范围内解释','boundary':'不能扩大因果'}] if src else [],
                     'gaps':[] if src else ['没有可用依据'],'conflicts':[],'followup_queries':[]}
+        if kind=='ResearchNotes':
+            result['coverage']=[dict(question_id=q['id'],status='supported',reason='Synthetic covered question') for q in ctx['research_contract']['questions']]
+            for e in result['evidence']:e.update(source_type='original',adoption_reason='Synthetic direct evidence',use_scope='Study',quality='limited')
         return json.dumps(result,ensure_ascii=False),{'model':s['model'],'service':s['name'],'estimated_cost':None,'status':'completed'}
     from backend import public_network
     monkeypatch.setattr(public_network,'public_url',allowed)
@@ -174,7 +179,7 @@ def test_limits_and_cancel_preserve_original(client,network,monkeypatch):
 def test_spans_cannot_invent_quote_or_pdf_page():
     src=materials.source('论文','证据片段。',pages=[{'page':3,'text':'证据片段。'}])
     notes={'evidence':[{'source_id':src['id'],'quote':'证据片段。','claim':'研究发现'},{'source_id':src['id'],'quote':'编造数字','claim':'夸张结果'}],'gaps':[]}
-    out=research.validate_spans(notes,[src]);assert len(out['evidence'])==1 and out['evidence'][0]['page']==3 and out['gaps']
+    out=research.validate_spans(notes,[src]);assert len(out['evidence'])==1 and out['evidence'][0]['page']==3 and out['issues']
 
 
 def test_pubmed_parses_abstract_as_abstract(monkeypatch):
