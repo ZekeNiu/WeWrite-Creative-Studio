@@ -452,8 +452,10 @@ class Research:
         for e in spans:
             if e['evidence_id'] in self.judgement_cache:e.update(self.judgement_cache[e['evidence_id']])
         self.coverage=research_contract.coverage(self.a,self.notes,self.coverage,self.requested)
-        coverage_key=digest([self.a['research_contract'],self.coverage,spans])
-        if not any(row['evidence_ids'] for row in self.coverage):self.coverage_cache[coverage_key]=[]
+        target_ids={x.get('question_id') for x in self.a.get('research',{}).get('issues',[]) if x['id'] in self.requested}-{None,''}
+        audit_rows=[row for row in self.coverage if not target_ids or row['question_id'] in target_ids]
+        coverage_key=digest([self.a['research_contract'],audit_rows,spans])
+        if not any(row['evidence_ids'] for row in audit_rows):self.coverage_cache[coverage_key]=[]
         if coverage_key not in self.coverage_cache:
             self.update('正在独立核对各项必需条件是否真正得到回答')
             audit=await structured(self.a,self.stage,
@@ -461,10 +463,12 @@ class Research:
                 '与问题相关、回答其中一部分、若干背景材料拼在一起，均不代表充分覆盖。用户指定研究设计、场景、人群、时间、原始出处或数字时，必须全部对应；不同研究不能拼成一项并不存在的研究。'
                 '例如要求某干预的随机试验，机制综述加另一干预的随机试验不能替代。要求溯源一个数字，找到同主题的另一个比例不能算完成溯源。'
                 'limited 只用于已回答问题但研究自身存在适用限制；遗漏必需条件、尚未找到所需出处必须 unresolved。contradicted 必须有直接反证，没找到不是反证。'
+                '仅验收用户原句和明确采用方案的条件。不能把检索规划自行扩展的机制、作者、后续实验设想变成新要求；解释证据边界不等于必须找到已经证明因果的实验。'
                 '只能选择该 coverage 已列出的 evidence_ids，具体说明哪项要求仍缺失；书目身份以已核验元数据为准，不要求将题名作者拼成正文引文。',
-                CoverageAudit,self.job_id,[dict(coverage=self.coverage,evidence=spans)],questions=self.questions)
+                CoverageAudit,self.job_id,[dict(coverage=audit_rows,evidence=spans)],questions=self.questions)
             self.coverage_cache[coverage_key]=audit['coverage']
-        self.coverage=research_contract.audit_coverage(self.coverage,self.coverage_cache[coverage_key])
+        audited={row['question_id']:row for row in research_contract.audit_coverage(audit_rows,self.coverage_cache[coverage_key])}
+        self.coverage=[audited.get(row['question_id'],row) for row in self.coverage]
         self.notes.setdefault('issues',[]).extend(research_contract.issues(self.coverage))
         for e in spans:
             if not evidence_state.assessed(e):
