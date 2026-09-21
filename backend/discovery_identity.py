@@ -1,8 +1,21 @@
 """Resolve opaque search redirects before selecting and identifying a source."""
 from urllib.parse import urlsplit,urljoin
+import asyncio
 import hashlib
 import httpx
 from . import public_network,store,source_reader,academic
+
+
+async def normalize_many(rows):
+    """Independent metadata lookups share the request budget, with bounded concurrency."""
+    semaphore=asyncio.Semaphore(4)
+    async def resolve(row):
+        async with semaphore:
+            try:
+                async with asyncio.timeout(45):return await normalize(row)
+            except TimeoutError:return dict(row,identity_status='timeout',identity_error='文献身份查询超时，保留候选供其他路径读取')
+            except Exception:return dict(row,identity_status='unresolved',identity_error='文献身份暂未确认，保留候选供其他路径读取')
+    return await asyncio.gather(*(resolve(row) for row in rows))
 
 
 async def normalize(row):
