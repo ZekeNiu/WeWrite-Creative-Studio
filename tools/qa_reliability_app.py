@@ -49,6 +49,7 @@ async def generate(s,system,prompt,emit=None):
         r=dict(decisions=[dict(issue_id=q['id'],wording='本篇不采用确定因果结论' if excluded else '研究仅支持关联',explanation='模拟局部修改',edits=[dict(target='content',original='训练必定有效。[S1]',replacement='' if excluded else '研究只支持关联。[S1]')]) for q in selected])
     elif schema=='EvidenceResult':r=dict(summary='模拟资料',claims=[],gaps=[])
     else:r='## 证据与应用\n\n模拟验收样稿：研究只支持关联。'+('['+sources[0]['id']+']' if sources else '')+'\n\n解释应限于研究中的人群和条件。'
+    if schema=='EditedDraft':r['content']+='\n\n## 理解边界\n\n先辨清证据能够回答什么，再决定如何应用。'
     if schema=='ResearchNotes':r['coverage']=[dict(question_id=q['id'],status='supported',reason='模拟已核对问题') for q in ctx['research_contract']['questions']]
     raw=json.dumps(r,ensure_ascii=False) if isinstance(r,dict) else r
     if emit:await emit(raw)

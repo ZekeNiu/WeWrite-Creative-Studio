@@ -69,10 +69,12 @@ async def main():
         await candidate.locator('summary').first.click()
         await candidate.get_by_text('逐段查看差异',exact=True).click()
         await expect(candidate.get_by_text('未改变的段落',exact=True)).to_be_visible()
+        await expect(candidate.get_by_text('修改后',exact=True)).to_be_visible()
+        await page.screenshot(path=str(OUT/'whole-draft-candidate.png'),full_page=True)
         before=(await article())['content']
         await candidate.get_by_role('button',name='采用整体编辑稿',exact=True).click()
         await wait_article(lambda a:any(x['kind']=='edited' for x in a.get('draft_versions',[])))
-        assert (await article())['content']==before
+        assert (await article())['content']!=before and '## 理解边界' in (await article())['content']
         await page.get_by_role('button',name='记录人工定稿',exact=True).click()
         final=await wait_article(lambda a:any(x['kind']=='human_final' for x in a.get('draft_versions',[])))
         assert final['draft_versions'][-1]['human_edit_base']==''

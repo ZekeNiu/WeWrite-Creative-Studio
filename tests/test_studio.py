@@ -61,7 +61,7 @@ def model(monkeypatch,client):
         if schema in ('ArgumentSynthesis','FactAudit','EditedDraft'):result=editorial_reply(schema,context)
         elif schema=='TopicsResult': result={'topics':[{'title':f'可靠的选题 {i+1}','angle':'从证据边界出发','reason':'明确回答读者的问题','source_ids':ids[:1]} for i in range(10)]}
         elif schema=='EvidenceResult': result={'summary':'只采用给定材料','claims':[{'id':'C1','text':'研究仅能支持限定条件下的结论','type':'fact','source_ids':ids[:1],'status':'supported','boundary':'不能扩大因果解释'}],'gaps':[]}
-        elif schema=='OutlineResult': result={'thesis':'证据需要结合条件理解','reader_question':'如何理解研究结论','takeaway':'先看条件再做判断','counterpoint':'仍有其他解释','boundary':'仅适用于研究范围','sections':[{'id':'sec1','title':'先看证据','purpose':'交代事实','points':['说明条件'],'claim_ids':['C1']},{'id':'sec2','title':'再看应用','purpose':'划定边界','points':['不夸大结论'],'claim_ids':['C1']}]}
+        elif schema=='OutlineResult': result={'thesis':'证据需要结合条件理解','reader_question':'如何理解研究结论','takeaway':'先看条件再做判断','counterpoint':'仍有其他解释','boundary':'仅适用于研究范围','sections':[{'id':'sec1','title':'先看证据','purpose':'交代事实','points':['说明条件'],'claim_ids':[c['id'] for c in context.get('evidence',{}).get('claims',[])][:1]},{'id':'sec2','title':'再看应用','purpose':'划定边界','points':['不夸大结论'],'claim_ids':[c['id'] for c in context.get('evidence',{}).get('claims',[])][:1]}]}
         elif schema=='ReviewResult': result={'decision':'pass','summary':'所给资料内未发现明显矛盾，请人工核对','issues':[],'dimensions':SCORES,'digest':'阅读研究，先看证据与边界','title':'理解证据的边界','tags':['研究']}
         elif schema=='RevisionResult': result={'replacement':'只在这些条件下，才能得出这个判断。','explanation':'补充适用条件'}
         elif schema=='VisualResult': result={'images':[{'id':'cover','role':'cover','prompt':'绿色植物，简洁插画','caption':'示意图'}]}
