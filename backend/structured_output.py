@@ -41,6 +41,32 @@ def restore_array_openings(raw,schema):
     return raw
 
 
+def restore_closing_delimiters(raw):
+    """Correct mismatched closing types only in a complete, balanced structure.
+
+    String content is skipped verbatim; nothing is inserted or removed. An open
+    container or unfinished string rejects the whole repair, including partial
+    changes already discovered. Strict JSON and schema validation still follow.
+    """
+    decoder=json.JSONDecoder();stack=[];changes=[];position=0
+    while position<len(raw):
+        char=raw[position]
+        if char=='"':
+            try:_,length=decoder.raw_decode(raw[position:])
+            except ValueError:return raw
+            position+=length;continue
+        if char in '{[':stack.append(char)
+        elif char in '}]':
+            if not stack:return raw
+            expected='}' if stack.pop()=='{' else ']'
+            if char!=expected:changes.append((position,expected))
+        position+=1
+    if stack or not changes or len(changes)>16:return raw
+    result=list(raw)
+    for position,char in changes:result[position]=char
+    return ''.join(result)
+
+
 def parse(raw,schema,_restored=False):
     decoder=json.JSONDecoder();position=0;candidates=[]
     while position<len(raw):
@@ -54,7 +80,7 @@ def parse(raw,schema,_restored=False):
         try: candidates.append(schema.model_validate(value).model_dump())
         except ValueError: continue
     if not candidates and not _restored:
-        restored=restore_array_openings(raw,schema)
+        restored=restore_closing_delimiters(restore_array_openings(raw,schema))
         if restored!=raw:return parse(restored,schema,True)
     if len(candidates)!=1: raise ValueError('需要唯一、完整且符合约定的 JSON 结果')
     return candidates[0]
