@@ -15,6 +15,7 @@ from backend.app import app
 from backend import store, providers, materials,source_notebook
 from backend.models import Settings
 from tests.quality_fixtures import judgements
+from tests.editorial_fixtures import reply as editorial_reply,SCORES
 import httpx
 
 async def deny_network(*args,**kwargs):raise RuntimeError('模拟验收不允许外部网络请求')
@@ -27,13 +28,14 @@ async def generate(s,system,prompt,emit=None):
     await asyncio.sleep(.15)
     value=json.loads(prompt);schema=value.get('schema',{}).get('title')
     ctx=value.get('context') or value.get('资料与当前内容',{});sources=ctx.get('sources',[])
-    if schema=='TopicsResult':r=dict(topics=[dict(id='T'+str(i),title='模拟选题 '+str(i),angle='保留研究适用条件',reason='回答具体问题',reader_question='如何理解证据',novelty='解释范围',takeaway='不外推',source_ids=[]) for i in range(1,7)])
+    if schema in ('ArgumentSynthesis','FactAudit','EditedDraft'):r=editorial_reply(schema,ctx)
+    elif schema=='TopicsResult':r=dict(topics=[dict(id='T'+str(i),title='模拟选题 '+str(i),angle='保留研究适用条件',reason='回答具体问题',reader_question='如何理解证据',novelty='解释范围',takeaway='不外推',source_ids=[]) for i in range(1,7)])
     elif schema=='ResearchPlan':r=dict(needed=False,academic=False,queries=[],questions=[],reason='核对用户已提供资料')
     elif schema=='EvidenceJudgements':r=judgements(value['candidates'],ctx['research_contract'])
     elif schema=='ResearchNotes':
         r=dict(summary='研究支持关联；适用范围仍需保留。',evidence=[dict(source_id=x['id'],quote='研究只支持关联。',claim='研究支持关联',claim_id='C1',quality='suitable',source_type='原始资料',adoption_reason='原文明示关联',use_scope='研究人群',boundary='不能解释为因果') for x in sources if '研究只支持关联。' in x.get('text','')],issues=[dict(id='L1',text='样本有限，只适用于原研究人群。',kind='limitation',claim='适用范围',source_ids=[],status='open')],gaps=[],conflicts=[],followup_queries=[])
-    elif schema=='OutlineResult':r=dict(thesis='研究支持关联',reader_question='如何理解研究',takeaway='保留适用条件',counterpoint='存在其他解释',boundary='不推断因果',sections=[dict(id='sec1',title='证据与应用',purpose='解释边界',points=['研究支持关联'],claim_ids=['C1'])])
-    elif schema=='ReviewResult':r=dict(decision='pass',summary='模拟审核：保留研究边界。',issues=[],dimensions={'准确':4,'深度':4,'自然':4},digest='理解关联',title='研究的边界',tags=['研究'])
+    elif schema=='OutlineResult':r=dict(thesis='研究支持关联',reader_question='如何理解研究',takeaway='保留适用条件',counterpoint='存在其他解释',boundary='不推断因果',sections=[dict(id='sec1',title='证据与应用',purpose='解释边界',points=['研究支持关联'],claim_ids=[c['id'] for c in ctx.get('evidence',{}).get('claims',[])][:1])])
+    elif schema=='ReviewResult':r=dict(decision='pass',summary='模拟审核：保留研究边界。',issues=[],dimensions=SCORES,digest='理解关联',title='研究的边界',tags=['研究'])
     elif schema=='VisualResult':r=dict(images=[dict(id='cover',role='cover',prompt='原提示词',caption='原图注')])
     elif schema=='RevisionResult':r=dict(replacement='研究仅支持所观察到的关联。',explanation='明确范围')
     elif schema=='Result':

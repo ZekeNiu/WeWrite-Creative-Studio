@@ -1,4 +1,5 @@
 const names:Record<string,string>={
+ viewpoint:'观点',usefulness:'用途',voice:'声音',
  task_alignment:'任务对齐',alignment:'任务对齐',factual_accuracy:'事实准确性',accuracy:'准确性',facts:'事实依据',
  evidence:'证据支持',sources:'来源依据',depth:'内容深度',clarity:'表达清晰度',naturalness:'表达自然度',
  structure:'文章结构',boundaries:'适用边界',originality:'原创表达',readability:'可读性',
@@ -19,7 +20,8 @@ export default function ReviewChecks({review}:{review:any}){
  const checks=Object.entries({...hints.tier1,...hints.tier2}).filter(([key])=>!key.startsWith('_'));
  return <details className="review-checks"><summary>查看辅助评分与机械检查</summary>
   <p className="muted small-text">这些分数仅辅助检查表达，不代表事实准确率，也不是 AI 检测概率。机械检查分数越高，表示越符合该项参考规则。</p>
-  <h4>编辑维度</h4>{dimensions.length?<div className="review-dimensions">{dimensions.map(([key,value])=><div key={key}><span>{names[key]||key}</span><strong>{numeric(value)?String(value):'暂无评分'}</strong></div>)}</div>:<p className="muted">暂无编辑维度评分。</p>}
+  <h4>编辑维度</h4>{dimensions.length?<div className="review-dimensions">{dimensions.map(([key,value])=><div key={key}><span>{names[key]||key}</span><strong>{numeric(value)?String(value)+(review.quality_version?' / 5':''):'暂无评分'}</strong></div>)}</div>:<p className="muted">暂无编辑维度评分。</p>}
+  {review.fact_audit&&<details><summary>独立事实核查 · {review.fact_audit.complete?'已检查全部段落':'仍有段落待核查'}</summary>{review.fact_audit.segments?.map((s:any)=><div key={s.segment_id}>{s.status==='no_factual_claim'?<p className="muted">{s.reason}</p>:s.facts?.map((f:any,i:number)=><details key={i}><summary>{f.quote}</summary><p>{f.reason}</p><p>{f.boundary}</p>{f.source_quote&&<blockquote>{f.source_quote}</blockquote>}<p className="muted">{['supported','limited'].includes(f.checked_status)?'来源已核对':'仍需处理'}</p></details>)}</div>)}</details>}
   <h4>机械检查</h4><p>表达参考分：<strong>{quality===null?'暂无评分':`${Number(quality).toFixed(1)} / 100`}</strong>{numeric(hints.char_count)&&<span className="muted"> · 已检查 {hints.char_count} 字</span>}</p>
   {checks.length?checks.map(([key,value])=>{const row=value as any;return <article className="review-check" key={key}><div className="row between"><strong>{names[key]||key}</strong><span>{numeric(row?.score)?`${(row.score*100).toFixed(0)} / 100`:'暂无评分'}</span></div><p>{description(row?.detail)}</p></article>}):<p className="muted">暂无机械检查结果。</p>}
  </details>;

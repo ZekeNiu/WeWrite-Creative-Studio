@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator,field_validat
 STAGES = ['topic', 'sources', 'outline', 'write', 'review', 'visual', 'layout']
 LABELS = dict(zip(STAGES, ['选题', '素材', '大纲', '写作', '审核修改', '配图', '排版导出']))
 LABELS['research']='检索规划与资料整理'
+LABELS['edit']='整体编辑'
 LABELS.update(revise='修改选段', image='图片', layout_advice='阅读与结构建议', search='搜索工具')
 ROUTES = [*STAGES[:-1], 'revise', 'image', 'layout_advice', 'research']
 
@@ -79,6 +80,7 @@ class Section(BaseModel):
     purpose: str
     points: list[str] = []
     claim_ids: list[str] = []
+    argument_ids: list[str] = []
 
 
 class OutlineResult(BaseModel):

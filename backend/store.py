@@ -142,6 +142,7 @@ def save_article(id, expected_revision, mutate, label, invalidate=None, review_a
     with LOCK:
         snapshots.prepare(DATA)
         snapshots.prepare(DATA,'quality-evidence-v1')
+        snapshots.prepare(DATA,'quality-editorial-v1')
     with connection() as db:
         row=db.execute('SELECT data FROM articles WHERE id=?',(id,)).fetchone()
         if not row: raise KeyError('文章不存在')
