@@ -18,6 +18,7 @@ def test_required_subquestions_are_anchored_and_do_not_drift():
     research_contract.anchor_requirements(a,[dict(request_quote='随机试验',question='是否为该干预的随机试验？'),dict(request_quote='不存在的要求',question='增设不相关目标')])
     anchored=[q for q in a['research_contract']['questions'] if q.get('request_quote')]
     assert len(anchored)==1 and anchored[0]['required']
+    assert anchored[0]['text']=='随机试验' and '该干预' not in anchored[0]['text']
     research_contract.anchor_requirements(a,[dict(request_quote='死亡分母',question='改成其他要求')])
     assert [q for q in a['research_contract']['questions'] if q.get('request_quote')]==anchored
 
@@ -31,6 +32,16 @@ def test_related_evidence_cannot_complete_a_partially_answered_question():
     for verdicts in ([],[verdict,verdict],[dict(verdict,status='supported',evidence_ids=['invented'])]):
         assert not research_contract.sufficient(research_contract.audit_coverage([row],verdicts))
     assert research_contract.sufficient(research_contract.audit_coverage([row],[dict(verdict,status='limited')]))
+
+
+def test_unconfirmed_expansion_never_becomes_a_new_hard_requirement():
+    from backend import research_contract,creative
+    a=store.create_article(dict(topic='解释已有位置效应实验'))
+    a['creative_intent']=dict(original_request=a['brief']['topic'],selected=dict(reader_question='必须测量神经网络内部机制'),expanded=True)
+    assert not any('内部机制' in q['text'] for q in research_contract.ensure(a)['questions'])
+    a['topics']=[dict(id='T1',title='明确采用的研究角度',reader_question='比较两个实验的适用条件')]
+    creative.adopt(a,'明确采用的研究角度','T1')
+    assert any(q['required'] and '比较两个实验' in q['text'] for q in research_contract.ensure(a)['questions'])
 
 
 def test_questions_get_turns_before_one_query_exhausts_engines(monkeypatch):

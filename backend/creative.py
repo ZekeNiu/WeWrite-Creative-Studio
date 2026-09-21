@@ -23,6 +23,7 @@ def adopt(a, title, topic_id=''):
         for claim in a.get('evidence',{}).get('claims',[]): claim['stale']=True
         a['stages']['sources']='stale'
     current.update(selected=plan, adopted_at=store.now(), expanded=bool(plan.get('angle')))
+    current['adopted_plan']=copy.deepcopy(plan)
     if not current['original_request']: current['original_request']=title
     current.pop('direction_change',None)
     a['creative_intent']=current

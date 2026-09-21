@@ -670,6 +670,10 @@ class Research:
             await self.assess()
         if plan['needed'] and (self.stage=='topic' or not self.sufficient()):
             queries=plan['queries'] or [self.a['brief']['topic'] or self.a['brief']['domain'] or self.a['brief']['column']]
+            original=self.a['research_contract'].get('original_request','')
+            if original and self.stage!='topic' and not self.a['research_contract'].get('source_targets') and not self.requested:
+                # Keep one search faithful to the user's combined idea, before planner guesses.
+                queries=[dict(query=original,question=original,purpose='explore',source_type='general'),*queries]
             before=self.progress_key()
             untried=[q for q in queries if digest(search_plan.query(q)) not in self.seen_queries]
             if untried:

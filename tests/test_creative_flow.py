@@ -145,6 +145,8 @@ def test_no_progress_stops_after_one_attempt(client,monkeypatch):
     async def empty(queries): attempts.append(queries)
     monkeypatch.setattr(research,'structured',structured);monkeypatch.setattr(w,'discover',empty)
     assert asyncio.run(w.run()) and len(attempts)==1 and w.stop_reason and w.rounds==0
+    assert attempts[0][0]['query']==a['brief']['topic']
+    assert w.stop_code=='no_progress'
 
 
 def test_generic_no_material_message_resolves_with_evidence(client):

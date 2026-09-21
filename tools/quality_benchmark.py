@@ -1,6 +1,9 @@
 """Opt-in live evaluation. Production settings/secrets are read-only; all writes isolated."""
 import argparse, asyncio, copy, hashlib, json, os, re, sqlite3, sys, time
 from pathlib import Path
+from urllib.parse import urlsplit
+
+METRIC_VERSION=2
 
 
 def arguments():
@@ -25,6 +28,12 @@ def found(case,sources):
         if case.get('arxiv') and case['arxiv'] in (s.get('arxiv_id','')+' '+s.get('url','')):return True
         if any(u in s.get('url','') for u in case.get('urls',[])):return True
         if normal(case['title']) in normal(s.get('title','')):return True
+        # A publisher PDF may retain its filename as title. Check its own first-page
+        # heading on the already accepted official host, never mentions in body/references.
+        host=(urlsplit(s.get('url','')).hostname or '').removeprefix('www.')
+        official={(urlsplit('https://'+u).hostname or '').removeprefix('www.') for u in case.get('urls',[])}
+        front=(s.get('pages') or [{}])[0].get('text','')[:500]
+        if host in official and normal(case['title']) in normal(front):return True
     return False
 
 
@@ -42,7 +51,7 @@ async def main(args):
         secrets=dict(db.execute('select id,value from secrets'))
     store.init();store.set_settings(cfg);store.get_secret=lambda sid:secrets.get(sid)
     payload=args.cases.read_bytes();cases=json.loads(payload)['cases']
-    manifest=dict(cases_sha256=hashlib.sha256(payload).hexdigest(),code_root=str(code),mode=args.mode,round=args.round,
+    manifest=dict(metric_version=METRIC_VERSION,cases_sha256=hashlib.sha256(payload).hexdigest(),code_root=str(code),mode=args.mode,round=args.round,
                   code_sha256=hashlib.sha256(b''.join(p.read_bytes() for p in sorted((code/'backend').glob('*.py')))).hexdigest(),
                   timeout_seconds=args.timeout,
                   search_limits={k:cfg['search'].get(k) for k in ('max_calls','max_pages','max_rounds')},
