@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import ValidationError
 from . import store,providers,security,materials,rendering,workflow,prompts,search_tools,browser_search,search_check,bibliography,outputs,capabilities
-from . import flow_state,issue_actions,source_imports
+from . import flow_state,issue_actions,source_imports,account_memory
 from .models import IssueAction,Settings,Brief,Layout,VisualSettings,ArticlePatch,JobRequest,STAGES,OutlineResult,ImagePlan,CapabilityTest,ResearchLimits
 
 APP_VERSION=json.loads((store.ROOT/'package.json').read_text('utf-8'))['version']
@@ -31,6 +31,8 @@ async def lifespan(app):
 
 
 app=FastAPI(title='WeWrite 本地工作台',lifespan=lifespan,docs_url=None,redoc_url=None)
+from .account_api import router as account_router
+app.include_router(account_router)
 
 
 @app.middleware('http')
@@ -213,9 +215,13 @@ def article(id:str): return store.get_article(id)
 def patch(id:str,payload:ArticlePatch):
     stage=payload.stage
     if stage not in ['setup',*STAGES,'preferences']: raise ValueError('未知编辑环节')
-    allowed={'title','brief','auto','outline','content','layout','visual','image_plans','images','sources','current_stage','research_limits'}
+    allowed={'title','brief','auto','outline','content','layout','visual','image_plans','images','sources','current_stage','research_limits','history_fields'}
     if set(payload.changes)-allowed: raise ValueError('包含不可修改的字段')
     c=payload.changes.copy()
+    if 'history_fields' in c:
+        c['history_fields']=account_memory.HistoryFields.model_validate(c['history_fields']).model_dump()
+        if c['history_fields']['published_at']:account_memory.timestamp(c['history_fields']['published_at'])
+        if c['history_fields']['status']=='published' and not c['history_fields']['published_at']:raise ValueError('已发表文章需填写发布时间')
     if c.get('research_limits') is not None:c['research_limits']=ResearchLimits.model_validate(c['research_limits']).model_dump()
     if 'brief' in c: c['brief']=Brief.model_validate(c['brief']).model_dump()
     if 'layout' in c:
@@ -445,6 +451,7 @@ def apply_suggestion(id:str,sid:str,value:dict):
         s=next((x for x in a['suggestions'] if x['id']==sid),None)
         if not s: raise ValueError('修改建议不存在')
         if value.get('action')=='accept':
+            account_memory.guard(s.get('account_use'))
             if not s['original'] or a['content'].count(s['original'])!=1: raise ValueError('原文已改变或有重复，无法安全替换，请重新选段')
             from . import editorial
             replacement=value.get('replacement',s['replacement'])

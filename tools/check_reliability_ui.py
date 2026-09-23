@@ -31,6 +31,8 @@ async def main():
         raise AssertionError('Persisted article did not reach expected state')
     try:
         await page.goto(BASE)
+        from check_account_ui import before_generation,after_generation
+        await before_generation(page,BASE)
         await page.get_by_role('button',name='开始一篇新文章',exact=True).click()
         await page.get_by_role('dialog').get_by_role('button',name='创建文章',exact=True).click()
         await page.get_by_role('button',name='寻找选题灵感',exact=True).click()
@@ -151,6 +153,7 @@ async def main():
         assert restored['content']==adopted
         assert any(x['status']=='adopted' for x in restored['editorial_candidates'])
         assert any(x['status']=='rejected' for x in restored['editorial_candidates'])
+        await after_generation(page,BASE,a['id'],OUT)
         completed_id=a['id']
         fixture=await (await page.request.get(BASE+'/api/qa-fixture')).json()
         await page.goto(BASE+'/#'+fixture['id'])
@@ -212,7 +215,7 @@ async def main():
         await expect(page.locator('.library')).to_contain_text('第 2 / 2 页')
         assert not errors,errors
         (OUT/'result.json').write_text(json.dumps(dict(passed=True,simulated=True,article_id=completed_id,continuous_save=True,failed_save_retained=True,exclude_undo=True,limits_persist=True,full_workflow=True,editorial_adopt_reject=True,editorial_final_restore=True,viewports=[1440,1100,390],long_evidence=True,keyboard_drawer=True,storage_disabled=True),ensure_ascii=False,indent=2),'utf-8')
-        print('PASS complete current UI workflow, editorial adopt/reject/final/restore, saves, exclude/undo, evidence, widths, keyboard and storage restrictions')
+        print('PASS complete current UI workflow, account learning/history/examples/metrics/usage, editorial adopt/reject/final/restore, saves, exclude/undo, evidence, widths, keyboard and storage restrictions')
     except BaseException:
         await page.screenshot(path=str(OUT/'failure.png'),full_page=True)
         (OUT/'failure.txt').write_text(await page.locator('body').inner_text(),'utf-8')

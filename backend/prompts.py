@@ -75,6 +75,8 @@ def prompt(stage,a,request):
                  research={k:notes[k] for k in ('summary','gaps','conflicts') if k in notes})
     if stage in ('review','revise','visual'): context['article']=a['content']
     if stage=='revise': context['review']=a['review']
+    if request.get('_account_use') and stage in ('topic','outline','write','revise'):
+        context['account_reference']=request['_account_use']['context']
     tasks={
       'topic':'生成 6 个有差异的候选方案，以问题价值、专业深度、读者用途与新增价值排序。标题、angle、reason 简明；展开字段 reader_question、novelty、takeaway、questions、key_claims 说明研究什么、解决什么。响应本次反馈及历史反馈，避开最近三批的相同角度，不只是换标题。普通换一批也应探索新角度。允许提出值得调查的专业假设，evidence_status 区分待调查与已有依据；不得把强烈措辞、因果或未核实数字当成吸引力。不强制反直觉，不因资料未齐退回概念罗列。领域来自 domain，空则 column；基础研究不受近期窗口排除，不冒充热点。source_ids 仅使用已有来源。',
       'sources':'手动主题未展开时在 intent 中补充读者问题、切入点、新增价值、预期交付与待证主张；保留手动主题原意。证据使核心方向不成立时在 direction_change 解释原因和替代方向，交由用户采用。分析用户选中的素材，整理事实、推断、观点与主张。每条事实关联支持它的来源；不能支持的标 unsupported。没有证据时列出缺口，不补造事实。',

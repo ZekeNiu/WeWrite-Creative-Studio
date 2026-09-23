@@ -70,3 +70,13 @@
 .material-status{font-size:12px;padding:0 0 16px;margin:0 0 18px}.material-status strong{font-size:14px;font-weight:500}.material-status p{margin:8px 0 0;line-height:1.7}.material-status>.row{gap:12px;flex-wrap:wrap}.research-summary{padding:4px 0 18px;border-bottom:1px solid var(--line);margin-bottom:18px}.research-summary h3,.research-details h4{font-size:14px;font-weight:500;margin:0}.research-summary p,.advice-row p{font-size:12px;line-height:1.8;color:var(--ink)}.research-summary .preview-clamp{-webkit-line-clamp:3}.research-details>.row{gap:10px;flex-wrap:wrap}.research-details>.row>.muted{font-size:11px}.advice-row{border:0;border-bottom:1px solid var(--line);padding:16px 0;margin:0}.advice-row strong{font-size:12px;font-weight:500}.advice-row .row{flex-wrap:wrap;gap:10px}.advice-row p{margin:12px 0}.advice-row .muted{color:var(--muted)}.advice-sources{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin:10px 0}.source-reference{text-align:left;white-space:normal;overflow-wrap:anywhere;max-width:100%;font-size:11px}.evidence-details{margin:16px 0;font-size:12px}.source-receipt{padding:16px;background:var(--soft);border-radius:8px;font-size:12px;margin:18px 0}.source-receipt p{line-height:1.7;overflow-wrap:anywhere}.source-receipt strong{font-weight:500}.source-receipt .row{margin-top:12px}.library-card{padding:0 20px}.article-open{background:none;border:0;color:inherit;padding:20px 0 0;display:block;text-align:left;width:100%}.article-open:disabled{opacity:1;cursor:default}.library-actions{display:flex;justify-content:flex-end;gap:18px;padding:12px 0;border-top:1px solid var(--line)}.library-card .article-card-bottom{margin-top:16px}.research-issue details p{white-space:pre-wrap}
 
 .editorial-text{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;max-height:32rem;overflow:auto}.editorial-diff{padding:12px;border-left:3px solid #527755;margin:12px 0}.editorial-diff>div+div{border-top:1px solid #ddd;padding-top:12px}.editorial-candidate{margin-top:16px}
+
+.account-panel{padding:0 24px 24px;overflow-wrap:anywhere}
+.account-tabs{display:flex;gap:4px;flex-wrap:wrap;margin:16px 0}
+.account-search{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin:16px 0}
+.account-search>.field{flex:1 1 180px;min-width:0}
+.account-panel .service-card{margin:12px 0}
+.account-panel input[type=file]{display:block;max-width:240px;margin:6px 0}
+.account-panel code{white-space:normal;overflow-wrap:anywhere}
+.account-footer{border-top:1px solid var(--line);padding-top:16px;margin-top:20px}
+@media(max-width:700px){.account-panel{padding:0 14px 18px}.header-actions{flex-wrap:wrap}.account-tabs .button{padding:8px}.account-footer small{width:100%}}

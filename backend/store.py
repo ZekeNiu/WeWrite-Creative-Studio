@@ -43,6 +43,9 @@ def connection():
 
 
 def init():
+    if (DATA/'studio.sqlite').exists():
+        from . import snapshots
+        with LOCK: snapshots.prepare(DATA,'quality-account-v1')
     with connection() as db:
         db.executescript('''
         PRAGMA journal_mode=WAL;
@@ -61,6 +64,10 @@ def init():
             j = json.loads(row['data'])
             j.update(status='interrupted', message='上次运行中断，已保留内容。可从当前环节重新开始。', ended=now())
             db.execute('UPDATE jobs SET status=?,data=? WHERE id=?', ('interrupted', encode(j), row['id']))
+
+
+    from . import account_memory
+    account_memory.init()
 
 
 def get_article(id,include_trash=False):
@@ -114,6 +121,8 @@ def purge_article(id,revision):
         db.execute('DELETE FROM events WHERE job_id IN (SELECT id FROM jobs WHERE article_id=?)',(id,))
         for table in ('versions','jobs','usage'):db.execute(f'DELETE FROM {table} WHERE article_id=?',(id,))
         db.execute('DELETE FROM articles WHERE id=?',(id,))
+        db.execute('DELETE FROM article_index WHERE article_id=?',(id,))
+        db.execute('DELETE FROM account_uses WHERE article_id=?',(id,))
     return {'deleted':True}
 
 
@@ -129,6 +138,8 @@ def create_article(brief=None, auto=None, diagnostic=False):
     if diagnostic: a['diagnostic']=True
     with connection() as db:
         db.execute('INSERT INTO articles VALUES(?,?)',(a['id'],encode(a)))
+        from .account_memory import index_article
+        index_article(db,a)
     from .flow_state import present
     return present(a)
 
@@ -137,7 +148,7 @@ class Conflict(Exception):
     pass
 
 
-def save_article(id, expected_revision, mutate, label, invalidate=None, review_action=False,allow_trash=False):
+def save_article(id, expected_revision, mutate, label, invalidate=None, review_action=False,allow_trash=False,account_use=None):
     from . import snapshots
     with LOCK:
         snapshots.prepare(DATA)
@@ -145,6 +156,8 @@ def save_article(id, expected_revision, mutate, label, invalidate=None, review_a
         snapshots.prepare(DATA,'quality-editorial-v1')
     with connection() as db:
         row=db.execute('SELECT data FROM articles WHERE id=?',(id,)).fetchone()
+        from .account_memory import guard,index_article
+        guard(account_use)
         if not row: raise KeyError('文章不存在')
         a=json.loads(row['data'])
         if a.get('trashed_at') and not allow_trash:raise Conflict('这篇文章已在回收站，请恢复后继续')
@@ -186,6 +199,7 @@ def save_article(id, expected_revision, mutate, label, invalidate=None, review_a
         review_state.sync_job(db,a)
         a['revision']+=1; a['updated']=now()
         db.execute('UPDATE articles SET data=? WHERE id=?',(encode(a),id))
+        index_article(db,a)
         from .flow_state import present
         return present(a)
 

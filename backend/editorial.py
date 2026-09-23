@@ -79,6 +79,7 @@ def synthesis_key(a):
 
 async def generate(a,job_id,route,instruction,schema,extra=None):
     from . import prompts
+    from . import account_memory
     service=providers.service_for(route);partial='';last=0
     async def emit(delta):
         nonlocal partial,last
@@ -90,13 +91,19 @@ async def generate(a,job_id,route,instruction,schema,extra=None):
     if schema is FactAudit:
         from .research import audit_context
         context={**audit_context(a,'review'),**(extra or {})}
+    used=account_memory.capture(a,job_id,'edit') if schema is EditedDraft else None
+    if used:context['account_reference']=used['context']
     prompt=json.dumps(dict(task=instruction,context=context,schema=schema.model_json_schema()),ensure_ascii=False)
     try:raw,usage=await providers.generate(service,prompts.system(route,a['brief']),prompt,emit)
     except BaseException:
+        account_memory.finish_use(used,'incomplete')
         store.add_usage(a['id'],stage=route,model=service['model'],service=service['name'],status='unknown',estimated_cost=None)
         raise
+    account_memory.finish_use(used,'returned')
     store.add_usage(a['id'],stage=route,**usage);store.update_job(job_id,partial=raw)
-    return parse(raw,schema)
+    result=parse(raw,schema)
+    if used:result['_account_use']=used
+    return result
 
 
 async def synthesize(a,job_id):
@@ -226,7 +233,7 @@ def diff(before,after):
 def save_candidate(base,job_id,edited,review):
     candidate=dict(id=store.uid(),version=VERSION,base_key=review_state.signature(base),base_revision=base['revision'],base_content=base['content'],
         content=edited['content'],explanation=edited['explanation'],changes=edited.get('changes',[]),unresolved=edited.get('unresolved',[]),
-        review=review,diff=diff(base['content'],edited['content']),status='pending',created=store.now(),job_id=job_id)
+        review=review,diff=diff(base['content'],edited['content']),status='pending',created=store.now(),job_id=job_id,account_use=edited.get('_account_use'))
     latest=store.get_article(base['id'])
     return store.save_article(base['id'],latest['revision'],lambda v:v.setdefault('editorial_candidates',[]).append(candidate),'保存整体编辑候选'),candidate
 
@@ -243,6 +250,8 @@ def adopt(a,candidate_id,automatic=False):
     def change(v):
         candidate=next((x for x in v.get('editorial_candidates',[]) if x['id']==candidate_id),None)
         if not candidate or candidate['status']!='pending':raise ValueError('整体编辑候选已处理或不存在')
+        from .account_memory import guard
+        guard(candidate.get('account_use'))
         if not candidate.get('checked'):raise ValueError('候选稿尚未完成独立核查，请完成后再采用')
         if review_state.signature(v)!=candidate['base_key']:raise store.Conflict('正文、任务或依据已改变；候选已保留，请对照差异后重新生成')
         if automatic and any(x['severity']=='blocker' for x in candidate['review'].get('issues',[])):raise ValueError('候选仍有事实问题，不能自动采用')

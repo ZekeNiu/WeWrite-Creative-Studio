@@ -5,7 +5,7 @@ import re
 import time
 from PIL import Image
 from pydantic import ValidationError
-from . import store, providers, prompts, materials, rendering, research, creative,editorial
+from . import store, providers, prompts, materials, rendering, research, creative,editorial,account_memory
 from .models import STAGES, LABELS, SCHEMAS
 from .structured_output import parse as parse_structured
 
@@ -97,6 +97,7 @@ def cancel(id):
 
 
 async def call(job_id,stage,a,request):
+    request.pop('_account_use',None)
     factual=await editorial.audit(a,job_id) if stage=='review' else None
     if stage=='sources' and a.get('research',{}).get('analysis_signature')==research.analysis_signature() and a.get('evidence',{}).get('claims'):
         # Research already owns verified claim/evidence pairs. A second summary must not replace them.
@@ -111,16 +112,21 @@ async def call(job_id,stage,a,request):
             store.event(job_id,'progress',stage=stage,characters=len(text))
             last=time.monotonic()
     try:
+        if stage in ('topic','outline','write','revise'):
+            request['_account_use']=account_memory.capture(a,job_id,stage)
         raw,usage=await providers.generate(s,prompts.system(stage,a['brief']),prompts.prompt(stage,a,request),emit)
+        account_memory.finish_use(request.get('_account_use'),'returned')
         store.add_usage(a['id'],stage=stage,**usage)
         store.update_job(job_id,partial=raw)
     except BaseException:
+        account_memory.finish_use(request.get('_account_use'),'incomplete')
         store.update_job(job_id,partial=text)
         store.add_usage(a['id'],stage=stage,model=s['model'],service=s['name'],status='unknown',estimated_cost=None,currency=s.get('currency','CNY'))
         raise
     result=parse(stage,raw); validate_result(stage,result,a)
     if stage=='review':result=editorial.gate(result,factual)
     store.update_job(job_id,result=result)
+    account_memory.guard(request.get('_account_use'))
     return result
 
 
@@ -161,7 +167,7 @@ def apply_result(a,stage,result,request):
             if result['decision']!='pass': v['stages']['review']='needs_input'
         elif stage=='visual': v['image_plans']=result['images'][:v['visual']['count']]
         v['current_stage']=stage
-    return store.save_article(a['id'],a['revision'],change,'AI 完成'+LABELS[stage],invalidate=stage)
+    return store.save_article(a['id'],a['revision'],change,'AI 完成'+LABELS[stage],invalidate=stage,account_use=request.get('_account_use'))
 
 
 def apply_review_fixes(a):
@@ -244,10 +250,10 @@ async def run(job_id):
                 a=await generate_image(a,job_id,plan)
             elif stage=='revise':
                 result=await call(job_id,stage,a,req)
-                item=dict(id=store.uid(),original=req['selected_text'] or a['content'],base_revision=a['revision'],**result)
+                item=dict(id=store.uid(),original=req['selected_text'] or a['content'],base_revision=a['revision'],account_use=req.get('_account_use'),**result)
                 def suggest(v):
                     v['suggestions'].append(item);v['current_stage']='write'
-                a=store.save_article(a['id'],a['revision'],suggest,'生成修改建议')
+                a=store.save_article(a['id'],a['revision'],suggest,'生成修改建议',account_use=req.get('_account_use'))
             elif stage=='edit':
                 a,_=await edit_candidate(a,job_id,req)
             elif stage=='layout_advice':
@@ -278,6 +284,8 @@ async def run(job_id):
         store.update_job(job_id,status='needs_input' if a['stages'].get(stage)=='needs_input' else 'completed',ended=store.now(),message='需要你确认当前结果' if a['stages'].get(stage)=='needs_input' else '已完成，等待你查看' if stage not in STAGES or not a['auto'].get(stage) else '本次流程已完成或已到达需要处理的环节')
     except asyncio.CancelledError:
         store.update_job(job_id,status='cancelled',ended=store.now(),message='已停止；内容已保留，已发出的请求可能计费')
+    except account_memory.StaleContext as exc:
+        store.update_job(job_id,status='needs_input',ended=store.now(),message=str(exc),account_candidate=True)
     except store.Conflict as exc:
         note=' 原始生成结果已保留，可展开查看。' if store.job(job_id).get('partial') else ''
         store.update_job(job_id,status='conflict',ended=store.now(),message=str(exc)+note)
@@ -293,9 +301,11 @@ async def edit_candidate(a,job_id,request):
     base=copy.deepcopy(a)
     edited=await editorial.edit(base,job_id,request.get('instruction',''))
     a,candidate=editorial.save_candidate(base,job_id,edited,dict(decision='needs_input',issues=[],summary='候选尚未完成独立核查'))
+    account_memory.guard(candidate.get('account_use'))
     proposed=copy.deepcopy(base);proposed['content']=edited['content']
     report=await call(job_id,'review',proposed,request)
     a=editorial.candidate_review(a['id'],candidate['id'],report)
+    account_memory.guard(candidate.get('account_use'))
     candidate=next(x for x in a['editorial_candidates'] if x['id']==candidate['id'])
     store.update_job(job_id,editorial_candidate_id=candidate['id'],message='整体编辑候选及核查已保存，请查看差异')
     return a,candidate
