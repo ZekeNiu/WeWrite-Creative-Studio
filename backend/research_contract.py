@@ -145,7 +145,7 @@ def apply_judgements(spans,rows):
         if basis=='unassessed':support='unsupported'
         if basis in ('author_interpretation','external_reference') and support in ('supported','limited'):
             support='limited';e['type']='inference'
-            e['boundary']='；'.join(x for x in [e.get('boundary'), '这是作者的解释或转引，不能当作本研究直接验证的结果'] if x)
+            if not e.get('boundary'):support='unsupported'
         e.update(support=support,support_basis=basis,support_reason=row.get('reason') or '独立核查未提供完整判断',
                  support_identity_only=bool(row.get('identity_only')),
                  source_origin=row.get('source_origin','unassessed'),

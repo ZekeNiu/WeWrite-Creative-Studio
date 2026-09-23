@@ -1,7 +1,7 @@
 """Task-focused excerpts; stored source text is never shortened or rewritten."""
 import re
 
-POLICY_VERSION = 20
+POLICY_VERSION = 22
 TEMPORAL_SCOPE_POLICY = ('时间和版本也是适用范围：用户问首次发布、某年或某版时，当前帮助页与后续更新不能证明当时已具备全部功能。'
     '区分首次记录、后续技术解释和当前行为，核对来源日期与所述功能的生效版本；没有当时依据的新增能力不得混入早期结论，scope必须unknown并保留缺口。')
 QUOTE_PROVENANCE_POLICY = ('verification=quote_matched表示系统已将该条quote逐字定位到对应来源的实际正文/摘要（bibliography另标为书目题名）。'

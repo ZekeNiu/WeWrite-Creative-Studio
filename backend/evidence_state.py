@@ -51,6 +51,8 @@ def span_summary(spans):
         label=('适用性待复核' if not evaluated(e) else '缺少支持' if not assessed(e)
                else '有限支持' if e.get('support')=='limited' or e.get('quality')=='limited' or e.get('boundary') else '已有支持')
         row=label+'：'+e['claim']+('；边界：'+e['boundary'] if e.get('boundary') else '')
+        basis={'author_interpretation':'作者解释','external_reference':'转引其他研究'}.get(e.get('support_basis'))
+        if basis:row+='；依据类型：'+basis
         if row not in rows:rows.append(row)
     return '\n'.join(rows)
 
@@ -111,9 +113,10 @@ def merge_issues(a, notes, requested=()):
             rows.pop(duplicate,None)
         item['merged_ids']=duplicates
         evidence=[e for e in notes.get('evidence',[]) if assessed(e) and e.get('quality')=='suitable' and
-            ((item.get('claim_id') and item['claim_id']==e.get('claim_id')) or
-             (item.get('claim') and normal(item['claim'])==normal(e['claim'])))]
+            ((item.get('claim') and normal(item['claim'])==normal(e['claim'])) or
+             (not item.get('claim') and item.get('claim_id') and item['claim_id']==e.get('claim_id')))]
         supported=bool(evidence) and bool(item.get('resolution'))
+        if item.get('status')=='resolved' and not supported:item['resolution']='本轮尚未取得支持该完整主张的有效证据'
         item.update(id=iid,status='resolved' if item.get('status')=='resolved' and supported else 'open')
         if item['status']=='resolved':item['resolution']=span_summary(evidence)
         rows[iid]={**lookup.get(iid,{}),**item};seen.add(item['text'])

@@ -24,6 +24,18 @@ def test_complete_source_list_and_verified_answers_can_pass():
     assert audit()['status']=='supported'
 
 
+def test_positive_answer_explanations_only_publish_verified_answers():
+    row,pool,spans,texts,check=inputs()
+    check['parts'][0]['reason']='额外断言：已证明上游因果机制'
+    check['source_lists'][0]['items'][0]['reason']='额外断言：条件限定为另一人群'
+    check['reason']='额外断言：统计关联证明了因果'
+    saved=copy.deepcopy(check)
+    result=coverage_scope.apply([row],[check],[pool],spans,texts)[0]
+    assert result['status']=='supported' and check==saved
+    assert '额外断言' not in str(result['answer_scope'])
+    assert '条件一的完整回答' in result['answer_scope']['parts'][0]['reason']
+
+
 @pytest.mark.parametrize('change',[
     lambda r,p,e,t,c:c['parts'][0].update(status='missing',reason='用户要求未回答'),
     lambda r,p,e,t,c:c['parts'][0].update(request_quote='并比较所有其他方案'),

@@ -1,6 +1,8 @@
 """Require a traceable answer to every requested part and every requested list item."""
+import copy
 import re
 from .evidence_scope import normal
+from .evidence_state import span_summary
 
 INSTRUCTION = (
     '这是回答完整性核查，不生成新的研究结论。逐个核对candidates.coverage中的用户问题与evidence中已经核实的回答。不要信任旧coverage的状态与理由，也不以来源已经下载当作该问题已经得到回答。'
@@ -73,6 +75,18 @@ def apply(rows,judgements,pools,spans,read_sources,pdf_source_ids=()):
                     answer=normal(item['answer_quote'])
                     if not ids or set(ids)-valid or not answer or not any(evidence.get(eid,{}).get('source_id')==sid and any(answer in normal(evidence[eid].get(k,'')) for k in ('claim','boundary')) for eid in ids):
                         reasons.append('清单条目尚未关联同来源的实际回答：'+item['source_quote'][:100])
-        row['answer_scope']=check
+        # Positive explanations are not independently verified evidence. Publish
+        # the checked answers, preserving the raw audit in the request capture.
+        published=copy.deepcopy(check)
+        if published:
+            if published['complete']:published['reason']='完整性核查结果见逐项对照'
+            for part in published['parts']:
+                if part['status']=='answered':
+                    part['reason']=span_summary([evidence[eid] for eid in part['evidence_ids'] if eid in valid and eid in evidence]) or '回答尚无有效核实证据'
+            for source_list in published['source_lists']:
+                if source_list['complete_read']:source_list['reason']='原文清单核对结果见逐项对照'
+                for item in source_list['items']:
+                    if item['covered']:item['reason']='回答与原文的核对结果见引用对照'
+        row['answer_scope']=published
         if reasons:row.update(status='unresolved',reason='；'.join(dict.fromkeys(reasons)))
     return rows

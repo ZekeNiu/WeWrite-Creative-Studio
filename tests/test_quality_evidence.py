@@ -174,8 +174,18 @@ def test_planner_curiosity_does_not_expand_mandatory_user_goal():
 def test_authors_explanation_is_not_reported_as_measured_mechanism():
     s=materials.source('Study','The experiment lacks a control group.')
     e=research.validate_spans(dict(evidence=[evidence(s)],gaps=[],issues=[]),[s])['evidence'][0]
+    e['boundary']='未验证因果，仅为作者提出的解释'
     research_contract.apply_judgements([e],[dict(evidence_id=e['evidence_id'],support='supported',basis='author_interpretation',reason='作者解释',checks=dict.fromkeys(research_contract.CHECKS,'matched'))])
-    assert e['support']=='limited' and e['type']=='inference' and '不能当作本研究直接验证' in e['boundary']
+    assert e['support']=='limited' and e['type']=='inference' and '未验证因果' in e['boundary']
+    assert '依据类型：作者解释' in evidence_state.span_summary([e])
+
+
+@pytest.mark.parametrize('basis',['author_interpretation','external_reference'])
+def test_interpretation_without_a_source_boundary_remains_unsupported(basis):
+    s=materials.source('Study','The experiment lacks a control group.')
+    e=research.validate_spans(dict(evidence=[evidence(s)],gaps=[],issues=[]),[s])['evidence'][0]
+    research_contract.apply_judgements([e],[dict(evidence_id=e['evidence_id'],support='supported',basis=basis,reason='缺少边界',checks=dict.fromkeys(research_contract.CHECKS,'matched'))])
+    assert not evidence_state.assessed(e) and e['support']=='unsupported'
 
 
 def test_resolved_issue_projects_evidence_without_publishing_free_resolution_facts():
@@ -187,3 +197,24 @@ def test_resolved_issue_projects_evidence_without_publishing_free_resolution_fac
     row=evidence_state.merge_issues(a,dict(evidence=[e],issues=[issue]))[0]
     assert row['status']=='resolved' and '未验证因果' in row['resolution']
     assert '新的生理机制' not in row['resolution']
+
+
+def test_same_claim_id_cannot_resolve_a_broader_unverified_issue():
+    from tests.quality_fixtures import assessment
+    a=store.create_article(dict(topic='核实结论和条件'))
+    e=dict(assessment(),claim_id='C1',evidence_id='E1',source_id='S1',claim='观察到差异',quote='A difference was observed.',
+           boundary='未验证因果',quality='suitable',verification='quote_matched',source_type='original',adoption_reason='Direct result',use_scope='Study')
+    issue=dict(text='查证因果机制',claim_id='C1',claim='观察到差异并证明了因果机制',kind='blocking',status='resolved',source_ids=['S1'],resolution='已证明')
+    row=evidence_state.merge_issues(a,dict(evidence=[e],issues=[issue]))[0]
+    assert row['status']=='open' and row['resolution']!='已证明'
+
+
+def test_basis_classification_does_not_insert_new_facts_into_source_boundary():
+    s=materials.source('Study','These experiments suggest the mechanism may explain the effect.')
+    e=research.validate_spans(dict(evidence=[dict(evidence(s),quote=s['text'])],gaps=[],issues=[]),[s])['evidence'][0]
+    e['boundary']='研究作者提出的解释，尚非确定因果';before=e['boundary']
+    verdict=dict(evidence_id=e['evidence_id'],support='supported',basis='author_interpretation',reason='作者解释',checks=dict.fromkeys(research_contract.CHECKS,'matched'))
+    research_contract.apply_judgements([e],[verdict]);research_contract.apply_judgements([e],[verdict])
+    assert e['boundary']==before
+    assert e['support']=='limited' and e['type']=='inference'
+    assert '作者解释' in evidence_state.span_summary([e])

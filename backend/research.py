@@ -1,6 +1,7 @@
 """Bounded, version-aware discovery -> reading -> evidence pipeline."""
 import asyncio
 import copy
+import difflib
 import hashlib
 import json
 import re
@@ -86,7 +87,15 @@ async def structured(a,stage,instruction,schema,job_id,candidates=None,questions
         data=context(a,stage,questions)
         if schema in (EvidenceJudgements,EvidenceScopeAudit):
             data=audit_context(a,stage,questions,{e['source_id'] for e in candidates or []})
-        elif schema in (CoverageAudit,AnswerScopeAudit):data=audit_context(a,stage,questions)
+        elif schema in (CoverageAudit,AnswerScopeAudit):
+            data=audit_context(a,stage,questions)
+            rows=[row for group in candidates or [] for row in group.get('coverage',[])]
+            ids={row['question_id'] for row in rows}
+            contract=data['research_contract']
+            data['research_contract']={**contract,
+                'questions':[dict(id=row['question_id'],text=row['question'],required=row['required']) for row in rows],
+                'source_targets':[t for t in contract.get('source_targets',[]) if t['id'] in ids]}
+            instruction+=' 只核对本次candidates.coverage列出的问题编号；完整用户原句用于理解意图，不为其他组返回结论。'
         prompt=json.dumps({'task':instruction,'context':data,'candidates':candidates or [],'schema':schema.model_json_schema()},ensure_ascii=False)
         try:raw,usage=await providers.generate(s,SYSTEM,prompt,emit)
         except providers.StructuredOutputUnsupported:
@@ -119,7 +128,7 @@ def validate_spans(notes,sources):
             message='未在原文中定位到证据：'+e['claim']
             kind='blocking' if e.get('core_claim') else 'limitation'
             if kind=='blocking':notes['gaps'].append(message)
-            notes.setdefault('issues',[]).append(dict(text=message,kind=kind,claim=e['claim'],claim_id=e.get('claim_id',''),source_ids=[e['source_id']],system_kind='unmatched_quote'))
+            notes.setdefault('issues',[]).append(dict(text=message,kind=kind,claim=e['claim'],claim_id=e.get('claim_id',''),source_ids=[e['source_id']],system_kind='unmatched_quote',attempted_quote=quote))
             continue
         offset=None if bibliographic else s['text'].index(quote)
         page=None if bibliographic else next((p['page'] for p in s.get('pages',[]) if quote in p['text']),None)
@@ -152,6 +161,24 @@ def pdf_match_text(text,extracted=True):
         value=ligatures.get(c,c) if extracted else c
         chars.extend(value);positions.extend([i]*len(value))
     return ''.join(chars),positions
+
+
+def quote_feedback(quote,source):
+    """Retrieve nearby *read* passages for correction, never repair a quotation."""
+    if not source.get('selected',True):return []
+    pdf=bool(source.get('pages'));needle,_=pdf_match_text(quote,pdf)
+    if len(needle)<24:return []
+    text=source.get('text','');ranked=[]
+    for r in source.get('notebook',{}).get('read_ranges',[]):
+        start=max(0,r['start']);end=min(len(text),r['end'])
+        normalized,positions=pdf_match_text(text[start:end],pdf)
+        match=difflib.SequenceMatcher(None,needle,normalized,autojunk=False).find_longest_match()
+        if match.size<24:continue
+        left=max(start,start+positions[match.b]-200)
+        right=min(end,left+1000,start+positions[match.b+match.size-1]+201)
+        ranked.append((match.size,dict(source_id=source['id'],start=left,end=right,text=text[left:right])))
+    ranked.sort(key=lambda row:-row[0])
+    return [row for _,row in ranked[:3]]
 
 
 class Research:
@@ -428,7 +455,13 @@ class Research:
         self.update('正在核对关键结论与原文证据')
         read_ranges={s['id']:s['excerpts'] for s in source_context.sources(self.a,self.questions)}
         feedback=[{k:e.get(k) for k in ('source_id','claim','boundary','support_reason')} for e in self.notes.get('evidence',[]) if e.get('support')=='unsupported']
-        feedback += [dict(source_ids=i['source_ids'],claim=i['claim'],support_reason=i['text']) for i in self.notes.get('issues',[]) if i.get('system_kind')=='unmatched_quote']
+        sources={s['id']:s for s in self.a['sources']}
+        for issue in self.notes.get('issues',[]):
+            if issue.get('system_kind')!='unmatched_quote':continue
+            quote=issue.get('attempted_quote','')
+            passages=[p for sid in issue['source_ids'] if sid in sources for p in quote_feedback(quote,sources[sid])]
+            feedback.append(dict(source_ids=issue['source_ids'],claim=issue['claim'],support_reason=issue['text'],
+                attempted_quote=quote,original_passages=passages))
         feedback += [dict(question=r['question'],support_reason=r['reason']) for r in self.coverage if r.get('required') and r['status']=='unresolved']
         feedback += [dict(question=r['question'],answer_scope=r['answer_scope']) for r in self.coverage if r.get('required') and r['status']=='unresolved' and r.get('answer_scope')]
         verified=[e for e in self.notes.get('evidence',[]) if evidence_state.assessed(e)]
@@ -438,6 +471,7 @@ class Research:
             '每条 claim 聚焦一个可核对判断；来自不同位置的事实拆成不同 evidence。quote 使用足以支持该判断的连续原文，不拼接不同片段，不省略中间文字或自行改写公式；找不到连续原文时请求回读或保留缺口。'
             '用户要求正式条件清单时，逐条解释原清单的独立条目，保留其全部限制与例外，不把多个正式条目压成一条概览。可以省去重复修辞，不能用泛称替换具体适用对象或省去原文定义。'
             'candidates若有前轮核查反馈，只是被拒绝的主张及具体理由，不是事实来源；依据实际原文补全条件、降低断言或请求回读，不重复输出同一缺陷。边界中的事实同样需要核对。'
+            'original_passages是从同来源已读范围检出的真实连续原文，带字符起止位置；attempted_quote是未定位的旧引文，不可当原文。原文可能被脚注、表格或页眉打断，不能删除插入内容再拼接两端；可改引未被打断的完整句子或分别引用连续片段，并重新核对主张与边界。检出相近原文不代表它支持原主张。'
             'previous_verified_evidence是同一材料已经核实的条目与原始引文；保持其正确部分，仅补全缺口及修正被拒条目，不在每轮重写全部已有结果或增加未要求的解释。'
             '核对当前任务需要的全部关键问题；只列阻碍继续写作的实质 gaps 和 conflicts，不为凑篇数补查。'
             '只读到摘要不得推断全文。issues 分类：blocking 仅用于无法省略且阻碍当前写作任务的核心依据；'
@@ -521,8 +555,14 @@ class Research:
                     CoverageAudit,self.job_id,[audit_group],questions=self.questions)
                 self.update('正在逐项核对完整问题与所要求的条件清单')
                 scope=await structured(self.a,self.stage,coverage_scope.INSTRUCTION,AnswerScopeAudit,self.job_id,[audit_group],questions=self.questions)
-                combined['coverage'].extend(audit['coverage'])
-                combined['judgements'].extend(scope['judgements'])
+                ids={row['question_id'] for row in audit_group['coverage']}
+                extra={row['question_id'] for row in audit['coverage']+scope['judgements']}-ids
+                if extra:self.update('正在核对回答与问题的对应关系',ignored_audit_question_ids=sorted(extra))
+                # Bind each response to its own requested IDs. An extra answer
+                # cannot invalidate (or approve) a question in another group.
+                # Missing and duplicate answers within this group stay invalid.
+                combined['coverage'].extend(row for row in audit['coverage'] if row['question_id'] in ids)
+                combined['judgements'].extend(row for row in scope['judgements'] if row['question_id'] in ids)
                 combined['read_requests'].extend(scope['read_requests'])
             self.coverage_cache[coverage_key]=combined
         audit=self.coverage_cache[coverage_key]
