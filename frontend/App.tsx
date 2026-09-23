@@ -1,4 +1,5 @@
 import NativeTrace from './NativeTrace';
+import ExtensionsPanel from './ExtensionsPanel';
 import AccountPanel from './AccountPanel';
 import EditorialPanel,{SynthesisSummary} from './EditorialPanel';
 import {Pager} from './MaterialList';
@@ -24,7 +25,7 @@ const RUNLABEL:Record<string,string>={topic:'生成选题',sources:'分析选中
 
 export default function App(){
  const [list,setList]=useState<Article[]>([]),[article,setArticle]=useState<Article|null>(null),[meta,setMeta]=useState<Meta>({personas:[],themes:[]}),[cfg,setCfg]=useState<Config|null>(null);
- const [step,setStep]=useState<Stage>('topic'),[showAccount,setShowAccount]=useState(false),[showSettings,setShowSettings]=useState(false),[newModal,setNewModal]=useState(false);
+ const [step,setStep]=useState<Stage>('topic'),[showExtensions,setShowExtensions]=useState(false),[showAccount,setShowAccount]=useState(false),[showSettings,setShowSettings]=useState(false),[newModal,setNewModal]=useState(false);
  const [sourceFocus,setSourceFocus]=useState<IssueFocus>({token:0});
  const [contextSelection,setContextSelection]=useState<ContextSelection>(null),[inspectSource,setInspectSource]=useState('');
  const {side,tab:sideTab,narrow,change:changeSide}=useSidebarState(article?.id,step);
@@ -80,7 +81,8 @@ export default function App(){
  async function showRecords(type:string,page=1){await act(async()=>{await flushChanges();const result=await api('/articles/'+articleRef.current!.id+'/'+type+(type==='versions'?'?page='+page+'&page_size=50':''));setRecords(type==='versions'?{type,rows:result.items,page,total:result.total}:{type,rows:result})})}
  const common=article?{onJob:(j:Job)=>{setJob(j);if(['queued','running'].includes(j.status))setError('')},a:article,save,act,update,run,busy,prepare:async()=>{await flushChanges();return articleRef.current!},navigate}:null;
  const connected=!!cfg?.services.some(s=>s.key_set)&&!!cfg?.default_service;
- return <div className={'app '+(article?'in-article':'')}><header className="app-header"><button className="brand" onClick={()=>void home()}><span className="brand-icon"><Feather size={21}/></span><span>WeWrite<span className="brand-sub">创作工作台</span></span></button><div className="header-center">{article?<><span className="breadcrumb">文章库</span><ChevronRight size={14}/><span className="truncate">{article.title}</span></>:<span className="quiet-label">从灵感，到一篇好文章。</span>}</div><div className="header-actions"><span className="local-badge"><i/>本地运行 · v{__APP_VERSION__}</span><button className="button" onClick={()=>void transition(()=>setShowAccount(true))}>账号与学习</button><button className="button header-settings" onClick={()=>setShowSettings(true)}><Settings2 size={16}/><span>AI 服务与设置</span></button></div></header>
+ return <div className={'app '+(article?'in-article':'')}><header className="app-header"><button className="brand" onClick={()=>void home()}><span className="brand-icon"><Feather size={21}/></span><span>WeWrite<span className="brand-sub">创作工作台</span></span></button><div className="header-center">{article?<><span className="breadcrumb">文章库</span><ChevronRight size={14}/><span className="truncate">{article.title}</span></>:<span className="quiet-label">从灵感，到一篇好文章。</span>}</div><div className="header-actions"><span className="local-badge"><i/>本地运行 · v{__APP_VERSION__}</span><button className="button" onClick={()=>void transition(()=>setShowAccount(true))}>账号与学习</button><button className="button" onClick={()=>void transition(()=>setShowExtensions(true))}>扩展</button><button className="button header-settings" onClick={()=>setShowSettings(true)}><Settings2 size={16}/><span>AI 服务与设置</span></button></div></header>
+ {showExtensions&&<ExtensionsPanel article={article} prepare={async()=>{await flushChanges();return articleRef.current}} refresh={async()=>{setMeta(await api('/meta'));if(articleRef.current)update(await api('/articles/'+articleRef.current.id));await refreshList()}} onClose={()=>setShowExtensions(false)}/>}
  {showAccount&&<AccountPanel article={article} onClose={()=>setShowAccount(false)} refreshArticle={async()=>{if(articleRef.current)update(await api('/articles/'+articleRef.current.id));await refreshList()}}/>}
  <VersionNotice busy={busy} onRefresh={refreshVersion}/>
  {error&&<div className="toast" role="alert"><AlertCircle size={18}/><span>{error}</span><button aria-label="关闭提示" onClick={()=>setError('')}><X size={16}/></button></div>}

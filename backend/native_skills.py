@@ -9,7 +9,7 @@ SKILLS = ROOT / 'skills'
 MODULES = dict(topic='wewrite-topic', sources='wewrite-write', outline='wewrite-write', write='wewrite-write',
     review='wewrite-review', edit='wewrite-review', revise='wewrite-write', visual='wewrite-visual',
     style='wewrite-style', learn='wewrite-learn', exemplar='wewrite-learn', theme='wewrite-learn',
-    rewrite='wewrite-rewrite', publish='wewrite-publish', image_post='wewrite-publish', stats='wewrite-stats')
+    rewrite='wewrite-rewrite', publish='wewrite-publish', layout_advice='wewrite-publish', image_post='wewrite-publish', stats='wewrite-stats')
 REFERENCES = {
     'wewrite-write': ['references/article-brief.md','references/editorial-quality.md','references/frameworks-quick.md','references/content-enhance.md'],
     'wewrite-review': ['../wewrite-write/references/article-brief.md','../wewrite-write/references/editorial-quality.md','references/seo-rules.md'],

@@ -92,6 +92,12 @@ def start(article_id,request):
 def cancel(id):
     j=store.job(id)
     if j['status'] not in ('queued','running'):return j
+    if j.get('external_inflight'):
+        from pathlib import Path
+        home=Path(j['external_home']).resolve()
+        if not home.is_relative_to((store.DATA/'native').resolve()):raise ValueError('外部任务路径无效')
+        (home/'cancel-requested').write_text('cancel','utf-8')
+        return store.update_job(id,cancel_requested=True,message='正在等待已发送微信请求的回执；随后停止，避免丢失远端结果')
     if id in TASKS: TASKS[id].cancel()
     return store.update_job(id,status='cancelled',ended=store.now(),message='已停止；已完成的结果保留，已发出的请求可能仍计费')
 
@@ -255,32 +261,7 @@ async def run(job_id):
                 plan=next((p for p in a['image_plans'] if p['id']==req['image_id']),None)
                 if not plan: raise ValueError('请先生成或添加配图方案')
                 a=await generate_image(a,job_id,plan)
-            elif stage=='revise':
-                result=await call(job_id,stage,a,req)
-                item=dict(id=store.uid(),original=req['selected_text'] or a['content'],base_revision=a['revision'],account_use=req.get('_account_use'),**result)
-                def suggest(v):
-                    v['suggestions'].append(item);v['current_stage']='write'
-                a=store.save_article(a['id'],a['revision'],suggest,'生成修改建议',account_use=req.get('_account_use'))
-            elif stage=='edit':
-                a,_=await edit_candidate(a,job_id,req)
-            elif stage=='layout_advice':
-                result=await call(job_id,stage,a,req)
-                a=store.save_article(a['id'],a['revision'],lambda v:v.update(layout_advice=result),'生成阅读与结构建议')
-            else:
-                result=await call(job_id,stage,a,req)
-                a=apply_result(a,stage,result,req)
-                if stage=='review': store.update_job(job_id,review_round_id=a['review']['round_id'])
-                if stage=='review' and a['auto']['review']:
-                    for editing_round in range(2):
-                        if a['review']['decision']=='pass':break
-                        store.update_job(job_id,message=f'正在整体编辑并独立复核（第 {editing_round+1}/2 轮）')
-                        a,candidate=await edit_candidate(a,job_id,req)
-                        report=candidate['review'];scores=report.get('dimensions',{})
-                        if any(x['severity']=='blocker' for x in report.get('issues',[])) or any(type(scores.get(k)) is not int or scores[k]<3 for k in editorial.DIMENSIONS):break
-                        a=editorial.adopt(a,candidate['id'],automatic=True)
-                        store.update_job(job_id,review_round_id=a['review']['round_id'],current_step='generation')
-                if stage=='visual' and a['auto']['visual']:
-                    for plan in a['image_plans']: a=await generate_image(a,job_id,plan)
+            else:raise ValueError('未知执行环节')
             store.event(job_id,'saved',revision=a['revision'])
             if stage not in STAGES or not req['chain'] or not a['auto'][stage] or a['stages'][stage]=='needs_input': break
             idx=STAGES.index(stage)+1

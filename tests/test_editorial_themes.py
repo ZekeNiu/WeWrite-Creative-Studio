@@ -101,11 +101,9 @@ def test_legacy_theme_keeps_renderer(client):
 def test_advice_uses_only_reading_context_and_does_not_apply_changes(client,model,monkeypatch):
     a=new(client);a=patch(client,a,{'content':'正文。'},'write')
     monkeypatch.setattr(source_context,'sources',lambda *a,**k:pytest.fail('Must not load unrelated source context'))
-    value=json.loads(prompts.prompt('layout_advice',a,{}))
-    assert set(value['资料与当前内容'])=={'title','article','images'}
-    assert '不超过 5 条' in value['任务']
     result=run(client,a,'layout_advice',chain=False)
-    assert result['status']=='completed'
+    assert result['status']=='completed' and result['native']
+    assert any('wewrite-publish/SKILL.md' in d['path'] for d in result['native']['reads'])
     after=client.get('/api/articles/'+a['id']).json()
     assert after['content']==a['content'] and after['layout']==a['layout']
     assert len(client.get('/api/articles/'+a['id']+'/jobs').json())==1

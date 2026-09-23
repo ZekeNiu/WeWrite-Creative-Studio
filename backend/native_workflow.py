@@ -6,6 +6,8 @@ from . import store, editorial, review_state, creative
 def apply(article,stage,packet,request):
     result=packet['result'];used=packet['account_use']
     def change(v):
+        if stage=='layout_advice':
+            v['layout_advice']=result;v.setdefault('native_executions',[]).append(packet['native']);return
         v['sources']=packet['sources'];v['native_brief']=packet['brief']
         if 'claims' in packet and stage in ('sources','outline','write','review','edit'):
             v['evidence']={**v.get('evidence',{}),**packet['claims'],'engine':'wewrite-native'}
@@ -54,5 +56,5 @@ def apply(article,stage,packet,request):
             else:v['stages']['review']='needs_input'
             v['review']=report
         elif stage=='visual':v['image_plans']=result['images'][:v['visual']['count']]
-    invalidate='review' if stage=='edit' else None if stage=='revise' else stage
+    invalidate='review' if stage=='edit' else None if stage in ('revise','layout_advice') else stage
     return store.save_article(article['id'],article['revision'],change,'完成上游创作环节',invalidate=invalidate,account_use=used)

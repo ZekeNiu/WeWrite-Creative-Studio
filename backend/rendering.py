@@ -27,10 +27,13 @@ def safe_html(value):
 
 def themes():
     import yaml
+    from .account_memory import get
     result=editorial_themes.catalog()
     for p in sorted(THEMES.glob('*.yaml')):
         d=yaml.safe_load(p.read_text(encoding='utf-8'))
         result.append({'id':p.stem,'name':THEME_LABELS.get(p.stem,d['name']),'description':d.get('description',''),'colors':d.get('colors',{}),'group':'classic','defaults':{'font_size':16,'line_height':1.8,'paragraph_gap':18}})
+    for x in get().get('themes',[]):
+        d=x['definition'];result.append(dict(id=x['id'],name=x['label'],description=d['description'],colors=d['colors'],group='learned',defaults=dict(font_size=16,line_height=1.8,paragraph_gap=18)))
     return result
 
 
@@ -70,7 +73,13 @@ def render(a, export=False):
     if editorial:
         result=editorial_themes.EditorialConverter(cfg['theme'],cfg).convert(markdown(a,export,styled=True))
     else:
-        theme=load_theme(cfg['theme'],str(THEMES))
+        from .native_catalog import theme as user_theme
+        custom=user_theme(cfg['theme'])
+        if custom:
+            import copy
+            from wewrite.toolkit.theme import Theme
+            d=copy.deepcopy(custom['definition']);theme=Theme(**{k:d[k] for k in ('name','description','base_css','colors')});theme._raw_data=d
+        else:theme=load_theme(cfg['theme'],str(THEMES))
         theme._raw_data['aigc_footer']=False
         theme.base_css+=f'\np {{font-size:{cfg["font_size"]}px;line-height:{cfg["line_height"]};margin-bottom:{cfg["paragraph_gap"]}px;}}'
         result=WeChatConverter(theme=theme).convert(markdown(a,export))
@@ -80,7 +89,7 @@ def render(a, export=False):
     if editorial and export: title=f'<h1 style="font-family:{editorial_themes.SANS.replace(chr(34),chr(39))};font-size:26px;line-height:1.5;margin:0;padding:26px 20px 6px;background:{editorial_themes.PRESETS[cfg["theme"]]["paper"]}">{html.escape(a["title"])}</h1>'
     document=f'<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(a["title"])}</title><body style="margin:0;padding:{padding};max-width:680px;margin-inline:auto;background:#fff;word-break:break-word">{title}{body}</body></html>'
     _,references,unknown=bibliography.citations(a['content'],a['sources'])
-    return dict(html=document,body=body,markdown=markdown(a,export),plaintext=BeautifulSoup(body,'html.parser').get_text('\n'),references=references,unresolved_citations=unknown,compatibility=validate_html(body))
+    return dict(html=document,body=body,digest=result.digest,markdown=markdown(a,export),plaintext=BeautifulSoup(body,'html.parser').get_text('\n'),references=references,unresolved_citations=unknown,compatibility=validate_html(body))
 
 
 def theme_preview(id):

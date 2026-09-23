@@ -14,12 +14,26 @@ def install(monkeypatch,responder=None):
         task=json.loads(messages[0]['content']);run_id=task['run_id'];directory=task['run_dir']
         key=run_id;index=turns.get(key,0);turns[key]=index+1
         native=next(j for j in all_jobs() if j.get('native',{}).get('run_id')==run_id)
-        req=native['request'];stage='learn' if req.get('kind')=='learn' else native['stage']
+        req=native['request'];stage='learn' if req.get('kind')=='learn' else 'stats' if req.get('action')=='stats_review' else native['stage']
         a=store.get_article(req['article_id'] if stage=='learn' else native['article_id'])
         req={**req,'_account_use':dict(context=account_memory.context(a))}
         calls=[]
         def call(name,**args):calls.append(dict(id=str(index)+'-'+str(len(calls)),name=name,arguments=json.dumps(args,ensure_ascii=False)))
         def write(name,value):call('Write',path=directory+'/'+name,content=value if isinstance(value,str) else json.dumps(value,ensure_ascii=False))
+        if stage in ('rewrite','stats','layout_advice'):
+            if index==0:
+                for path in ('request.json','history.yaml','account-reference.yaml'):call('Read',path=path)
+                if stage=='rewrite':call('Read',path=directory+'/source.md')
+            elif index==1:
+                if stage=='layout_advice':write('layout-advice.md','当前层级清楚，可保留段间留白。')
+                elif stage=='stats':write('effect-review.md','当前数据只能描述已有样本。先记录相同观察窗口，再比较文章表现；不能由一次阅读变化推断原因。')
+                else:
+                    for platform in req['platforms']:
+                        content='口播：你有过这样的疑问吗？同一篇文章，有人读完就忘，有人却会留下一个问题。\n\n【画面：翻开笔记】先找到读者在意的疑问，顺着证据讲清楚，再给出具体例子。\n\n口播：下一次写作前，先问自己想让读者带走什么。' if platform=='douyin' else '# 给写作留一点空白\n\n合上书后，最先想起的往往不是最后一页，而是某句让人停下来的话。\n\n写下问题也许比急着给答案有用。把难懂的概念拆开，看看它解释了什么，又留下哪些缺口。\n\n今天就试试，从一个真实的疑问开始。\n\n#阅读 #写作 #思考\n\n需补图。'
+                        if responder:content=await responder(stage,a,{**req,'platform':platform},service)
+                        write(platform+'.md',content)
+            else:call('Finish')
+            return dict(wire=[dict(role='assistant',content=None,tool_calls=[dict(id=c['id'],type='function',function=dict(name=c['name'],arguments=c['arguments'])) for c in calls])],calls=calls,text='',usage=dict(status='completed',model=service['model'],estimated_cost=None))
         if stage=='learn':
             import yaml
             home=store.DATA/'native'/native['native']['id'];task=json.loads((home/'learning-task.json').read_text('utf-8'))

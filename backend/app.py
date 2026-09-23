@@ -33,6 +33,8 @@ async def lifespan(app):
 app=FastAPI(title='WeWrite 本地工作台',lifespan=lifespan,docs_url=None,redoc_url=None)
 from .account_api import router as account_router
 app.include_router(account_router)
+from .extensions import router as extensions_router
+app.include_router(extensions_router)
 
 
 def native_artifacts(job_id):
@@ -97,7 +99,8 @@ def health():
 
 @app.get('/api/meta')
 def meta():
-    return {'personas':[dict(id=k,name=v[0],description=v[1],example=v[2]) for k,v in prompts.PERSONAS.items()],
+    from .native_catalog import personas
+    return {'personas':personas(),
             'themes':rendering.themes(),'stages':STAGES}
 
 

@@ -63,6 +63,16 @@ def init():
         for row in db.execute("SELECT * FROM jobs WHERE status IN ('running','queued')").fetchall():
             j = json.loads(row['data'])
             j.update(status='interrupted', message='上次运行中断，已保留内容。可从当前环节重新开始。', ended=now())
+            if j.get('external_inflight'):
+                j.update(external_inflight=False,message='微信动作曾被中断，远端结果可能已产生；请查看回执并核对草稿箱，勿直接重复推送。')
+                home=Path(j.get('external_home','')).resolve()
+                receipt=home/'external-receipt.json'
+                if home.is_relative_to((DATA/'native').resolve()) and receipt.is_file():
+                    try:
+                        record=json.loads(receipt.read_text('utf-8'));j['external_receipt']=record
+                        if record.get('result'):
+                            j['result']=record['result'];j['message']='已恢复微信回执；请核对远端成果，本地正文没有自动覆盖。'
+                    except (ValueError,OSError):pass
             db.execute('UPDATE jobs SET status=?,data=? WHERE id=?', ('interrupted', encode(j), row['id']))
 
 
@@ -267,7 +277,20 @@ def job(id):
     with connection() as db:
         r=db.execute('SELECT data FROM jobs WHERE id=?',(id,)).fetchone()
         if not r: raise KeyError('任务不存在')
-        return json.loads(r[0])
+        return refresh_external(json.loads(r[0]))
+
+
+def refresh_external(value):
+    # A child may finish its already-sent request just after restart recovery.
+    if value.get('external_home') and value['status'] in ('interrupted','cancelled'):
+        home=Path(value['external_home']).resolve();path=home/'external-receipt.json'
+        if home.is_relative_to((DATA/'native').resolve()) and path.is_file():
+            try:
+                receipt=json.loads(path.read_text('utf-8'));value['external_receipt']=receipt
+                if receipt.get('result'):
+                    value['result']=receipt['result'];value['message']='已恢复微信回执；请核对远端成果，本地正文没有自动覆盖。'
+            except (OSError,ValueError):pass
+    return value
 
 
 def update_job(id, **patch):
@@ -279,7 +302,7 @@ def update_job(id, **patch):
 
 def jobs(article_id):
     with connection() as db:
-        return [json.loads(r[0]) for r in db.execute('SELECT data FROM jobs WHERE article_id=? ORDER BY rowid DESC LIMIT 20',(article_id,))]
+        return [refresh_external(json.loads(r[0])) for r in db.execute('SELECT data FROM jobs WHERE article_id=? ORDER BY rowid DESC LIMIT 20',(article_id,))]
 
 
 def event(job_id, kind, **payload):

@@ -57,7 +57,7 @@ def save_settings(value: Settings):
     old=settings(); previous={s['id']:s for s in old['services']}
     ids=set(); secrets={}
     for s in value.services:
-        if not s.id or s.id in ('tavily','openalex') or s.id in ids: raise ValueError('服务编号重复或无效')
+        if not s.id or s.id in ('tavily','openalex') or s.id.startswith('wewrite:') or s.id in ids: raise ValueError('服务编号重复或无效')
         ids.add(s.id); s.base_url=security.validate_base(s.base_url)
         old_s=previous.get(s.id,{})
         changed=any(getattr(s,k)!=old_s.get(k) for k in ('base_url','protocol','model')) or s.key is not None

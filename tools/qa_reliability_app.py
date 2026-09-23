@@ -69,6 +69,20 @@ async def image_generate(*args,**kwargs):
     buffer=io.BytesIO();Image.new('RGB',(160,100),'green').save(buffer,'PNG');return buffer.getvalue()
 providers.image_generate=image_generate
 
+# Extension acceptance exercises real native files/CLI/UI with synthetic IO only.
+from backend import extensions
+async def external_fixture(session,value,prepared):
+    await asyncio.sleep(.2)
+    if value['action']=='stats':return dict(rows=[dict(msgid='123456_1',title='扩展验收',ref_date=value['date'],details=[dict(stat_date=value['date'],int_page_read_count=120,share_count=8)])])
+    if value['action']=='draft_read':return dict(html='<section><p>微信模拟人工修改副本。</p></section>')
+    return dict(media_id='offline-draft-'+session.job_id[:8])
+extensions.external=external_fixture
+original_fetch=materials.fetch_bytes
+async def theme_fixture(url,*args,**kwargs):
+    if url=='https://mp.weixin.qq.com/s/fixture-theme':return b'<h1 id="activity-name">Fixture</h1><section id="js_content"><h2 style="color:#123456;font-size:22px">Title</h2><p style="font-size:17px;line-height:1.8">Body</p></section>',url
+    return await original_fetch(url,*args,**kwargs)
+materials.fetch_bytes=theme_fixture
+
 a=store.create_article(dict(topic='模拟排除与长证据'))
 def seed(v):
     v['sources']=[dict(materials.source('长证据资料','研究只支持关联。'+'完整原文内容。'*1500),id='S1')]

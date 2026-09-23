@@ -5,7 +5,6 @@ import csv
 import hashlib
 import io
 import json
-import math
 import re
 from datetime import datetime, timezone
 from typing import Literal
@@ -110,6 +109,8 @@ def index_article(db, a):
     fields.update(a.get('history_fields') or {})
     fields.update(article_id=a['id'], title=a['title'], column=a['brief']['column'], updated=a['updated'],
                   created=a['created'], revision=a['revision'], needs_review=not bool(a.get('history_fields')))
+    fields.update(persona=a['brief'].get('persona',''),framework=a.get('native_brief',{}).get('framework',''),
+                  enhancements=a.get('native_brief',{}).get('enhancements',[]))
     if a.get('trashed_at'): fields['status'] = 'trash'
     db.execute('INSERT OR REPLACE INTO article_index VALUES(?,?)', (a['id'], store.encode(fields)))
 
@@ -305,8 +306,7 @@ def start(kind, value, blob=None):
 async def run(jid, kind, value, blob):
     from .execution_budget import ACTIVE
     budget_token=ACTIVE.set(jid)
-    from . import workflow, providers, materials, source_reader, source_imports
-    from .structured_output import parse
+    from . import workflow, materials, source_reader, source_imports
     token = source_reader.READ_PROGRESS.set(lambda msg: store.update_job(jid, message=msg))
     try:
         store.update_job(jid, status='running', message='正在读取账号参考')

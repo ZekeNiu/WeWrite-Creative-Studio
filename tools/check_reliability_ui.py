@@ -155,6 +155,8 @@ async def main():
         assert any(x['status']=='rejected' for x in restored['editorial_candidates'])
         await after_generation(page,BASE,a['id'],OUT)
         completed_id=a['id']
+        from check_extensions_ui import check as check_extensions
+        await check_extensions(page,BASE,OUT)
         fixture=await (await page.request.get(BASE+'/api/qa-fixture')).json()
         await page.goto(BASE+'/#'+fixture['id'])
         await page.get_by_role('tab',name='整理结果',exact=True).click()

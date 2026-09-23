@@ -57,13 +57,33 @@ def references(value, article):
 async def materialize(session):
     from .native_runtime import dump
     c=session.used['context'];b=session.article['brief'];p=c['profile']
+    from .native_catalog import persona
+    dump(session.home/'personas'/(b['persona']+'.yaml'),persona(b['persona']))
+    from .account_memory import get
+    value=get()
+    for entry in value.get('themes',[]):dump(session.home/'themes'/(entry['id']+'.yaml'),entry['definition'])
     dump(session.home/'style.yaml',dict(name=b['column'],industry=b.get('domain',''),topics=[p['direction']] if p['direction'] else [b.get('domain') or b['column']],
         writing_persona=b['persona'],tone=b['tone'],voice=p['expression'],word_count=str(b['words']),
         target_audience=b['audience'] or p['audience'],blacklist=dict(words=[],topics=[p['avoid']] if p['avoid'] else []),
         theme=session.article['layout']['theme'],author=session.article['layout'].get('author','')))
     from .account_memory import history
-    rows=[r for r in history(page_size=1000000)['items'] if r['article_id']!=session.article['id'] and r['status']!='trash']
-    dump(session.home/'history.yaml',dict(version=1,articles=[dict(r,date=(r.get('published_at') or r['created'])[:10],run_id=r['article_id']) for r in rows]))
+    rows=[r for r in history(page_size=1000000)['items'] if (session.stage=='stats' or r['article_id']!=session.article['id']) and r['status']!='trash']
+    online=value.get('online_metrics',[])
+    history_rows=[]
+    for r in rows:
+        item=dict(r,date=(r.get('published_at') or r['created'])[:10],run_id=r['article_id'])
+        matches=[x for x in online if x['article_id']==r['article_id']]
+        if matches:
+            last=max(matches,key=lambda x:x['observed_at']);item['stats']=last['stats'];item['stats_observed_at']=last['observed_at']
+        manual=[x for x in value['metrics'] if x['article_id']==r['article_id']]
+        if manual:
+            item['manual_metrics']=manual
+            if not matches:
+                last=max(manual,key=lambda x:x['observed_at'])
+                item['stats']=dict(read_count=last['reads'],share_count=last['shares'],like_count=last['likes'],save_count=last['saves'])
+                item['stats_observed_at']=last['observed_at'];item['stats_window_hours']=last['window_hours']
+        history_rows.append(item)
+    dump(session.home/'history.yaml',dict(version=1,articles=history_rows))
     for key,lesson in c.get('native_lessons',{}).items():dump(session.home/'lessons'/('studio-diff-'+key+'.yaml'),lesson)
     summary=json.loads(await session.cli(['learn-edits','--summarize','--json']))
     dump(session.home/'learning-summary.json',summary)

@@ -1,5 +1,7 @@
 export const STAGES=['topic','sources','outline','write','review','visual','layout'] as const;
 export type Stage=typeof STAGES[number];
+export interface Article {extensions?:{job_id:string;action:string;result:any;created:string}[]}
+export interface Job {external_receipt?:unknown}
 export interface Article {argument_synthesis?:{thesis:string;chain:{id:string;judgement:string;reasoning:string;boundary:string;source_ids:string[]}[];strongest_counterargument:string;conflicts:string[];boundaries:string[];reader_value:string;unresolved:string[]};editorial_candidates?:{id:string;status:string;checked?:boolean;created:string;content:string;explanation:string;changes:string[];review:any;diff:{kind:string;before:string;after:string}[]}[];draft_versions?:{id:string;kind:string;created:string;content:string;review_state?:string}[]}
 export interface Source {notebook?:{read_characters?:number;total_characters?:number;notes:{category:string;note:string;quote:string;start:number;end:number}[];missing_categories:string[];pointers:{label:string;start:number}[]}}
 export interface ResearchStats {provider_queries?:number}
@@ -24,4 +26,4 @@ export interface Meta {personas:{id:string;name:string;description:string;exampl
 export interface Job {native?:{id:string;run_id:string;upstream_revision:string;reads:{path:string;complete?:boolean;start?:number;end?:number;total?:number;operation?:string}[]};execution_usage?:{requests:number;known_cost:number;unknown:number};account_candidate?:boolean;resumed_from?:string;id:string;article_id:string;stage:string;status:string;created:string;ended:string|null;message:string;partial:string;result:any;request:any}
 export type Save=(changes:Partial<Article>|((current:Article)=>Partial<Article>),stage?:string)=>Promise<Article>;
 
-export interface Theme {id:string;name:string;description:string;colors:Record<string,string>;group:'editorial'|'classic';defaults:Pick<Article['layout'],'font_size'|'line_height'|'paragraph_gap'>}
+export interface Theme {id:string;name:string;description:string;colors:Record<string,string>;group:'editorial'|'classic'|'learned';defaults:Pick<Article['layout'],'font_size'|'line_height'|'paragraph_gap'>}
