@@ -249,6 +249,10 @@ class ResearchNotes(BaseModel):
     read_requests: list['SectionRead'] = Field(default_factory=list,max_length=4)
 
 
+class EvidenceAdditions(BaseModel):
+    evidence: list[EvidenceSpan] = Field(default_factory=list,max_length=12)
+
+
 class SourceNote(BaseModel):
     source_id: str
     category: Literal['design','results','counterevidence','limitations','scope']

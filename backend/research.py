@@ -10,7 +10,7 @@ from pathlib import Path
 from datetime import date
 from urllib.parse import urlsplit,urlunsplit,parse_qsl,urlencode
 from . import store,providers,materials,search_tools,browser_search,academic,flow_state,evidence_state,creative
-from .models import ResearchPlan,ResearchNotes,SearchSelection,IssueScope,EvidenceJudgements,EvidenceScopeAudit,CoverageAudit,AnswerScopeAudit
+from .models import ResearchPlan,ResearchNotes,SearchSelection,IssueScope,EvidenceJudgements,EvidenceScopeAudit,CoverageAudit,AnswerScopeAudit,EvidenceAdditions
 from .structured_output import parse as parse_structured
 from . import source_context,research_contract,search_plan,source_notebook,evidence_scope,coverage_scope
 
@@ -52,7 +52,7 @@ def analysis_signature():
     try: model=providers.fingerprint(providers.service_for('research'),'text')
     except ValueError:model=None
     return digest([model,SYSTEM,source_context.POLICY_VERSION,research_contract.VERSION,
-                   [hashlib.sha256(p.read_bytes()).hexdigest() for p in (Path(__file__),Path(source_notebook.__file__),Path(source_context.__file__),Path(evidence_scope.__file__),Path(evidence_scope.temporal_scope.__file__),Path(coverage_scope.__file__))],ResearchNotes.model_json_schema(),EvidenceJudgements.model_json_schema(),EvidenceScopeAudit.model_json_schema(),AnswerScopeAudit.model_json_schema()])
+                   [hashlib.sha256(p.read_bytes()).hexdigest() for p in (Path(__file__),Path(source_notebook.__file__),Path(source_context.__file__),Path(evidence_scope.__file__),Path(evidence_scope.temporal_scope.__file__),Path(coverage_scope.__file__))],ResearchNotes.model_json_schema(),EvidenceJudgements.model_json_schema(),EvidenceScopeAudit.model_json_schema(),AnswerScopeAudit.model_json_schema(),EvidenceAdditions.model_json_schema()])
 
 
 def context(a,stage,questions=()):
@@ -87,6 +87,8 @@ async def structured(a,stage,instruction,schema,job_id,candidates=None,questions
         data=context(a,stage,questions)
         if schema in (EvidenceJudgements,EvidenceScopeAudit):
             data=audit_context(a,stage,questions,{e['source_id'] for e in candidates or []})
+        elif schema is EvidenceAdditions:
+            data=audit_context(a,stage,questions,{item['source_id'] for item in candidates or []})
         elif schema in (CoverageAudit,AnswerScopeAudit):
             data=audit_context(a,stage,questions)
             rows=[row for group in candidates or [] for row in group.get('coverage',[])]
@@ -166,7 +168,7 @@ def pdf_match_text(text,extracted=True):
     return ''.join(chars),positions
 
 
-def quote_feedback(quote,source):
+def quote_feedback(quote,source,max_characters=1000):
     """Retrieve nearby *read* passages for correction, never repair a quotation."""
     if not source.get('selected',True):return []
     pdf=bool(source.get('pages'));needle,_=pdf_match_text(quote,pdf)
@@ -178,10 +180,39 @@ def quote_feedback(quote,source):
         match=difflib.SequenceMatcher(None,needle,normalized,autojunk=False).find_longest_match()
         if match.size<24:continue
         left=max(start,start+positions[match.b]-200)
-        right=min(end,left+1000,start+positions[match.b+match.size-1]+201)
+        right=min(end,left+max_characters,start+positions[match.b+match.size-1]+201)
         ranked.append((match.size,dict(source_id=source['id'],start=left,end=right,text=text[left:right])))
     ranked.sort(key=lambda row:-row[0])
     return [row for _,row in ranked[:3]]
+
+
+def repair_targets(a,coverage):
+    """Locate missing checklist items in already read material; never adopt them."""
+    sources={s['id']:s for s in a['sources'] if s.get('selected')}
+    identities={t['id'] for t in a.get('research_contract',{}).get('source_targets',[])}
+    tasks=[];seen=set()
+    for row in coverage:
+        if not row.get('required') or row['status']!='unresolved':continue
+        if row['question_id'] in identities:
+            for sid in row['source_ids']:
+                source=sources.get(sid)
+                if source and source.get('status') in ('retrieved','abstract_only','user_provided'):
+                    tasks.append(dict(question_id=row['question_id'],question=row['question'],source_id=sid,scope='source_identity'))
+        for listing in (row.get('answer_scope') or {}).get('source_lists',[]):
+            source=sources.get(listing['source_id'])
+            if not listing['complete_read'] or not source:continue
+            for item in listing['items']:
+                if item['covered']:continue
+                quote=item['source_quote'];key=(row['question_id'],source['id'],quote)
+                if not quote or key in seen:continue
+                seen.add(key);text=source.get('text','');at=text.find(quote)
+                read=source.get('notebook',{}).get('read_ranges',[])
+                exact=at>=0 and any(r['start']<=at and at+len(quote)<=r['end'] for r in read)
+                passages=[dict(source_id=source['id'],start=at,end=at+len(quote),text=quote)] if exact else quote_feedback(quote,source,3000)
+                if passages:
+                    tasks.append(dict(question_id=row['question_id'],question=row['question'],source_id=source['id'],
+                        scope='list_item',unverified_item_quote=quote,original_passages=passages))
+    return tasks
 
 
 class Research:
@@ -475,7 +506,27 @@ class Research:
         verified=[e for e in self.notes.get('evidence',[]) if evidence_state.assessed(e)]
         if verified:feedback.append(dict(previous_verified_evidence=verified))
         if repair_round and self.open_targets():feedback.append(dict(unresolved_issues=self.open_targets()))
-        self.notes=validate_spans(await structured(self.a,self.stage,
+        additions=[]
+        if repair_round:
+            tasks=repair_targets(self.a,self.coverage)
+            for start in range(0,len(tasks),4):
+                batch=tasks[start:start+4]
+                self.update('正在逐项补全已读材料中的缺项',repair_round=repair_round,items_done=start,items_total=len(tasks))
+                patch=await structured(self.a,self.stage,
+                    '只补充candidates列出的缺项，每项分别形成可独立核对的evidence。完整用户原句用于理解意图，不扩展本组任务。'
+                    'original_passages是实际已读的连续原文；unverified_item_quote只是前轮核查线索，可能遗漏页眉或条件，不能作为引文照抄。'
+                    'quote逐字复制真实连续原文，跨页时保留中间页码和页眉；不能删除中间内容再拼接。无法定位则留空evidence，不猜补。'
+                    '逐项解释全部前提、阈值、例外、确认顺序和适用范围，不把清单压成几个常见示例。claim与boundary中的每个事实都须有依据。'
+                    'source_identity仅核对指定来源自身的身份和实际访问范围，可逐字引用其bibliography.title；不由题名推断结果。'
+                    'question_ids和source_id仅使用本组给定值；填写source_type、adoption_reason、use_scope、quality与core_claim。'
+                    '这些是尚待独立核实的候选，不输出自我通过结论。'+source_context.CLAIM_SUPPORT_POLICY,
+                    EvidenceAdditions,self.job_id,batch,questions=self.questions)
+                allowed={(t['question_id'],t['source_id']) for t in batch}
+                if any(not e['question_ids'] or any((qid,e['source_id']) not in allowed for qid in e['question_ids']) for e in patch['evidence']):
+                    raise ValueError('补充证据未对应本组问题与来源，原始结果已保留')
+                additions.extend(patch['evidence'])
+            if additions:feedback.append(dict(unverified_additions=additions))
+        raw_notes=await structured(self.a,self.stage,
             '整理核心发现及原文支持关系；evidence.quote 必须逐字复制来源中的连续片段，claim 写支持的判断，boundary 写适用范围。'
             '每条 claim 聚焦一个可核对判断；来自不同位置的事实拆成不同 evidence。quote 使用足以支持该判断的连续原文，不拼接不同片段，不省略中间文字或自行改写公式；找不到连续原文时请求回读或保留缺口。'
             '用户要求正式条件清单时，逐条解释原清单的独立条目，保留其全部限制与例外，不把多个正式条目压成一条概览。可以省去重复修辞，不能用泛称替换具体适用对象或省去原文定义。'
@@ -483,6 +534,7 @@ class Research:
             'original_passages是从同来源已读范围检出的真实连续原文，带字符起止位置；attempted_quote是未定位的旧引文，不可当原文。原文可能被脚注、表格或页眉打断，不能删除插入内容再拼接两端；可改引未被打断的完整句子或分别引用连续片段，并重新核对主张与边界。检出相近原文不代表它支持原主张。'
             'original_quote是已定位的原文；scope_alignment是被拒的条件对照记录，不是原文。其source_condition可能自行缩写、遗漏括号或拼接文字，不能照抄失败对照；依据original_quote保留完整原词及括号重作核对。'
             'previous_verified_evidence是同一材料已经核实的条目与原始引文；保持其正确部分，仅补全缺口及修正被拒条目，不在每轮重写全部已有结果或增加未要求的解释。'
+            'unverified_additions是逐项补充的候选，尚未核实，稍后逐条进入独立核查。不要重复改写这些主张或引文；结合这些候选整理当前问题，只有可逐条绑定的主张才建议resolved，不能据候选自动报充分。'
             'unresolved_issues保留本轮实际未解决的问题。resolved事项的claim必须逐字对应一条已核实evidence.claim；仅claim_id相同不代表完整主张得到支持。一个事项包含多个判断时逐项核实，不能把分散证据拼成未核实的大结论。自动建议如果只是重复已经回答的问题，应依据已核实条目重新整理；原有待核问题与人工决定不能默默删除。'
             '核对当前任务需要的全部关键问题；只列阻碍继续写作的实质 gaps 和 conflicts，不为凑篇数补查。'
             '只读到摘要不得推断全文。issues 分类：blocking 仅用于无法省略且阻碍当前写作任务的核心依据；'
@@ -503,7 +555,14 @@ class Research:
             '有 blocking 时 followup_queries 给出可执行定向查询；没有时为空。'
             '素材 use 是用户的可选使用要求，不能当作证据；只有 author_experience_allowed=true 的材料可作作者亲历，不得自行推定授权。'
             '本轮目标问题 ID：'+json.dumps(self.requested)+'；新材料 ID：'+json.dumps(self.a.get('research',{}).get('unassessed_source_ids',[]))+'。只增量分析新材料及关联主张，保留其余已核实结果和人工决定。'
-            '本次补充要求：'+self.requirements+'；以下仅为可选检索线索，未被用户要求的细分人群、专项、对照实验或机制不能列为 blocking 或 gaps：'+json.dumps(self.questions,ensure_ascii=False),ResearchNotes,self.job_id,feedback,questions=self.questions),self.a['sources'])
+            '本次补充要求：'+self.requirements+'；以下仅为可选检索线索，未被用户要求的细分人群、专项、对照实验或机制不能列为 blocking 或 gaps：'+json.dumps(self.questions,ensure_ascii=False),ResearchNotes,self.job_id,feedback,questions=self.questions)
+        # Preserve every generated candidate for independent checking, even if
+        # the overview omits it again. No supplement is accepted by this merge.
+        keys={(e['source_id'],e['quote'],e['claim'],e.get('boundary','')) for e in raw_notes['evidence']}
+        for e in additions:
+            key=(e['source_id'],e['quote'],e['claim'],e.get('boundary',''))
+            if key not in keys:raw_notes['evidence'].append(e);keys.add(key)
+        self.notes=validate_spans(raw_notes,self.a['sources'])
         for src in self.a['sources']:
             if src.get('selected') and src.get('text'):
                 source_notebook.save(src,[n for n in self.notes.get('source_notes',[]) if n['source_id']==src['id']],signature,read_ranges.get(src['id'],[]))
@@ -592,7 +651,7 @@ class Research:
         incomplete_read_list=any(r.get('required') and r['status']=='unresolved' and r.get('answer_scope') and r['answer_scope']['source_lists']
                                 and all(x['complete_read'] for x in r['answer_scope']['source_lists']) for r in checked_rows)
         unbound_issue=research_contract.sufficient(self.coverage) and bool(self.open_targets())
-        if repair_round<1 and (rejected_core or unmatched_core or incomplete_read_list or unbound_issue):
+        if repair_round<1 and (rejected_core or unmatched_core or incomplete_read_list or unbound_issue or repair_targets(self.a,self.coverage)):
             # Local correction keeps the same materials, search and read limits.
             self.update('正在根据独立核查结果修正关键表述',repair_round=repair_round+1)
             self.notes_key=None
