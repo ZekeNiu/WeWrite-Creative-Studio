@@ -105,3 +105,41 @@ def test_manual_final_records_real_edit_pair_without_changing_ai_verdict(client)
     final=r.json()['draft_versions'][-1]
     assert final['origin']=='human' and final['human_edit_base']==base
     assert final['review_state']!='AI 审核通过'
+
+
+def test_review_checks_draft_once_without_restarting_research(client,monkeypatch):
+    import json
+    from backend import workflow,research,providers
+    from backend.models import JobRequest
+    a=store.create_article({'topic':'A bounded editorial review'})
+    def seed(v):
+        v['content']='一段待审稿件';v['auto']['review']=False;v['stages']['write']='done'
+    a=store.save_article(a['id'],a['revision'],seed,'fixture');checked=[]
+    async def no_research(*args):raise AssertionError('Review must not restart discovery')
+    async def audit(article,job):
+        checked.append(article['content']);return dict(complete=True,issues=[])
+    async def generate(*args):
+        return json.dumps(dict(decision='pass',summary='No issues',issues=[],dimensions=dict.fromkeys(editorial.DIMENSIONS,4))),dict(status='completed')
+    monkeypatch.setattr(research,'gather',no_research);monkeypatch.setattr(editorial,'audit',audit)
+    monkeypatch.setattr(providers,'generate',generate)
+    monkeypatch.setattr(providers,'service_for',lambda *args:dict(model='mock',name='mock'))
+    j=store.create_job(a['id'],JobRequest(stage='review',revision=a['revision']).model_dump())
+    asyncio.run(workflow.run(j['id']))
+    assert store.job(j['id'])['status']=='completed'
+    assert checked==['一段待审稿件'] and store.get_article(a['id'])['review']['decision']=='pass'
+
+
+def test_factual_audit_receives_originals_without_prior_self_assessment(client,monkeypatch):
+    import json
+    from backend import providers
+    a,s=source_article();a['evidence']={'claims':[{'claim':'Prior verdict'}]}
+    a['argument_synthesis']={'thesis':'Prior reasoning'}
+    j=store.create_job(a['id'],dict(stage='review'));sent=[]
+    async def generate(service,system,prompt,emit):
+        sent.append(json.loads(prompt));return '{"segments":[]}',dict(status='completed')
+    monkeypatch.setattr(providers,'generate',generate)
+    monkeypatch.setattr(providers,'service_for',lambda *args:dict(model='mock',name='mock'))
+    asyncio.run(editorial.generate(a,j['id'],'review','Check facts',editorial.FactAudit,dict(segments=editorial.segments(a['content']))))
+    context=sent[0]['context']
+    assert context['sources'][0]['text']==s['text'] and context['segments']
+    assert not {'evidence','argument_synthesis','issue_decisions','outline'}&context.keys()

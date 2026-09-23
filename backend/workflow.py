@@ -211,7 +211,10 @@ async def run(job_id):
             prerequisites(stage,a)
             store.update_job(job_id,stage=stage,target_stage=j['request']['stage'],message='正在'+LABELS.get(stage,{'revise':'修改选段','image':'生成图片','layout_advice':'分析阅读与结构'}.get(stage,stage)),partial='',result=None)
             store.event(job_id,'stage',stage=stage)
-            if stage in ('topic','sources','review','research'):
+            # Draft review owns its independent factual audit. Re-running the
+            # research pipeline here repeats notes and coverage checks before
+            # auditing the same draft; missing facts remain review findings.
+            if stage in ('topic','sources','research'):
                 a,pending=await research.gather(a,job_id,stage,req.get('instruction',''))
                 if pending and stage in ('sources','research'):
                     if stage in ('sources','research'):

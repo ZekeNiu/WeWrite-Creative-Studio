@@ -25,6 +25,51 @@ def test_quote_location_alone_cannot_establish_support():
     assert not evidence_state.assessed(result['evidence'][0])
 
 
+def test_exact_bibliographic_title_can_identify_a_work_without_rewriting_original():
+    title='Synthetic Review of Training Programmes'
+    s=materials.source(title,'Research question: a synthetic abstract.')
+    s.update(status='abstract_only',bibliography=dict(title=title,doi='10.1234/synthetic'))
+    raw=dict(evidence(s),quote=title,claim='论文题名为 Synthetic Review of Training Programmes。')
+    result=research.validate_spans(dict(evidence=[raw],gaps=[],issues=[]),[s])
+    e=result['evidence'][0]
+    assert e['quote_origin']=='bibliography' and e['offset'] is None and '书目' in e['location']
+    assert s['text']=='Research question: a synthetic abstract.'
+    assert not evidence_state.assessed(e)
+    verdict=dict(evidence_id=e['evidence_id'],support='supported',basis='not_applicable',identity_only=True,source_origin='primary',
+        reason='The title matches the supplied bibliographic record',checks=dict.fromkeys(research_contract.CHECKS,'not_applicable'),question_ids=[])
+    research_contract.apply_judgements([e],[verdict])
+    assert evidence_state.assessed(e)
+
+
+def test_bibliographic_quote_cannot_establish_an_experimental_result():
+    title='A Programme Prevents All Injuries'
+    s=materials.source(title,'The actual study only describes a protocol.')
+    s.update(status='abstract_only',bibliography=dict(title=title))
+    raw=dict(evidence(s),quote=title,claim='实验证明能预防所有损伤')
+    result=research.validate_spans(dict(evidence=[raw],gaps=[],issues=[]),[s]);e=result['evidence'][0]
+    verdict=dict(evidence_id=e['evidence_id'],support='supported',basis='observed',identity_only=False,source_origin='primary',
+        reason='A heading is not an experimental result',checks=dict.fromkeys(research_contract.CHECKS,'matched'),question_ids=[])
+    research_contract.apply_judgements([e],[verdict])
+    assert not evidence_state.assessed(e)
+    assert evidence_state.evaluated(e)
+
+
+def test_identity_only_evidence_cannot_complete_a_content_question():
+    span=dict(evidence_id='E1',source_id='S1',quote_origin='bibliography')
+    row=dict(question_id='Q1',required=True,status='unresolved',reason='',evidence_ids=[],candidate_evidence_ids=['E1'],source_ids=[])
+    verdict=dict(question_id='Q1',status='supported',reason='Bibliographic identity found',evidence_ids=['E1'])
+    assert not research_contract.sufficient(research_contract.audit_coverage([row],[verdict],[span]))
+    accepted=research_contract.audit_coverage([row],[dict(verdict,requires_source_content=False)],[span])
+    assert research_contract.sufficient(accepted)
+
+
+def test_unmatched_bibliographic_title_remains_a_core_gap():
+    s=materials.source('Actual title','Original abstract.')
+    s.update(status='abstract_only',bibliography=dict(title='Actual title'))
+    result=research.validate_spans(dict(evidence=[dict(evidence(s),quote='Invented title')],gaps=[],issues=[]),[s])
+    assert not result['evidence'] and result['issues'][0]['kind']=='blocking'
+
+
 def test_system_core_gap_survives_model_issue_list():
     a=store.create_article({'topic':'核心疗效'})
     notes=dict(evidence=[],issues=[dict(id='L1',text='小样本',kind='limitation',source_ids=[],status='open')],
@@ -75,11 +120,13 @@ def test_background_and_manual_exclusion_do_not_establish_full_coverage():
 
 
 @pytest.mark.parametrize('field',research_contract.CHECKS)
-def test_mismatched_population_design_denominator_outcome_causality_or_scope_cannot_pass(field):
+@pytest.mark.parametrize('verdict',['mismatch','unknown'])
+@pytest.mark.parametrize('support',['supported','limited'])
+def test_mismatched_population_design_denominator_outcome_causality_or_scope_cannot_pass(field,verdict,support):
     s=materials.source('Study','The experiment lacks a control group.')
     e=research.validate_spans(dict(evidence=[evidence(s)],gaps=[],issues=[]),[s])['evidence'][0]
-    checks=dict.fromkeys(research_contract.CHECKS,'matched');checks[field]='mismatch'
-    research_contract.apply_judgements([e],[dict(evidence_id=e['evidence_id'],support='supported',reason='冲突应拒绝',checks=checks,question_ids=[])])
+    checks=dict.fromkeys(research_contract.CHECKS,'matched');checks[field]=verdict
+    research_contract.apply_judgements([e],[dict(evidence_id=e['evidence_id'],support=support,basis='observed',source_origin='primary',reason='冲突或缺据应拒绝',checks=checks,question_ids=[])])
     assert not evidence_state.assessed(e)
 
 
@@ -127,5 +174,47 @@ def test_planner_curiosity_does_not_expand_mandatory_user_goal():
 def test_authors_explanation_is_not_reported_as_measured_mechanism():
     s=materials.source('Study','The experiment lacks a control group.')
     e=research.validate_spans(dict(evidence=[evidence(s)],gaps=[],issues=[]),[s])['evidence'][0]
+    e['boundary']='未验证因果，仅为作者提出的解释'
     research_contract.apply_judgements([e],[dict(evidence_id=e['evidence_id'],support='supported',basis='author_interpretation',reason='作者解释',checks=dict.fromkeys(research_contract.CHECKS,'matched'))])
-    assert e['support']=='limited' and e['type']=='inference' and '不能当作本研究直接验证' in e['boundary']
+    assert e['support']=='limited' and e['type']=='inference' and '未验证因果' in e['boundary']
+    assert '依据类型：作者解释' in evidence_state.span_summary([e])
+
+
+@pytest.mark.parametrize('basis',['author_interpretation','external_reference'])
+def test_interpretation_without_a_source_boundary_remains_unsupported(basis):
+    s=materials.source('Study','The experiment lacks a control group.')
+    e=research.validate_spans(dict(evidence=[evidence(s)],gaps=[],issues=[]),[s])['evidence'][0]
+    research_contract.apply_judgements([e],[dict(evidence_id=e['evidence_id'],support='supported',basis=basis,reason='缺少边界',checks=dict.fromkeys(research_contract.CHECKS,'matched'))])
+    assert not evidence_state.assessed(e) and e['support']=='unsupported'
+
+
+def test_resolved_issue_projects_evidence_without_publishing_free_resolution_facts():
+    from tests.quality_fixtures import assessment
+    a=store.create_article(dict(topic='解释观察结果'))
+    e=dict(assessment(),claim_id='C1',evidence_id='E1',source_id='S1',claim='观察到差异',quote='A difference was observed.',
+           boundary='未验证因果',quality='suitable',verification='quote_matched',source_type='original',adoption_reason='Direct result',use_scope='Study')
+    issue=dict(text='因果是否成立',claim_id='C1',claim='观察到差异',kind='limitation',status='resolved',source_ids=['S1'],resolution='已证明一种新的生理机制')
+    row=evidence_state.merge_issues(a,dict(evidence=[e],issues=[issue]))[0]
+    assert row['status']=='resolved' and '未验证因果' in row['resolution']
+    assert '新的生理机制' not in row['resolution']
+
+
+def test_same_claim_id_cannot_resolve_a_broader_unverified_issue():
+    from tests.quality_fixtures import assessment
+    a=store.create_article(dict(topic='核实结论和条件'))
+    e=dict(assessment(),claim_id='C1',evidence_id='E1',source_id='S1',claim='观察到差异',quote='A difference was observed.',
+           boundary='未验证因果',quality='suitable',verification='quote_matched',source_type='original',adoption_reason='Direct result',use_scope='Study')
+    issue=dict(text='查证因果机制',claim_id='C1',claim='观察到差异并证明了因果机制',kind='blocking',status='resolved',source_ids=['S1'],resolution='已证明')
+    row=evidence_state.merge_issues(a,dict(evidence=[e],issues=[issue]))[0]
+    assert row['status']=='open' and row['resolution']!='已证明'
+
+
+def test_basis_classification_does_not_insert_new_facts_into_source_boundary():
+    s=materials.source('Study','These experiments suggest the mechanism may explain the effect.')
+    e=research.validate_spans(dict(evidence=[dict(evidence(s),quote=s['text'])],gaps=[],issues=[]),[s])['evidence'][0]
+    e['boundary']='研究作者提出的解释，尚非确定因果';before=e['boundary']
+    verdict=dict(evidence_id=e['evidence_id'],support='supported',basis='author_interpretation',reason='作者解释',checks=dict.fromkeys(research_contract.CHECKS,'matched'))
+    research_contract.apply_judgements([e],[verdict]);research_contract.apply_judgements([e],[verdict])
+    assert e['boundary']==before
+    assert e['support']=='limited' and e['type']=='inference'
+    assert '作者解释' in evidence_state.span_summary([e])

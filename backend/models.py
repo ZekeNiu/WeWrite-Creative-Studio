@@ -239,7 +239,7 @@ class ResearchIssue(BaseModel):
 
 class ResearchNotes(BaseModel):
     summary: str
-    evidence: list[EvidenceSpan] = Field(default_factory=list, max_length=40)
+    evidence: list[EvidenceSpan] = Field(max_length=40)
     gaps: list[str] = Field(default_factory=list, max_length=8)
     conflicts: list[str] = Field(default_factory=list, max_length=8)
     followup_queries: list[str] = Field(default_factory=list, max_length=4)
@@ -249,6 +249,10 @@ class ResearchNotes(BaseModel):
     coverage: list['QuestionCoverage'] = Field(default_factory=list,max_length=32)
     source_notes: list['SourceNote'] = Field(default_factory=list,max_length=64)
     read_requests: list['SectionRead'] = Field(default_factory=list,max_length=4)
+
+
+class EvidenceAdditions(BaseModel):
+    evidence: list[EvidenceSpan] = Field(max_length=12)
 
 
 class SourceNote(BaseModel):
@@ -272,10 +276,11 @@ class QuestionCoverage(BaseModel):
 
 class CoverageVerdict(QuestionCoverage):
     evidence_ids: list[str] = Field(default_factory=list,max_length=40)
+    requires_source_content: bool = True
 
 
 class CoverageAudit(BaseModel):
-    coverage: list[CoverageVerdict] = Field(default_factory=list,max_length=32)
+    coverage: list[CoverageVerdict] = Field(max_length=32)
 
 
 class EvidenceJudgement(BaseModel):
@@ -284,6 +289,7 @@ class EvidenceJudgement(BaseModel):
     reason: str
     basis: Literal['observed','author_interpretation','external_reference','not_applicable','unassessed'] = 'unassessed'
     source_origin: Literal['primary','secondary','background','unassessed'] = 'unassessed'
+    identity_only: bool = False
     question_ids: list[str] = Field(default_factory=list,max_length=16)
     checks: dict[str,Literal['matched','mismatch','unknown','not_applicable']]
 
@@ -296,7 +302,62 @@ class EvidenceJudgement(BaseModel):
 
 
 class EvidenceJudgements(BaseModel):
-    judgements: list[EvidenceJudgement] = Field(default_factory=list,max_length=40)
+    judgements: list[EvidenceJudgement] = Field(max_length=40)
+
+
+class EvidenceCondition(BaseModel):
+    source_field: str = Field(default='text',max_length=120,pattern=r'^(text|bibliography(?:\.(?:[a-z_][a-z0-9_]*|[0-9]+))+)$')
+    source_condition: str
+    claim_condition: str
+    status: Literal['matched','missing','changed']
+    reason: str
+
+
+class EvidenceScopeJudgement(BaseModel):
+    evidence_id: str
+    conditions: list[EvidenceCondition]
+    scope: Literal['matched','unknown','mismatch']
+    reason: str
+
+
+class EvidenceScopeAudit(BaseModel):
+    judgements: list[EvidenceScopeJudgement] = Field(max_length=40)
+
+
+class AnswerPart(BaseModel):
+    request_quote: str
+    evidence_ids: list[str]
+    status: Literal['answered','missing']
+    reason: str
+
+
+class AnswerListItem(BaseModel):
+    source_quote: str
+    answer_quote: str
+    evidence_ids: list[str]
+    covered: bool
+    reason: str
+
+
+class AnswerSourceList(BaseModel):
+    source_id: str
+    complete_read: bool
+    items: list[AnswerListItem]
+    reason: str
+
+
+class AnswerScope(BaseModel):
+    question_id: str
+    parts: list[AnswerPart]
+    enumeration_requested: bool
+    source_lists: list[AnswerSourceList]
+    complete: bool
+    reason: str
+
+
+class AnswerScopeAudit(BaseModel):
+    judgements: list[AnswerScope] = Field(max_length=32)
+    read_requests: list[SectionRead] = Field(default_factory=list,max_length=2)
 
 
 class ScopeDecision(BaseModel):
@@ -306,11 +367,11 @@ class ScopeDecision(BaseModel):
 
 
 class IssueScope(BaseModel):
-    decisions: list[ScopeDecision] = Field(default_factory=list,max_length=40)
+    decisions: list[ScopeDecision] = Field(max_length=40)
 
 
 class SearchSelection(BaseModel):
-    urls: list[str] = Field(default_factory=list, max_length=8)
+    urls: list[str] = Field(max_length=8)
     reason: str = ''
     decisions: list['CandidateDecision'] = Field(default_factory=list,max_length=32)
 

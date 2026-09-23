@@ -1,7 +1,7 @@
 name: Windows acceptance
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/quality-*']
   pull_request:
 permissions:
   contents: read

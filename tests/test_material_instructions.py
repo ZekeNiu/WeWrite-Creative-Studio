@@ -39,7 +39,7 @@ def test_legacy_context_is_filtered_without_mutating_history(client):
 def test_result_schemas_no_longer_request_purposes():
     for schema in (ResearchNotes,EvidenceResult):
         assert 'source_uses' not in schema.model_json_schema()['properties']
-        value=schema.model_validate({'summary':'ready','claims':[],'source_uses':[{'source_id':'S1','text':'old'}]}).model_dump()
+        value=schema.model_validate({'summary':'ready','claims':[],'evidence':[],'source_uses':[{'source_id':'S1','text':'old'}]}).model_dump()
         assert 'source_uses' not in value
 
 
@@ -84,7 +84,7 @@ def test_batch_selection_atomic_keeps_other_sources_and_conflict(client):
 
 
 def test_research_keeps_existing_evidence_flow_without_purpose_generation(client,model,monkeypatch):
-    from tests.quality_fixtures import judgements,notes as quality_notes
+    from tests.quality_fixtures import judgements,scope_audit,answer_scope_audit,notes as quality_notes
     a=seeded(client);calls=[]
     async def structured(a,stage,instruction,schema,job_id,candidates=None,questions=()):
         calls.append(schema.__name__)
@@ -94,11 +94,13 @@ def test_research_keeps_existing_evidence_flow_without_purpose_generation(client
             from tests.quality_fixtures import coverage_audit
             return coverage_audit(candidates)
         if schema.__name__=='EvidenceJudgements':return judgements(candidates,a['research_contract'])
+        if schema.__name__=='EvidenceScopeAudit':return scope_audit(candidates)
+        if schema.__name__=='AnswerScopeAudit':return answer_scope_audit(candidates)
         assert schema is ResearchNotes
         return quality_notes(a,ResearchNotes(summary='已核对',evidence=[dict(source_id=a['sources'][0]['id'],quote='研究只适用于给定条件。',claim='有适用范围')]).model_dump())
     monkeypatch.setattr(research,'structured',structured)
     cfg=store.get_settings();cfg['search']['enabled']=True;store.set_settings(cfg)
     j=store.create_job(a['id'],{'stage':'sources','revision':a['revision']})
     result,pending=asyncio.run(research.gather(a,j['id'],'sources'))
-    assert not pending and calls==['ResearchPlan','ResearchNotes','EvidenceJudgements','CoverageAudit']
+    assert not pending and calls==['ResearchPlan','ResearchNotes','EvidenceJudgements','EvidenceScopeAudit','CoverageAudit','AnswerScopeAudit']
     assert result['sources'][0]['ai_use']==a['sources'][0]['ai_use'] and not result['research']['stale']

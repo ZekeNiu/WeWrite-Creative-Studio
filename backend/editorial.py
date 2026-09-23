@@ -82,6 +82,9 @@ async def generate(a,job_id,route,instruction,schema,extra=None):
     context=dict(brief=a['brief'],research_contract=a.get('research_contract',{}),sources=source_context.sources(a),
         evidence=source_context.evidence(a),argument_synthesis=a.get('argument_synthesis',{}),outline=a.get('outline',{}),
         issue_decisions=a.get('research_decisions',{}),**(extra or {}))
+    if schema is FactAudit:
+        from .research import audit_context
+        context={**audit_context(a,'review'),**(extra or {})}
     prompt=json.dumps(dict(task=instruction,context=context,schema=schema.model_json_schema()),ensure_ascii=False)
     try:raw,usage=await providers.generate(service,prompts.system(route,a['brief']),prompt,emit)
     except BaseException:
@@ -166,7 +169,7 @@ async def audit(a,job_id):
         store.update_job(job_id,message=f'正在独立核查正文事实（{start+1}—{start+len(batch)}段）',current_step='fact_check')
         result=await generate(a,job_id,'review','独立审核每个 segments 段落，不采信作者或研究整理的自评。每段必须返回唯一 segment_id；逐条检查所有数字、具体研究结论、直接引语、重要事实，包括未标引用的表述。'
             'facts.quote 逐字摘录正文，source_quote 逐字摘录原文，source_id 指向实际支持该句的来源；检查相邻引用是否张冠李戴。不能用记忆补证。'
-            '每条给出 status、reason、basis 和 population/design/quantity/outcome/causality/scope 六项 checks；观察与实验、分母、适用人群、相关与因果不可混淆。'
+            '每条给出 status、reason、basis 和 '+ '/'.join(research_contract.CHECKS)+' 各项 checks；观察与实验、分母、适用人群、相关与因果及时间版本不可混淆，不适用项明确标not_applicable。'
             '只有无事实性主张才 no_factual_claim=true。limited 仅限正文已经明确保留限定条件；正文缺条件应 unsupported。范文和个人经历不得挪用。',FactAudit,dict(segments=batch))
         done,problems=audit_findings(a,batch,result);checked.extend(done);issues.extend(problems)
     return dict(version=VERSION,input_key=review_state.signature(a),segments=checked,issues=issues,complete=len(checked)==len(parts),created=store.now())

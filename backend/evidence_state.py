@@ -4,6 +4,8 @@ import hashlib
 import json
 import re
 
+SOURCE_IDENTITY_FIELDS=('title','url','original_url','read_url','access_scope','identity_verified','identity_status','metadata_provenance')
+
 
 def digest(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
@@ -15,7 +17,7 @@ def objective(a):
 
 
 def source_key(s):
-    return digest({k:s.get(k) for k in ('id','selected','text','use','personal_material','bibliography')})
+    return digest({k:s.get(k) for k in ('id','selected','text','use','personal_material','bibliography')+SOURCE_IDENTITY_FIELDS})
 
 
 def selected(a):
@@ -44,6 +46,19 @@ def assessed(e):
     return evaluated(e) and e.get('support') in ('supported','limited') and e.get('quality') in ('suitable','limited')
 
 
+def span_summary(spans):
+    """Summaries preserve verified wording and never silently promote rejected claims."""
+    rows=[]
+    for e in spans:
+        label=('适用性待复核' if not evaluated(e) else '缺少支持' if not assessed(e)
+               else '有限支持' if e.get('support')=='limited' or e.get('quality')=='limited' or e.get('boundary') else '已有支持')
+        row=label+'：'+e['claim']+('；边界：'+e['boundary'] if e.get('boundary') else '')
+        basis={'author_interpretation':'作者解释','external_reference':'转引其他研究'}.get(e.get('support_basis'))
+        if basis:row+='；依据类型：'+basis
+        if row not in rows:rows.append(row)
+    return '\n'.join(rows)
+
+
 def current_spans(a):
     return [e for c in a.get('evidence',{}).get('claims',[]) if not c.get('stale') for e in c.get('evidence',[])]
 
@@ -65,7 +80,7 @@ def project(a):
             issue.update(status='open',resolution='原核实记录缺少完整的适用性评估，请复核')
     for source in a['sources']:
         source['evidence_spans']=[copy.deepcopy(e) for e in spans if e['source_id']==source['id']]
-        source['summary']='；'.join(e['claim']+('（'+e['boundary']+'）' if e.get('boundary') else '') for e in source['evidence_spans'])[:360]
+        source['summary']=span_summary(source['evidence_spans'])
     summary='\n'.join(('依据待更新' if c.get('stale') else '适用性待复核' if c.get('assessment_pending') else '有限支持' if c.get('status')=='bounded' else '缺少支持' if c.get('status')=='unsupported' else '已有支持')+'：'+c['text']+('；边界：'+c['boundary'] if c.get('boundary') else '') for c in a['evidence']['claims'])
     a['evidence']['summary']=summary
     if a.get('research'):
@@ -100,10 +115,12 @@ def merge_issues(a, notes, requested=()):
             rows.pop(duplicate,None)
         item['merged_ids']=duplicates
         evidence=[e for e in notes.get('evidence',[]) if assessed(e) and e.get('quality')=='suitable' and
-            ((item.get('claim_id') and item['claim_id']==e.get('claim_id')) or
-             (item.get('claim') and normal(item['claim'])==normal(e['claim'])))]
+            ((item.get('claim') and normal(item['claim'])==normal(e['claim'])) or
+             (not item.get('claim') and item.get('claim_id') and item['claim_id']==e.get('claim_id')))]
         supported=bool(evidence) and bool(item.get('resolution'))
+        if item.get('status')=='resolved' and not supported:item['resolution']='本轮尚未取得支持该完整主张的有效证据'
         item.update(id=iid,status='resolved' if item.get('status')=='resolved' and supported else 'open')
+        if item['status']=='resolved':item['resolution']=span_summary(evidence)
         rows[iid]={**lookup.get(iid,{}),**item};seen.add(item['text'])
     for kind,key in [('blocking','gaps'),('limitation','conflicts')]:
         for text in notes.get(key,[]):
