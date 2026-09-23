@@ -108,6 +108,45 @@ def test_boundary_condition_must_come_from_the_same_actually_shown_source():
     assert e['support']=='unsupported'
 
 
+def test_mixed_body_and_bibliographic_conditions_use_their_actual_fields():
+    e=dict(span(),source_id='S1',quote='The observed response was limited.',claim='观察到有限反应',boundary='Lee，Journal A，2021，12-19页')
+    conditions=[dict(source_condition=e['quote'],claim_condition=e['claim'],status='matched',reason='正文相符')]
+    for field,value in [('authors.0.family','Lee'),('venue','Journal A'),('year','2021'),('pages','12-19')]:
+        conditions.append(dict(source_field='bibliography.'+field,source_condition=value,claim_condition=value,status='matched',reason='书目字段相符'))
+    source=dict(id='S1',text=e['quote'],bibliography=dict(authors=[dict(family='Lee')],venue='Journal A',year=2021,pages='12-19'))
+    evidence_scope.apply([e],[verdict(conditions=conditions)],read_sources=[source])
+    assert e['support']=='supported'
+
+
+@pytest.mark.parametrize('field,original,sid',[
+    ('bibliography.venue','Journal B','S1'),
+    ('bibliography.venue','Journal','S1'),
+    ('bibliography.missing','Journal A','S1'),
+    ('bibliography.venue','Journal A','S2'),
+    ('bibliography.authors.1.family','Lee','S1'),
+    ('bibliography.authors','Lee','S1'),
+    ('bibliography.title','Journal A 2021','S1'),
+    ('text','Journal A','S1'),
+])
+def test_metadata_conditions_cannot_borrow_invent_combine_or_truncate_fields(field,original,sid):
+    e=dict(span(),source_id='S1',quote='The result was recorded.',claim='结果已记录',boundary='Journal A，2021，Lee')
+    condition=dict(source_field=field,source_condition=original,claim_condition='Journal A',status='matched',reason='声称一致')
+    source=dict(id=sid,text=e['quote'],bibliography=dict(title='Recorded result',venue='Journal A',year='2021',authors=[dict(family='Lee')]))
+    evidence_scope.apply([e],[verdict(conditions=[condition])],read_sources=[source])
+    assert e['support']=='unsupported'
+
+
+def test_located_bibliography_never_overrides_independent_support_or_scope_rejection():
+    e=dict(span(),source_id='S1',quote='A study of an effect',claim='确有疗效',boundary='Journal A',support='unsupported')
+    condition=dict(source_field='bibliography.venue',source_condition='Journal A',claim_condition='Journal A',status='matched',reason='仅出版身份')
+    source=dict(id='S1',text='',bibliography=dict(venue='Journal A'))
+    evidence_scope.apply([e],[verdict(conditions=[condition])],read_sources=[source])
+    assert e['support']=='unsupported'
+    e['support']='supported'
+    evidence_scope.apply([e],[verdict(conditions=[condition],scope='unknown',reason='题名不能证明疗效')],read_sources=[source])
+    assert e['support']=='unsupported' and '题名不能证明疗效' in e['support_reason']
+
+
 @pytest.mark.parametrize('claim,accepted',[
     ('若负荷未被预期，控制器将无法稳定系统。',False),
     ('若负荷未被预期，控制器可能无法稳定系统。',True),

@@ -7,6 +7,8 @@ INSTRUCTION = (
     '只审查candidates每条主张及boundary的条件逻辑与适用范围，不重复研究概述。原context完整保留。'
     '覆盖claim和boundary中的每一项可核对判断，先定位支持该事实的完整原文句，再逐项列出全部前提、程度、判断主体、例外、并且/或者关系、仅当前项不可用时采用后项的顺序。不能只审quote的主体而跳过boundary里的附加判断。'
     'source_condition逐字摘录quote或context中同一来源实际提供的完整条件片段；claim_condition逐字摘录claim或boundary中表达同一条件的片段，缺失必须空串。其他来源的条件不能借用。'
+    '正文条件source_field=text。书目身份另列条件，source_field指向同来源实际书目字段（如bibliography.title、bibliography.year、bibliography.authors.0.family），source_condition必须等于该单字段的完整原值；多个字段拆开核对，不能自行拼装引文格式或省略原值。'
+    '书目字段只核验文献身份、作者、发表信息，不作为实验结果、机制、因果或效果的证据；此类内容仍须用实际已读正文或摘要，不能由题名推断。'
     '引用必须连续，不能用省略号拼接；多处条件分成多条对照。'
     '每个条件分别标matched/missing/changed及简短理由；只要一项missing/changed，整条scope必须unknown/mismatch。'
     '不要用主张里的泛称替代原文的具体程度门槛，不把阈值列表误当作已保留使用前提。条件从原文提取，不按主张是否提及来选择条件。'
@@ -31,7 +33,19 @@ def normal(text,pdf=False):
     return re.sub(r'\s+', '', text)
 
 
+def bibliographic_value(source,field):
+    """Resolve one scalar metadata field, without synthesizing citation text."""
+    if not field.startswith('bibliography.'):return None
+    value=source
+    for part in field.split('.'):
+        if isinstance(value,dict):value=value.get(part)
+        elif isinstance(value,list) and part.isdigit() and int(part)<len(value):value=value[int(part)]
+        else:return None
+    return str(value) if isinstance(value,(str,int,float)) and not isinstance(value,bool) else None
+
+
 def apply(spans, judgements, pdf_source_ids=(), read_sources=()):
+    sources={s['id']:s for s in read_sources}
     texts={s['id']:[s.get('text','')]+[n.get('quote','') for n in s.get('source_notes',[])] for s in read_sources}
     for e in spans:
         pdf=e.get('source_id') in pdf_source_ids
@@ -54,7 +68,12 @@ def apply(spans, judgements, pdf_source_ids=(), read_sources=()):
             for condition in row['conditions']:
                 original=normal(condition['source_condition'],pdf)
                 counterpart=normal(condition['claim_condition'])
-                if not original or not any(original in normal(t,pdf) for t in [e['quote']]+texts.get(e.get('source_id'),[])):
+                field=condition.get('source_field','text')
+                if field!='text':
+                    value=bibliographic_value(sources.get(e.get('source_id'),{}),field)
+                    located=bool(value and normal(condition['source_condition'])==normal(value))
+                else:located=bool(original and any(original in normal(t,pdf) for t in [e['quote']]+texts.get(e.get('source_id'),[])))
+                if not located:
                     reasons.append('条件对照未能定位到本条原文')
                 if condition['status']!='matched':
                     reasons.append(condition['reason'] or '主张遗漏或改变了原文条件')

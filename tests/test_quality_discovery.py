@@ -151,7 +151,7 @@ def test_report_summary_cannot_reintroduce_unverified_numbers_or_rejected_claims
                 dict(source_id=source['id'],quote='Mechanism is unknown.',claim='The mechanism is proven.')]))).model_dump()
         if schema.__name__=='EvidenceJudgements':
             response=judgements(candidates,a['research_contract'])
-            assert len(candidates)==1
+            assert len({e['source_id'] for e in candidates})==1
             for candidate,verdict in zip(candidates,response['judgements']):
                 if candidate['claim']=='The mechanism is proven.':
                     verdict.update(support='contradicted',reason='The source explicitly says the mechanism is unknown.')

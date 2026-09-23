@@ -226,6 +226,14 @@ def repair_targets(a,coverage):
     return tasks
 
 
+def evidence_batches(entries,limit=4):
+    """Share original context within a source; retain a verdict for every span."""
+    by_source={}
+    for entry in entries:by_source.setdefault(entry['source_id'],[]).append(entry)
+    for group in by_source.values():
+        for start in range(0,len(group),limit):yield group[start:start+limit]
+
+
 class Research:
     def __init__(self,a,job_id,stage):
         self.a=a;self.job_id=job_id;self.stage=stage;self.cfg=dict(providers.settings()['search'])
@@ -588,9 +596,9 @@ class Research:
                 ranges=[dict(start=e['offset'],end=e['offset']+len(e['quote'])) for e in unknown
                         if e['source_id']==src['id'] and e.get('quote_origin')=='source_text']
                 if ranges:source_notebook.save(src,[],signature,ranges)
-            # Check every span, while keeping each independent decision focused.
-            for offset in range(0,len(unknown)):
-                batch=unknown[offset:offset+1]
+            # The two independent checks share context only within one source;
+            # each span still needs its own bound support and scope verdicts.
+            for batch in evidence_batches(unknown):
                 checked=await structured(self.a,self.stage,
                     '独立核查 candidates 的每条判断，不采信前一轮自评。逐条返回 evidence_id、support、reason、question_ids 和 checks。'
                     'checks 必须包含 population/design/quantity/outcome/causality/scope/time，分别核对人群、研究设计、数字及分母、结局、因果强度、适用范围、任务所问时间与版本；'

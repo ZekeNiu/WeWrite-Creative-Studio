@@ -304,6 +304,7 @@ class EvidenceJudgements(BaseModel):
 
 
 class EvidenceCondition(BaseModel):
+    source_field: str = Field(default='text',max_length=120,pattern=r'^(text|bibliography(?:\.(?:[a-z_][a-z0-9_]*|[0-9]+))+)$')
     source_condition: str
     claim_condition: str
     status: Literal['matched','missing','changed']
