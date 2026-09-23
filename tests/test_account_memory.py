@@ -37,7 +37,9 @@ def mock_style(monkeypatch):
         calls.append(json.loads(prompt))
         return json.dumps(dict(rules=[dict(category='rhythm', text='长短段落交替')])), dict(status='completed', model='mock')
     monkeypatch.setattr(providers, 'generate', generate)
-    monkeypatch.setattr(providers, 'service_for', lambda stage: dict(model='mock', name='mock', route=stage))
+    monkeypatch.setattr(providers, 'service_for', lambda stage: dict(model='mock', name='mock', route=stage,protocol='chat'))
+    from tests.native_fixtures import install
+    install(monkeypatch)
     return calls
 
 
@@ -108,12 +110,12 @@ def test_rule_confirm_expand_edit_disable_delete_undo_and_decay(client):
     r=seeded_rule();a=new(client,column='另一栏目')
     with pytest.raises(ValueError): memory.item_action(1,'rules',r['id'],'expand')
     memory.item_action(1,'rules',r['id'],'confirm');memory.item_action(2,'rules',r['id'],'expand')
-    assert memory.context(a)['rules'][0]['weight']==1
+    assert memory.context(a)['rules'][0]['hard'] is True
     memory.item_action(3,'rules',r['id'],'edit',dict(category='expression',text='直接进入问题'))
     assert not memory.context(a)['rules'] and memory.get()['rules'][0]['status']=='soft'
     a['brief']['column']='运动科学'
-    memory.change(4,lambda v:v['rules'][0].update(updated=(datetime.now(timezone.utc)-timedelta(days=90)).isoformat()),'age')
-    assert .49<=memory.context(a)['rules'][0]['weight']<=.5
+    memory.change(4,lambda v:v['rules'][0].update(updated=(datetime.now(timezone.utc)-timedelta(days=90)).isoformat(),learning_reset_at=(datetime.now(timezone.utc)-timedelta(days=90)).isoformat()),'age')
+    assert not memory.context(a)['rules']  # upstream confidence has decayed below 2
     memory.item_action(5,'rules',r['id'],'disable');assert not memory.context(a)['rules']
     memory.item_action(6,'rules',r['id'],'delete');assert not memory.get()['rules']
     memory.undo(7);assert memory.get()['rules'][0]['status']=='disabled'
@@ -128,16 +130,16 @@ def test_article_restore_does_not_restore_revoked_preferences_or_erase_use_recor
     assert not memory.context(a)['rules'] and memory.uses(a['id'])[0]['id']==used['id']
 
 
-def test_example_only_abstract_style_reaches_generation(client,monkeypatch):
+def test_example_actual_expression_with_ownership_reaches_generation(client,monkeypatch):
     mock_style(monkeypatch);a=new(client)
     j=client.post('/api/account/jobs',headers=H,json=dict(kind='example',revision=0,column='运动科学',title='某人的范文',text='我在火星遇见王博士，他给我99颗宝石。')).json()
     assert wait(client,j)['status']=='completed'
     ex=memory.get()['examples'][0]; assert not memory.context(a)['examples']
     memory.item_action(1,'examples',ex['id'],'confirm')
     ctx=memory.context(a);serialized=store.encode(ctx)
-    assert ctx['examples'][0]['rules'][0]['text']=='长短段落交替'
-    assert '火星' not in serialized and '王博士' not in serialized and '99颗宝石' not in serialized
-    assert set(ctx['examples'][0])=={'id','title','rules','scope','column'}
+    assert '火星' in serialized and ctx['examples'][0]['ownership']=='third_party'
+    assert ctx['examples'][0]['allowed_uses']==['style','structure']
+    assert ctx['examples'][0]['personal_materials_reusable'] is False
     other={**a,'brief':{**a['brief'],'column':'AI'}};assert not memory.context(other)['examples']
     memory.item_action(2,'examples',ex['id'],'revoke');assert not memory.context(a)['examples']
 

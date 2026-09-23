@@ -37,12 +37,12 @@ async def start(value: dict): return memory.start(value.get('kind'), value)
 
 
 @router.post('/account/import')
-async def upload(file: UploadFile = File(), revision: int = Form(), kind: str = Form(), column: str = Form(''), title: str = Form('')):
+async def upload(file: UploadFile = File(), revision: int = Form(), kind: str = Form(), column: str = Form(''), title: str = Form(''), user_authored: bool = Form(False)):
     from pathlib import Path
     blob = await file.read(16*1024*1024+1)
     if len(blob) > 16*1024*1024: raise ValueError('文件超过16MB')
     if kind not in ('example', 'metrics_csv'): raise ValueError('未知导入类型')
-    return memory.start(kind, dict(revision=revision, column=column, title=title, filename=Path(file.filename or '').name), blob)
+    return memory.start(kind, dict(revision=revision, column=column, title=title, user_authored=user_authored, filename=Path(file.filename or '').name), blob)
 
 
 @router.post('/account/metrics')

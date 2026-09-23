@@ -86,7 +86,8 @@ async def after_generation(page, base, article_id, out):
     assert {'topic','outline','write','edit'}<={u['stage'] for u in uses['uses']}
     for u in uses['uses']:
         assert u['context']['profile']['audience']=='忙碌的普通读者'
-        assert u['context']['examples'] and 'text' not in u['context']['examples'][0]
+        assert u['context']['examples'] and len(u['context']['examples'])<=2
+        assert u['context']['examples'][0]['personal_materials_reusable'] is False
     first=dialog.locator('details.service-card').first
     await first.locator('summary').first.click()
     await expect(first).to_contain_text('忙碌的普通读者')

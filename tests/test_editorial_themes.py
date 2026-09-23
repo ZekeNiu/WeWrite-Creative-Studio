@@ -48,7 +48,7 @@ def test_complete_render_preserves_content_and_roles(client,theme):
     caption=next(n for n in soup.find_all('p') if n.get_text()=='图注原文')
     assert 'font-size:12px' in caption['style']
     refs=next(n for n in soup.find_all('h2') if n.get_text()=='参考文献')
-    assert not refs.find('span') and 'font-size:15px' in refs['style']
+    assert refs.find('span',attrs={'leaf':''}) and 'font-size:15px' in refs['style']
     numbered=next(n for n in soup.find_all('h2') if '03 已有编号' in n.get_text())
     assert not [span for span in numbered.find_all('span') if span.get_text().strip().isdigit()]
     assert '补充信息保留自己的层级' in soup.get_text()
@@ -93,7 +93,8 @@ def test_legacy_theme_keeps_renderer(client):
     a=new(client);a['content']='## 小标题\n\n旧文章正文';a['layout'].update(theme='professional-clean',font_size=18)
     cfg=a['layout'];theme=load_theme(cfg['theme'],str(rendering.THEMES));theme._raw_data['aigc_footer']=False
     theme.base_css+=f'\np {{font-size:{cfg["font_size"]}px;line-height:{cfg["line_height"]};margin-bottom:{cfg["paragraph_gap"]}px;}}'
-    expected=rendering.safe_html(WeChatConverter(theme=theme).convert(rendering.markdown(a)).html)
+    from wewrite.toolkit.converter import make_paste_safe
+    expected=rendering.safe_html(make_paste_safe(rendering.safe_html(WeChatConverter(theme=theme).convert(rendering.markdown(a)).html)))
     assert rendering.render(a)['body']==expected
 
 

@@ -203,10 +203,11 @@ def test_image_failure_no_budget_gate_and_export(client,model,monkeypatch):
     r=client.post(f'/api/articles/{a["id"]}/images/upload',headers=H,data={'revision':a['revision'],'role':'cover'},files={'file':('cover.png',blob.getvalue())})
     assert r.status_code==200;a=r.json()
     preview=client.post(f'/api/articles/{a["id"]}/preview',headers=H).json()
-    assert '/assets/' in preview['body']
+    assert '/assets/' not in preview['body']  # independent cover
     z=zipfile.ZipFile(io.BytesIO(client.get(f'/api/articles/{a["id"]}/export/zip').content))
     assert any(n.startswith('images/') for n in z.namelist())
-    assert 'images/' in z.read('排版.html').decode()
+    assert 'images/' not in z.read('排版.html').decode()  # cover is independent
+    assert any(n.startswith('images/') for n in z.namelist())
 
 
 def test_all_themes_and_html_sanitization(client):

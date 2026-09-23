@@ -31,7 +31,7 @@ def test_plan_upload_preserves_placement_caption_and_existing_images(client,role
     assert client.get(f'/api/articles/{a["id"]}/assets/{im["filename"]}').status_code==200
     md=rendering.markdown(a,export=True)
     if role=='article': assert md.index('## 训练方法')<md.index(im['filename'])<md.index('## 注意事项')
-    else: assert md.index(im['filename'])<md.index('## 训练方法')
+    else: assert im['filename'] not in md  # cover stays independent
     assert '部分配图由 AI 生成' not in md
     with store.connection() as db: assert db.execute('SELECT count(*) FROM jobs').fetchone()[0]==0
     # The general upload controls must not reuse the previous plan's metadata.

@@ -22,7 +22,7 @@ TAGS=['section','article','div','span','p','br','h1','h2','h3','h4','h5','h6','s
 def safe_html(value):
     soup=BeautifulSoup(value,'html.parser')
     for node in soup(['script','style','iframe','object','form','input','button','svg']): node.decompose()
-    return bleach.clean(str(soup),tags=TAGS,attributes={'*':['style','data-darkmode-color','data-darkmode-bgcolor'],'a':['href','title','rel'],'img':['src','alt','width','height'],'td':['colspan','rowspan'],'th':['colspan','rowspan']},protocols=['http','https'],css_sanitizer=CSS,strip=True)
+    return bleach.clean(str(soup),tags=TAGS,attributes={'*':['style','data-darkmode-color','data-darkmode-bgcolor'],'span':['leaf'],'a':['href','title','rel'],'img':['src','alt','width','height'],'td':['colspan','rowspan'],'th':['colspan','rowspan']},protocols=['http','https'],css_sanitizer=CSS,strip=True)
 
 
 def themes():
@@ -38,13 +38,13 @@ def markdown(a, export=False, styled=False):
     content,refs,unknown=bibliography.citations(a['content'],a['sources'])
     for im in a['images']:
         if not im.get('selected',True): continue
+        if im.get('role')=='cover': continue
         url=f'images/{im["filename"]}' if export else f'/api/articles/{a["id"]}/assets/{im["filename"]}'
         caption=im.get('caption','').replace(']','')
         block=f'\n\n![{caption}]({url})\n\n'
         if caption: block+=('<!--studio-role:caption-->\n\n' if styled else '')+'*'+caption.replace('*','\\*')+'*\n\n'
         heading=im.get('after_heading','')
-        if im.get('role')=='cover': content=block+content
-        elif heading:
+        if heading:
             matches=list(re.finditer(r'^#{1,6}\s+(.+)$',content,re.M))
             target=next((i for i,m in enumerate(matches) if m.group(1).strip()==heading.strip()),None)
             if target is not None:
@@ -62,7 +62,8 @@ def markdown(a, export=False, styled=False):
 
 def render(a, export=False):
     from wewrite.toolkit.theme import load_theme
-    from wewrite.toolkit.converter import WeChatConverter
+    from wewrite.toolkit.converter import WeChatConverter, make_paste_safe
+    from wewrite.commands.validate_html import validate_html
     cfg=a['layout']
     if cfg['theme'] not in {t['id'] for t in themes()}: raise ValueError('排版主题不存在')
     editorial=cfg['theme'] in editorial_themes.PRESETS
@@ -73,13 +74,13 @@ def render(a, export=False):
         theme._raw_data['aigc_footer']=False
         theme.base_css+=f'\np {{font-size:{cfg["font_size"]}px;line-height:{cfg["line_height"]};margin-bottom:{cfg["paragraph_gap"]}px;}}'
         result=WeChatConverter(theme=theme).convert(markdown(a,export))
-    body=safe_html(result.html)
+    body=safe_html(make_paste_safe(safe_html(result.html)))
     title=f'<h1 style="font-size:24px;line-height:1.6">{html.escape(a["title"])}</h1>' if export else ''
     padding='0' if editorial else '24px 20px'
     if editorial and export: title=f'<h1 style="font-family:{editorial_themes.SANS.replace(chr(34),chr(39))};font-size:26px;line-height:1.5;margin:0;padding:26px 20px 6px;background:{editorial_themes.PRESETS[cfg["theme"]]["paper"]}">{html.escape(a["title"])}</h1>'
     document=f'<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(a["title"])}</title><body style="margin:0;padding:{padding};max-width:680px;margin-inline:auto;background:#fff;word-break:break-word">{title}{body}</body></html>'
     _,references,unknown=bibliography.citations(a['content'],a['sources'])
-    return dict(html=document,body=body,markdown=markdown(a,export),plaintext=BeautifulSoup(body,'html.parser').get_text('\n'),references=references,unresolved_citations=unknown)
+    return dict(html=document,body=body,markdown=markdown(a,export),plaintext=BeautifulSoup(body,'html.parser').get_text('\n'),references=references,unresolved_citations=unknown,compatibility=validate_html(body))
 
 
 def theme_preview(id):

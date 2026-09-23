@@ -6,7 +6,7 @@ import {type Article,type Save,type Meta,type Theme} from './types';
 import {Field,Select,Busy} from './ui';
 import {type Action,type Run} from './Panels';
 
-type Preview={html:string;body:string;plaintext:string;references:any[]};
+type Preview={html:string;body:string;plaintext:string;references:any[];compatibility:{rule:string;level:string;message:string}[]};
 export default function LayoutPanel({a,save,act,run,busy,meta,prepareExport}:{a:Article;save:Save;act:Action;run:Run;busy:boolean;meta:Meta;prepareExport:(open?:boolean)=>Promise<any>}){
  const [preview,setPreview]=useState<{key:string;data:Preview}|null>(null),[loading,setLoading]=useState(false),[copied,setCopied]=useState(false);
  const [saving,setSaving]=useState(0),[layout,setLayout]=useState(a.layout);
@@ -50,6 +50,7 @@ export default function LayoutPanel({a,save,act,run,busy,meta,prepareExport}:{a:
   <div className="export-group"><button className="button primary full" disabled={!ready||busy} onClick={()=>act(copy)}>{copied?<Check size={16}/>:<Copy size={16}/>} {copied?'已复制':'复制公众号排版'}</button><button className="button secondary full" disabled={busy||saving>0||!a.content} onClick={()=>act(()=>download('zip'))}><Download size={16}/>下载文章分享包</button><div className="row"><button className="text-button" disabled={busy||saving>0||!a.content} onClick={()=>act(()=>download('md'))}>Markdown</button><span className="muted">·</span><button className="text-button" disabled={busy||saving>0||!a.content} onClick={()=>act(()=>download('html'))}>HTML</button></div></div>
   {archive&&<div className="small-text"><p style={{overflowWrap:'anywhere'}}>已归档 r{archive.revision}：{archive.path}</p><button className="text-button" disabled={busy} onClick={()=>act(async()=>setArchive(await prepareExport(true)))}>打开归档文件夹</button></div>}
   <p className="muted small-text">ZIP 仅含文章、采用图片和实际引用的文献信息，不含素材全文及内部备注，不是创作数据备份。复制到公众号后，本地图片需在微信编辑器中上传。</p>
+  {ready&&preview&&<details><summary>公众号排版校验</summary>{preview.data.compatibility?.length?preview.data.compatibility.map(i=><p key={i.rule}>{i.level}：{i.message}</p>):<p>通过上游兼容性校验；已应用复制粘贴加固。封面独立保留在分享包中。</p>}</details>}
   {preview?.data.references.some(r=>!r.complete)&&<div className="notice amber small-text">部分文献信息待补全。请点击编辑器中的引用或素材，核对作者、年份及出处。</div>}
   {a.stages.review==='done'&&a.review.completion==='human'&&<p className="muted small-text">本轮意见已处理；可按需再次审核。</p>}
   {a.stages.review!=='done'&&<div className="notice amber small-text">当前正文尚未通过最新审核。可导出当前文章，正式使用前请核对。</div>}

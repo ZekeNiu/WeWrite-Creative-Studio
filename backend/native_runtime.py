@@ -31,6 +31,7 @@ TOOLS=[
 ]
 
 OUTPUTS={
+    'learn':'执行 wewrite-learn 的人工改稿学习。learning-task.json 指向明确的原稿、人工定稿和上游已生成的 diff 记录；读取两份全文，在该 lesson 填写 typed patterns，运行 learn-edits --summarize --json 并更新 playbook.md；不代替用户确认长期偏好。',
     'topic':'完成 wewrite-topic。候选保存为运行目录/topics.yaml，格式 topics: [{title, angle, reason, score, framework, source_ids, reader_question, novelty, takeaway}]；保留上游10个候选与排序。用户未选时不自行改写主题。',
     'sources':'执行 wewrite-write 的任务书、原文阅读、主张和内容增强准备；保存完整 brief.yaml、claims.yaml 和来源账本，在初稿前暂停供用户查看。claims.yaml 可附 summary/gaps。',
     'outline':'执行 wewrite-write 的框架与内容增强，完善 brief.yaml。sections 每项额外保存稳定 id、可读 title、points，供界面编辑；目的和 claim_ids 遵循上游。此处暂停，不写初稿。',
@@ -53,7 +54,7 @@ class Session:
         self.id=store.uid();self.home=(store.DATA/'native'/self.id).resolve();self.home.mkdir(parents=True)
         self.state={};self.used=None;self.finished=False;self.result=None;self.reads=[];self.sources=copy.deepcopy(article['sources'])
         self.limits={**providers.settings().get('execution',{}),**(request.get('execution_limits') or {})}
-        self.search_config=providers.settings()['search'];self.searches=0;self.pages=0
+        self.search_config=providers.settings()['search']
         self.disabled=set();self.command_count=0;self.evaluations=[]
 
     def path(self,name,write=False):
@@ -66,8 +67,9 @@ class Session:
         if p==root and write or not p.is_relative_to(root):raise ValueError('路径必须位于当前任务目录')
         if write:
             if p.suffix.lower() not in ('.md','.yaml','.yml','.json','.txt','.html','.csv'):raise ValueError('只允许写作产物文件')
-            if p.name in ('state.yaml','sources.yaml','config.yaml','request.json','session.json') or p.is_relative_to(self.home/'source-texts'):
+            if p.name in ('state.yaml','sources.yaml','config.yaml','request.json','session.json','learning-task.json','account-reference.yaml','history.yaml','style.yaml') or p.is_relative_to(self.home/'source-texts') or p.is_relative_to(self.home/'account-inputs'):
                 raise ValueError('该文件由程序或上游命令管理，不能直接改写')
+            if p.is_relative_to(self.home/'lessons') and p!=getattr(self,'lesson',None):raise ValueError('已有学习记录只读')
             if self.state.get('status')=='completed' and p.name in ('article.md','draft.md','brief.yaml','claims.yaml'):
                 raise ValueError('正文已封存，请在新任务中修改')
             if self.stage in ('review','edit') and p==self.directory/'draft.md':raise ValueError('原稿保留；修改请写 candidate.md，通过后写 article.md')
@@ -86,7 +88,7 @@ class Session:
             'score':{'--verbose','-v','--json','--tier3'},'validate':{'--json'},
             'content-eval':{'--draft','--final','--assessment','--output','--json'},
             'preview':{'--theme','-t','--output','-o','--no-open'},
-            'learn-edits':{'--summarize','--json'},'exemplar':{'--list','--json'},
+            'learn-edits':{'--summarize','--json'}|({'--draft','--final'} if bootstrap else set()),'exemplar':{'--list','--json'}|({'--source','--user-authored'} if bootstrap else set()),
             'similarity':{'--json','-n'},'hotspots':{'--limit'},
             'search-articles':{'--num','-n','--resolve-url','-r','--output','-o','--json'},'seo':{'--json'},
         }
@@ -99,7 +101,7 @@ class Session:
             if '--patch' in args:
                 patch=json.loads(args[args.index('--patch')+1])
                 if not bootstrap and {'permissions','flags','artifacts'} & patch.keys():raise ValueError('权限、模型路由与产物路径由工作台管理')
-        if args[0] in ('learn-edits','exemplar') and any(not x.startswith('--') for x in args[1:]):raise ValueError('此处只允许读取学习与范文')
+        if not bootstrap and args[0] in ('learn-edits','exemplar') and any(not x.startswith('--') for x in args[1:]):raise ValueError('此处只允许读取学习与范文')
         # Validate all file arguments before allowing the upstream process access.
         path_flags={'--draft','--final','--assessment','--output','-o','--cover','--brief'}
         for i,value in enumerate(args):
@@ -121,14 +123,15 @@ class Session:
             if files['--draft']!=self.directory/'draft.md' or files['--assessment']!=self.directory/'assessment.yaml' or files['--output']!=self.directory/'review-report.json':raise ValueError('请使用当前任务的原稿、判断和报告路径')
         if args[0] in ('hotspots','search-articles','seo'):
             if not self.search_config['enabled']:raise ValueError('联网搜索已关闭')
-            if self.searches>=self.search_config['max_calls']:raise ValueError('本次搜索次数已达到上限')
-            self.searches+=1
+            self.take_read('search')
         if args[:2]==['sources','add']:
             url=args[args.index('--url')+1] if '--url' in args else ''
             status=args[args.index('--status')+1] if '--status' in args else 'verified'
             if status=='verified' and not any(s.get('selected') and s.get('text') and url in (s.get('url'),s.get('original_url'),s.get('read_url')) for s in self.sources):
                 raise ValueError('先通过 WebFetch 取得实际原文，再登记 verified；搜索摘要不能代替原文')
             if status=='user_provided' and not any(url==(s.get('url') or 'user-provided://'+s['id']) and s.get('kind')=='user' for s in self.sources):raise ValueError('只能登记用户实际提供的材料')
+            source=next((s for s in self.sources if url in (s.get('url'),s.get('original_url'),s.get('read_url')) and s.get('selected')),None)
+            if source and source.get('url'):args=list(args);args[args.index('--url')+1]=source['url']
         env={**{k:v for k,v in os.environ.items() if not k.startswith(('WECHAT_','WEWRITE_WRITER_','WEWRITE_IMAGE_'))},'PYTHONUTF8':'1','PYTHONDONTWRITEBYTECODE':'1','PYTHONPATH':str(store.ROOT),
              'WEWRITE_HOME':str(self.home),'WEWRITE_RUN_ID':self.state.get('run_id','')}
         process=await asyncio.create_subprocess_exec(sys.executable,'-m','backend.native_cli',cwd=store.ROOT,env=env,
@@ -153,9 +156,12 @@ class Session:
         self.state=json.loads(await self.cli(['run','start','--topic',self.article['brief']['topic'],'--mode','draft','--visual-mode','none'],True))
         self.used=account_memory.capture(self.article,self.job_id,self.stage)
         b=self.article['brief']
-        dump(self.home/'style.yaml',dict(writing_persona=b['persona'],tone=b['tone'],word_count=str(b['words']),
-            target_audience=b['audience'],topics=[b.get('domain') or b['column']],theme=self.article['layout']['theme']))
-        dump(self.home/'account-reference.yaml',self.used['context'])
+        from . import native_account
+        await native_account.materialize(self)
+        if self.stage=='learn':await native_account.prepare_learning(self)
+        reference=copy.deepcopy(self.used['context']);reference.pop('native_lessons',None)
+        for example in reference['examples']:example.pop('text',None)
+        dump(self.home/'account-reference.yaml',reference)
         dump(self.home/'request.json',dict(stage=self.stage,instruction=self.request.get('instruction',''),selected_text=self.request.get('selected_text',''),
             section_id=self.request.get('section_id',''),brief=b,creative_intent=self.article.get('creative_intent',{}),issue_decisions=self.article.get('research_decisions',{})))
         dump(self.directory/'brief.yaml',native_projection.brief_from_article(self.article))
@@ -202,11 +208,17 @@ class Session:
         from .execution_budget import charge
         charge(record,usage)
 
+    def take_read(self,kind):
+        with store.LOCK:
+            key='native_'+kind+'_count';count=store.job(self.job_id).get(key,0)
+            maximum=self.search_config['max_calls' if kind=='search' else 'max_pages']
+            if count>=maximum:raise ValueError('本次任务已达到搜索次数上限' if kind=='search' else '本次任务已达到原文读取次数上限')
+            store.update_job(self.job_id,**{key:count+1})
+
     async def search(self,query,channel='auto'):
         from . import search_tools,academic,browser_search
         if not self.search_config['enabled']:raise ValueError('联网搜索已关闭，继续使用当前材料')
-        if self.searches>=self.search_config['max_calls']:raise ValueError('已达到搜索次数上限')
-        self.searches+=1
+        self.take_read('search')
         if channel!='auto':
             if not self.search_config['academic_enabled'] or channel=='pubmed' and not self.search_config['pubmed_enabled'] or channel=='arxiv' and not self.search_config['arxiv_enabled']:raise ValueError('此学术渠道未启用')
             return await (search_tools.pubmed(query) if channel=='pubmed' else getattr(academic,channel)(query))
@@ -268,8 +280,7 @@ class Session:
             from . import materials
             excluded=[s for s in self.sources if not s.get('selected')]
             if any(args['url'] in (s.get('url'),s.get('read_url'),s.get('original_url')) for s in excluded):raise ValueError('此资料已被用户排除，不能重新加入')
-            if self.pages>=self.search_config['max_pages']:raise ValueError('已达到原文读取次数上限')
-            self.pages+=1
+            self.take_read('page')
             source=await materials.from_url(args['url'])
             if any(source.get('url') and source['url']==s.get('url') for s in excluded):raise ValueError('此资料已被用户排除，不能重新加入')
             previous=next((s for s in self.sources if s.get('url')==source.get('url') and s.get('selected')),None)
@@ -279,6 +290,11 @@ class Session:
             return dict(source_id=source['id'],title=source['title'],path='source-texts/'+source['id']+'.txt',access_scope=source['status'],characters=len(source.get('text','')))
         if name=='WeWrite':return await self.cli(args['args'])
         if name=='Finish':
+            if self.stage=='learn':
+                from .native_account import learning_result
+                self.result=learning_result(self)
+                self.result['summary']=json.loads(await self.cli(['learn-edits','--summarize','--json']))
+                self.finished=True;return dict(finished=True)
             final=None
             if self.stage in ('review','edit'):
                 if not self.evaluations:raise ValueError('须执行上游 content-eval 保存真实编辑报告')
@@ -311,7 +327,7 @@ class Session:
             +'\n\n'.join('文件：'+d['path']+'\n'+d['content'] for d in docs))
         messages=[dict(role='user',content=json.dumps(dict(task=OUTPUTS[self.stage],home='.',run_id=self.state['run_id'],run_dir=self.directory.relative_to(self.home).as_posix(),
             request='request.json',style='style.yaml',account='account-reference.yaml',editor_notes='editor-notes.yaml',artifacts=self.state['artifacts']),ensure_ascii=False))]
-        service=providers.service_for('review' if self.stage=='edit' else self.stage)
+        service=providers.service_for('research' if self.stage=='learn' else 'review' if self.stage=='edit' else self.stage)
         try:
             while not self.finished:
                 account_memory.guard(self.used)
