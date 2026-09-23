@@ -5,7 +5,7 @@ import json
 import pytest
 from backend import store,creative,evidence_state,research,materials,source_reader,academic,prompts,issue_actions
 from tests.test_studio import client,model,new,patch,run,H
-from tests.quality_fixtures import assessment,judgements,notes as quality_notes
+from tests.quality_fixtures import assessment,judgements,scope_audit,answer_scope_audit,notes as quality_notes
 
 
 def seeded(client):
@@ -102,12 +102,17 @@ def test_existing_upload_checked_before_search_and_single_evidence_model(client,
     async def structured(a,stage,instruction,schema,job,candidates=None,questions=()):
         called.append(schema.__name__)
         if schema.__name__=='ResearchPlan': return dict(needed=True,academic=True,queries=['query'],questions=[],reason='Check first')
+        if schema.__name__=='CoverageAudit':
+            from tests.quality_fixtures import coverage_audit
+            return coverage_audit(candidates)
         if schema.__name__=='EvidenceJudgements':return judgements(candidates,a['research_contract'])
+        if schema.__name__=='EvidenceScopeAudit':return scope_audit(candidates)
+        if schema.__name__=='AnswerScopeAudit':return answer_scope_audit(candidates)
         return quality_notes(a,dict(summary='核实完成',evidence=[dict(source_id='S1',quote='Original evidence 1',claim='主张1',claim_id='C1',type='inference',quality='suitable',boundary='',source_type='original',adoption_reason='direct',use_scope='study')],issues=[dict(a['research']['issues'][0],status='resolved')],gaps=[],conflicts=[],followup_queries=[]))
     async def forbid(*args): raise AssertionError('已足够的上传材料不得先联网')
     monkeypatch.setattr(research,'structured',structured);monkeypatch.setattr(research.Research,'discover',forbid)
     saved,pending=asyncio.run(research.gather(a,j['id'],'research','只核实问题一'))
-    assert not pending and called==['ResearchPlan','ResearchNotes','EvidenceJudgements']
+    assert not pending and called==['ResearchPlan','ResearchNotes','EvidenceJudgements','EvidenceScopeAudit','CoverageAudit','AnswerScopeAudit']
     assert len(saved['evidence']['claims'])==2 and saved['evidence']['claims'][0]['type']=='inference'
 
 
@@ -142,6 +147,8 @@ def test_no_progress_stops_after_one_attempt(client,monkeypatch):
     async def empty(queries): attempts.append(queries)
     monkeypatch.setattr(research,'structured',structured);monkeypatch.setattr(w,'discover',empty)
     assert asyncio.run(w.run()) and len(attempts)==1 and w.stop_reason and w.rounds==0
+    assert attempts[0][0]['query']==a['brief']['topic']
+    assert w.stop_code=='no_progress'
 
 
 def test_generic_no_material_message_resolves_with_evidence(client):

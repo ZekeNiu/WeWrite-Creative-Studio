@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import hashlib
+import re
 import time
 from urllib.parse import urlsplit
 import httpx
@@ -122,7 +123,18 @@ def headers(s):
     return h
 
 
-def http_error(status):
+def http_error(status,detail=''):
+    # Gateways may report billing failures as 403. Identify the structured cause
+    # without reflecting arbitrary upstream text (which can contain credentials).
+    try: data=json.loads(detail)
+    except (ValueError,TypeError):data=None
+    error=data.get('error',data) if isinstance(data,dict) else None
+    if isinstance(error,dict):
+        code=str(error.get('code','')).lower()
+        kind=str(error.get('type','')).lower()
+        message=str(error.get('message','')).strip().lower()
+        if code=='insufficient_balance' or (kind=='billing_error' and message in ('insufficient balance','insufficient account balance')):
+            return '模型服务账户余额不足，请在当前服务商处充值后重试'
     return {400:'模型不接受当前请求，请检查接口协议、模型名称和高级参数',401:'API Key 无效或已过期，请检查服务配置',403:'服务拒绝访问，请检查 Key 的分组或模型权限',
             404:'模型或接口地址不存在，请检查协议、地址和模型名称',429:'请求过于频繁或额度不足，请稍后重试'}.get(status,f'上游服务返回 HTTP {status}，请检查服务状态后重试')
 
@@ -137,6 +149,14 @@ async def frames(response):
     if data: yield '\n'.join(data)
 
 
+class StructuredOutputUnsupported(ValueError):
+    """An explicitly rejected formatting option, before any generated content."""
+
+
+async def response_body(response):
+    return await response.aread()
+
+
 def extract_json_text(d, protocol):
     if protocol=='chat':
         content=d.get('choices',[{}])[0].get('message',{}).get('content','')
@@ -147,9 +167,12 @@ def extract_json_text(d, protocol):
 
 async def generate(s, system, prompt, emit=None):
     protocol=s['protocol']; started=time.monotonic(); text=''; usage={}; completed=False; truncated=False
-    common={'model':s['model'],'stream':True}
+    common={'model':s['model'],'stream':s.get('stream',True)}
     if protocol=='chat':
-        path='chat/completions'; body=dict(common,messages=[{'role':'system','content':system},{'role':'user','content':prompt}],max_tokens=s.get('max_tokens',8000),stream_options={'include_usage':True})
+        path='chat/completions'; body=dict(common,messages=[{'role':'system','content':system},{'role':'user','content':prompt}],max_tokens=s.get('max_tokens',8000))
+        if common['stream']:body['stream_options']={'include_usage':True}
+        if s.get('response_schema'):
+            body['response_format']=dict(type='json_schema',json_schema=dict(name='research_result',schema=s['response_schema'],strict=False))
     elif protocol=='responses':
         path='responses'; body=dict(common,instructions=system,input=prompt,max_output_tokens=s.get('max_tokens',8000))
     else:
@@ -158,12 +181,20 @@ async def generate(s, system, prompt, emit=None):
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(240,connect=20)) as client:
             async with client.stream('POST',endpoint(s['base_url'],path),headers=headers(s),json=body) as response:
-                if response.status_code>=400: raise ValueError(http_error(response.status_code))
+                if response.status_code>=400:
+                    detail=(await response_body(response)).decode('utf-8',errors='replace').lower()
+                    if response.status_code in (400,422) and body.get('response_format') and re.search(r'response_format|json_schema|json schema|structured.output',detail) and re.search(r'unsupported|not supported|not support|does not support|unrecognized|unknown parameter|不支持|未知参数',detail):
+                        raise StructuredOutputUnsupported('当前接口明确不支持结构化输出参数')
+                    raise ValueError(http_error(response.status_code,detail))
                 if 'text/event-stream' not in response.headers.get('content-type',''):
-                    raw=await response.aread(); d=json.loads(raw)
+                    raw=await response_body(response); d=json.loads(raw)
                     if d.get('error'): raise ValueError('模型返回错误，请检查模型权限和额度')
                     text=extract_json_text(d,protocol); usage=d.get('usage',{})
                     completed=True
+                    if protocol=='chat' and common['stream'] is False:
+                        choices=d.get('choices',[])
+                        if len(choices)!=1:raise ValueError('模型没有返回唯一的完整结果')
+                        completed=bool(choices[0].get('finish_reason'))
                     truncated=d.get('status')=='incomplete' or d.get('stop_reason')=='max_tokens' or any(x.get('finish_reason')=='length' for x in d.get('choices',[]))
                     if emit: await emit(text)
                 else:

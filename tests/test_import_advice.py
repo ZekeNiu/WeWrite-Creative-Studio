@@ -148,5 +148,5 @@ def test_raised_limits_retain_execution_counters(client):
     store.update_job(prior['id'],status='completed',research=dict(calls=12,pages=8,rounds=1,stats=dict(search_requests=7,metadata_requests=5),log=[dict(query='already searched')]))
     j=store.create_job(a['id'],dict(stage='research',revision=a['revision'],research_parent_id=prior['id'],research_limits=dict(max_calls=20,max_pages=40,max_rounds=5)))
     worker=research.Research(a,j['id'],'research')
-    assert worker.calls==7 and worker.pages==8 and worker.rounds==1 and 'already searched' in worker.seen_queries
+    assert worker.calls==7 and worker.pages==8 and worker.rounds==1 and research.digest(research.search_plan.query('already searched')) in worker.seen_queries
     assert worker.cfg['max_calls']==20

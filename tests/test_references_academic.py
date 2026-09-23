@@ -103,8 +103,8 @@ def test_academic_attempts_crossdiscipline_and_specialist_before_reading(client,
     a=store.create_article({'column':'运动科学'});j=store.create_job(a['id'],{'stage':'research'})
     w=research.Research(a,j['id'],'sources');w.cfg.update(academic_enabled=True,pubmed_enabled=True,browser_enabled=False);w.search_model=None
     asyncio.run(w.discover(['exercise']))
-    assert calls==['openalex','pubmed'] and len(w.a['sources'])==1
-    assert w.a['sources'][0]['discovery_channels']==['openalex','pubmed']
+    assert calls==['pubmed','openalex'] and len(w.a['sources'])==1
+    assert w.a['sources'][0]['discovery_channels']==['pubmed','openalex']
 
 
 def test_openalex_rate_limit_crossref_fallback(client,network,monkeypatch):

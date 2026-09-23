@@ -1,0 +1,541 @@
+import asyncio
+import httpx
+import pytest
+from backend import research,store,academic,materials
+
+
+def worker():
+    a=store.create_article({'topic':'Several scientific questions','column':'运动科学'})
+    j=store.create_job(a['id'],dict(stage='research'))
+    w=research.Research(a,j['id'],'sources')
+    w.cfg.update(max_calls=6,max_pages=32,academic_enabled=True,pubmed_enabled=True,arxiv_enabled=False)
+    w.unavailable=lambda group:''
+    return w
+
+
+def test_required_subquestions_are_anchored_and_do_not_drift():
+    from backend import research_contract
+    a=store.create_article(dict(topic='寻找随机试验，核对死亡分母'))
+    research_contract.anchor_requirements(a,[dict(request_quote='随机试验',question='是否为该干预的随机试验？'),dict(request_quote='不存在的要求',question='增设不相关目标')])
+    anchored=[q for q in a['research_contract']['questions'] if q.get('request_quote')]
+    assert len(anchored)==1 and anchored[0]['required']
+    assert anchored[0]['text']=='随机试验' and '该干预' not in anchored[0]['text']
+    research_contract.anchor_requirements(a,[dict(request_quote='死亡分母',question='改成其他要求')])
+    assert [q for q in a['research_contract']['questions'] if q.get('request_quote')]==anchored
+
+
+def test_related_evidence_cannot_complete_a_partially_answered_question():
+    from backend import research_contract
+    row=dict(question_id='Q1',question='追溯数字和原始试验',required=True,status='supported',reason='原始结果相关',evidence_ids=['E1'],source_ids=['S1'])
+    verdict=dict(question_id='Q1',status='unresolved',reason='只有同主题的另一个比例，未完成指定数字溯源',evidence_ids=['E1'])
+    result=research_contract.audit_coverage([row],[verdict])
+    assert not research_contract.sufficient(result)
+    for verdicts in ([],[verdict,verdict],[dict(verdict,status='supported',evidence_ids=['invented'])]):
+        assert not research_contract.sufficient(research_contract.audit_coverage([row],verdicts))
+    assert research_contract.sufficient(research_contract.audit_coverage([row],[dict(verdict,status='limited')]))
+    assert research_contract.sufficient(research_contract.audit_coverage([dict(row,status='unresolved')],[dict(verdict,status='supported')]))
+    assert not research_contract.sufficient(research_contract.audit_coverage([dict(row,status='unresolved',evidence_ids=[])],[dict(verdict,status='supported')]))
+
+
+def test_unconfirmed_expansion_never_becomes_a_new_hard_requirement():
+    from backend import research_contract,creative
+    a=store.create_article(dict(topic='解释已有位置效应实验'))
+    a['creative_intent']=dict(original_request=a['brief']['topic'],selected=dict(reader_question='必须测量神经网络内部机制'),expanded=True)
+    assert not any('内部机制' in q['text'] for q in research_contract.ensure(a)['questions'])
+    a['topics']=[dict(id='T1',title='明确采用的研究角度',reader_question='比较两个实验的适用条件')]
+    creative.adopt(a,'明确采用的研究角度','T1')
+    assert any(q['required'] and '比较两个实验' in q['text'] for q in research_contract.ensure(a)['questions'])
+
+
+def test_whole_question_collects_verified_clause_evidence_then_requires_audit():
+    from backend import research_contract
+    from tests.quality_fixtures import assessment
+    a=store.create_article(dict(topic='比较实验结果与适用边界'))
+    research_contract.anchor_requirements(a,[dict(request_quote=q,question=q) for q in ('实验结果','适用边界')])
+    questions=a['research_contract']['questions'];whole=questions[0]['id']
+    spans=[dict(assessment(),evidence_id='E'+str(i),source_id='S'+str(i),question_ids=[q['id']],
+        quality='suitable',verification='quote_matched',source_type='original',adoption_reason='Direct result',use_scope='Study')
+        for i,q in enumerate(questions[1:])]
+    notes=dict(evidence=spans,coverage=[dict(question_id=q['id'],status='supported',reason='Individual condition answered') for q in questions[1:]])
+    rows=research_contract.coverage(a,notes)
+    assert rows[0]['evidence_ids']==['E0','E1'] and rows[0]['status']=='unresolved'
+    assert not research_contract.sufficient(rows)
+    verdicts=[dict(question_id=r['question_id'],status='supported',reason='All required conditions answered together',evidence_ids=r['evidence_ids']) for r in rows]
+    assert research_contract.sufficient(research_contract.audit_coverage(rows,verdicts))
+    verdicts[0].update(status='unresolved',reason='The two studies cannot be combined into one experiment')
+    assert not research_contract.sufficient(research_contract.audit_coverage(rows,verdicts))
+
+
+def test_targeted_coverage_preserves_unrelated_verified_question():
+    from backend import research_contract
+    a=store.create_article(dict(topic='核查结果与边界'))
+    research_contract.anchor_requirements(a,[dict(request_quote=q,question=q) for q in ('结果','边界')])
+    rows=research_contract.coverage(a,dict(evidence=[]))
+    old=rows[1];old.update(status='supported',reason='Previously verified',evidence_ids=['E1'],source_ids=['S1'])
+    target=rows[2]['question_id'];a['research']=dict(issues=[dict(id='issue',question_id=target)])
+    updated=research_contract.coverage(a,dict(evidence=[]),rows,['issue'])
+    assert updated[1]==old and updated[2]['status']=='unresolved'
+
+
+def test_current_report_limits_reach_coverage_audit_and_invalidate_cached_verdict(monkeypatch):
+    import copy
+    from backend import research_contract
+    from tests.quality_fixtures import notes,judgements,scope_audit,answer_scope_audit
+    w=worker();w.a['brief']['topic']='说明实验的入选和排除条件'
+    source=materials.source('Original study','Criterion A is described. Detailed criteria are in the appendix.')
+    w.a['sources']=[source];research_contract.ensure(w.a)
+    limits=[];audits=[]
+    async def structured(a,stage,instruction,schema,job_id,candidates=None,questions=()):
+        if schema.__name__=='ResearchNotes':
+            return schema.model_validate(notes(a,dict(summary='Current report',evidence=[dict(
+                source_id=source['id'],quote='Criterion A is described.',claim='Criterion A is stated.')],
+                issues=copy.deepcopy(limits)))).model_dump()
+        if schema.__name__=='EvidenceJudgements':return judgements(candidates,a['research_contract'])
+        if schema.__name__=='EvidenceScopeAudit':return scope_audit(candidates)
+        if schema.__name__=='AnswerScopeAudit':return answer_scope_audit(candidates)
+        if schema.__name__=='CoverageAudit':
+            snapshot=copy.deepcopy(candidates[0]);audits.append(snapshot)
+            missing=bool(snapshot['reported_limits']['issues'])
+            return dict(coverage=[dict(question_id=row['question_id'],status='unresolved' if missing else 'supported',
+                reason='Requested list is still missing' if missing else 'Complete conditions checked',
+                evidence_ids=row['candidate_evidence_ids']) for row in snapshot['coverage']])
+        raise AssertionError(schema.__name__)
+    monkeypatch.setattr(research,'structured',structured)
+    asyncio.run(w.assess())
+    assert len(audits)==1 and w.sufficient()
+    limits.append(dict(text='The requested criteria list remains in an unread appendix.',kind='limitation',source_ids=[source['id']],status='open'))
+    w.requirements='重新核查当前已知缺口'
+    asyncio.run(w.assess())
+    assert len(audits)==2 and not w.sufficient()
+    assert audits[0]['evidence']==audits[1]['evidence']
+    assert audits[0]['reported_limits']['issues']==[]
+    assert audits[1]['reported_limits']['issues'][0]['text']==limits[0]['text']
+    assert any(row['required'] and row['status']=='unresolved' for row in w.coverage)
+    asyncio.run(w.assess())
+    assert len(audits)==2
+
+
+def test_independent_audit_can_recover_omitted_question_label_without_auto_support():
+    from backend import research_contract
+    from tests.quality_fixtures import assessment
+    a=store.create_article(dict(topic='核实三分之二的样本分母'))
+    q=research_contract.ensure(a)['questions'][0]['id']
+    span=dict(assessment(),evidence_id='E1',source_id='S1',question_ids=[],quality='suitable',
+        verification='quote_matched',source_type='original',adoption_reason='Direct count',use_scope='Study')
+    rows=research_contract.coverage(a,dict(evidence=[span]))
+    assert rows[0]['evidence_ids']==[]
+    candidates=research_contract.audit_candidates(a,rows,[span])
+    assert candidates[0]['candidate_evidence_ids']==['E1']
+    assert not research_contract.sufficient(candidates)
+    no=dict(question_id=q,status='unresolved',reason='Does not answer this question',evidence_ids=[])
+    assert not research_contract.sufficient(research_contract.audit_coverage(candidates,[no],[span]))
+    yes=dict(no,status='supported',reason='Counts directly answer the requested denominator',evidence_ids=['E1'])
+    accepted=research_contract.audit_coverage(candidates,[yes],[span])
+    assert research_contract.sufficient(accepted) and accepted[0]['source_ids']==['S1']
+    assert 'candidate_evidence_ids' not in accepted[0]
+    assert not research_contract.sufficient(research_contract.audit_coverage(candidates,[dict(yes,evidence_ids=['invented'])],[span]))
+
+
+def test_report_summary_cannot_reintroduce_unverified_numbers_or_rejected_claims(monkeypatch):
+    from backend import evidence_state
+    from tests.quality_fixtures import notes,judgements,coverage_audit,scope_audit,answer_scope_audit
+    w=worker()
+    source=materials.source('Original study','Events: 18 (12%). Outcome was observed. Mechanism is unknown.')
+    w.a['sources']=[source]
+    draft='The sample denominator was 150. The mechanism is proven. Requested criteria remain unread.'
+    audits=[]
+    async def structured(a,stage,instruction,schema,job_id,candidates=None,questions=()):
+        if schema.__name__=='ResearchNotes':
+            return schema.model_validate(notes(a,dict(summary=draft,evidence=[
+                dict(source_id=source['id'],quote='Events: 18 (12%).',claim='There were 18 events (12%).'),
+                dict(source_id=source['id'],quote='Mechanism is unknown.',claim='The mechanism is proven.')]))).model_dump()
+        if schema.__name__=='EvidenceJudgements':
+            response=judgements(candidates,a['research_contract'])
+            assert len({e['source_id'] for e in candidates})==1
+            for candidate,verdict in zip(candidates,response['judgements']):
+                if candidate['claim']=='The mechanism is proven.':
+                    verdict.update(support='contradicted',reason='The source explicitly says the mechanism is unknown.')
+            return response
+        if schema.__name__=='EvidenceScopeAudit':return scope_audit(candidates)
+        if schema.__name__=='AnswerScopeAudit':return answer_scope_audit(candidates)
+        if schema.__name__=='CoverageAudit':
+            audits.append(candidates[0]['reported_limits']['summary'])
+            assert len(candidates[0]['evidence'])==1
+            assert candidates[0]['evidence'][0]['claim']=='There were 18 events (12%).'
+            assert candidates[0]['rejected_evidence'][0]['claim']=='The mechanism is proven.'
+            return coverage_audit(candidates)
+        raise AssertionError(schema.__name__)
+    monkeypatch.setattr(research,'structured',structured)
+    asyncio.run(w.assess())
+    assert audits==[draft]  # Keep draft limitations available to the independent audit.
+    summary=w.notes['summary']
+    assert '150' not in summary and '18 events (12%)' in summary
+    assert '缺少支持：The mechanism is proven.' in summary
+    evidence_state.project(dict(w.a,evidence=dict(claims=evidence_state.merge_claims(w.a,w.notes['evidence']))))
+    assert '150' not in source['summary']
+    assert '缺少支持：The mechanism is proven.' in source['summary']
+
+
+def test_condition_rejection_reaches_next_notes_and_changed_boundary_gets_new_review(monkeypatch):
+    from tests.quality_fixtures import notes,judgements,scope_audit,coverage_audit,answer_scope_audit
+    w=worker();source=materials.source('Protocol','Use B only if A is unavailable.');w.a['sources']=[source]
+    feedback=[];reviewed=[];corrected=False
+    async def structured(a,stage,instruction,schema,job_id,candidates=None,questions=()):
+        if schema.__name__=='ResearchNotes':
+            feedback.append(candidates)
+            return schema.model_validate(notes(a,dict(summary='Synthetic report',evidence=[dict(source_id=source['id'],quote=source['text'],
+                claim='可使用B',boundary='仅在A不可用时' if corrected else '',core_claim=True)]))).model_dump()
+        if schema.__name__=='EvidenceJudgements':
+            reviewed.extend(e['evidence_id'] for e in candidates)
+            return judgements(candidates,a['research_contract'])
+        if schema.__name__=='EvidenceScopeAudit':
+            result=scope_audit(candidates)
+            result['judgements'][0]['conditions']=[dict(source_condition='only if A is unavailable',claim_condition='仅在A不可用时' if corrected else '',
+                status='matched' if corrected else 'missing',reason='候补条件必须保留')]
+            return result
+        if schema.__name__=='CoverageAudit':return coverage_audit(candidates)
+        if schema.__name__=='AnswerScopeAudit':return answer_scope_audit(candidates)
+        raise AssertionError(schema.__name__)
+    monkeypatch.setattr(research,'structured',structured)
+    asyncio.run(w.assess())
+    assert not w.sufficient() and w.notes['evidence'][0]['support']=='unsupported'
+    corrected=True;w.requirements='保留原文限定后重新核查'
+    asyncio.run(w.assess())
+    assert w.sufficient() and len(set(reviewed))==2
+    assert feedback[0]==[] and '候补条件' in feedback[1][0]['support_reason']
+
+
+def test_source_summary_preserves_complete_scope_and_pending_status():
+    from backend import evidence_state
+    from tests.quality_fixtures import assessment
+    boundary='Only the stated population; '+('observational design; '*25)+'causality was not measured.'
+    span=dict(assessment(),claim='Association observed.',quality='limited',boundary=boundary,
+              verification='quote_matched',source_type='original',adoption_reason='Direct result',use_scope='Study')
+    summary=evidence_state.span_summary([span,dict(span,claim='Old unassessed claim.',assessment_version=0)])
+    assert '有限支持：Association observed.' in summary
+    assert boundary in summary and 'causality was not measured.' in summary
+    assert '适用性待复核：Old unassessed claim.' in summary
+
+
+def test_audit_candidates_exclude_unverified_and_wrong_named_sources():
+    from backend import research_contract
+    from tests.quality_fixtures import assessment
+    a=store.create_article(dict(topic='定位 DOI 10.1234/required'))
+    a['sources']=[dict(id='S1',selected=True,status='abstract_only',doi='10.1234/other')]
+    research_contract.ensure(a)['requires_primary']=True
+    good=dict(assessment(),evidence_id='E1',source_id='S1',question_ids=[],quality='suitable',
+        verification='quote_matched',source_type='original',adoption_reason='Direct result',use_scope='Study')
+    bad=[dict(good,evidence_id='E2',verification='unmatched'),dict(good,evidence_id='E3',source_origin='secondary'),dict(good,evidence_id='E4',support='unsupported')]
+    rows=research_contract.coverage(a,dict(evidence=[good,*bad]))
+    candidates=research_contract.audit_candidates(a,rows,[good,*bad])
+    assert candidates[0]['candidate_evidence_ids']==['E1']
+    assert candidates[-1]['question_id'].startswith('K') and candidates[-1]['candidate_evidence_ids']==[]
+
+
+def test_parallel_identity_lookups_are_bounded_and_never_drop_failed_candidates(monkeypatch):
+    from backend import discovery_identity
+    active=0;peak=0
+    async def normalize(row):
+        nonlocal active,peak
+        active+=1;peak=max(peak,active)
+        try:
+            await asyncio.sleep(0)
+            if row['title']=='2':raise ValueError('Temporary metadata failure')
+            return dict(row,identity_status='identified')
+        finally:active-=1
+    monkeypatch.setattr(discovery_identity,'normalize',normalize)
+    rows=[dict(title=str(i),url=f'https://example.org/{i}') for i in range(9)]
+    result=asyncio.run(discovery_identity.normalize_many(rows))
+    assert 1<peak<=4 and active==0
+    assert [r['url'] for r in result]==[r['url'] for r in rows]
+    assert result[2]['identity_status']=='unresolved'
+
+
+def test_questions_get_turns_before_one_query_exhausts_engines(monkeypatch):
+    w=worker();seen=[]
+    async def channel(name,query):
+        if w.calls>=w.cfg['max_calls']:return []
+        w.calls+=1;seen.append((name,query));return []
+    monkeypatch.setattr(w,'channel',channel)
+    asyncio.run(w.discover(['question one','question two','question three']))
+    assert [q for _,q in seen[:3]]==['question one','question two','question three']
+    assert any(c=='pubmed' for c,_ in seen)
+
+
+def test_nonempty_irrelevant_openalex_does_not_suppress_crossref(monkeypatch):
+    w=worker();w.cfg['max_calls']=12;seen=[]
+    async def channel(name,query):
+        w.calls+=1;seen.append(name)
+        return [dict(url='https://example.org/unrelated',title='Unrelated')] if name=='openalex' else []
+    async def collect(*args,**kw):return 0
+    async def assess():pass
+    monkeypatch.setattr(w,'channel',channel);monkeypatch.setattr(w,'collect',collect);monkeypatch.setattr(w,'assess',assess)
+    asyncio.run(w.discover(['query']))
+    assert 'crossref' in seen
+
+
+def test_candidate_after_first_twelve_is_evaluated(monkeypatch):
+    w=worker();w.query_readable=set();seen=[]
+    rows=[dict(url=f'https://example.org/{i}',title=f'Study {i}',content='Abstract',provider='test') for i in range(29)]
+    async def select(a,stage,instruction,schema,job,candidates=None,questions=()):
+        seen.extend(r['url'] for r in candidates)
+        return dict(urls=[r['url'] for r in candidates if r['url'].endswith('/28')],reason='Relevant core source')
+    read=[]
+    async def fetch(row):read.append(row['url']);return None
+    monkeypatch.setattr(research,'structured',select);monkeypatch.setattr(w,'read',fetch)
+    asyncio.run(w.collect(rows,'query','test'))
+    assert rows[28]['url'] in seen and rows[28]['url'] in read
+
+
+def test_arxiv_keeps_field_and_phrase_syntax(monkeypatch):
+    seen=[]
+    async def request(channel,url,params):
+        seen.append(params['search_query']);return httpx.Response(200,content=b'<feed xmlns="http://www.w3.org/2005/Atom"/>')
+    monkeypatch.setattr(academic,'request',request)
+    asyncio.run(academic.arxiv('ti:"Lost in the Middle"'))
+    assert seen==['ti:"Lost in the Middle"']
+
+
+def test_cross_language_reader_keeps_long_tail_limitations():
+    from backend import source_context
+    s=materials.source('Long English study',('Introduction\nGeneral overview. '*250)+'\nMethods\nWe used an observational design.\n'+('Results\nUnrelated detail. '*1200)+'\nLimitations\nTraining injuries were excluded; causality cannot be established.')
+    pieces=source_context.excerpts(s,{'韧带','机制'},12000)
+    assert any('Training injuries were excluded' in x['text'] for x in pieces)
+
+
+def test_deferred_candidates_are_read_after_search_budget(monkeypatch):
+    w=worker();w.calls=w.cfg['max_calls'];read=[]
+    w.deferred=[dict(url='https://example.org/core',title='Core',provider='test',query='q')]
+    async def fetch(row):
+        read.append(row['url']);w.pages+=1
+        return materials.source('Core','Direct result.',row['url'],'web')
+    async def assess():pass
+    monkeypatch.setattr(w,'read',fetch);monkeypatch.setattr(w,'assess',assess)
+    asyncio.run(w.drain_candidates())
+    assert read==['https://example.org/core'] and not w.deferred
+
+
+def test_resume_keeps_deferred_candidates_and_completed_query(monkeypatch):
+    w=worker();item=research.search_plan.query('completed query')
+    w.query_ledger=[dict(item,status='exhausted',attempts=[]),dict(query='paper',purpose='citation_graph',status='searched',attempts=[])]
+    w.deferred=[dict(url='https://example.org/core',title='Core')];w.update('pause')
+    store.update_job(w.job_id,status='cancelled')
+    j=store.create_job(w.a['id'],dict(stage='research',research_parent_id=w.job_id))
+    resumed=research.Research(w.a,j['id'],'sources')
+    assert research.digest(item) in resumed.seen_queries and resumed.deferred==w.deferred
+
+
+def test_notebook_rejects_unlocated_quotes_and_invalidates_old_analysis():
+    from backend import source_notebook
+    s=materials.source('Study','Methods\nObservational cohort.\nResults\nNo benefit.\nLimitations\nNo causal test.')
+    notes=[dict(category='results',note='Negative result',quote='No benefit.'),dict(category='design',note='Invented',quote='Randomized trial.')]
+    source_notebook.save(s,notes,'model1')
+    assert len(s['notebook']['notes'])==1 and 'design' in s['notebook']['missing_categories']
+    source_notebook.save(s,[],'model2')
+    assert s['notebook']['notes']==[]
+
+
+def test_requested_section_reaches_context_without_changing_original():
+    from backend import source_notebook,source_context
+    text='Introduction\n'+('Background text. '*1600)+'\nResults\n'+('Outcome. '*1000)+'\nLimitations\nNo causal inference.'
+    s=materials.source('Study',text);w=worker();w.a['sources']=[s]
+    section=next(x for x in source_notebook.sections(s) if x['title']=='Limitations')
+    assert source_notebook.request_reads(w.a,[dict(source_id=s['id'],section_id=section['id'],reason='Read caveat')])
+    assert 'No causal inference.' in source_context.sources(w.a)[0]['text']
+    assert s['text']==text
+
+
+def test_descriptive_protocol_sections_are_navigable_within_existing_read_budget():
+    from backend import source_notebook,source_context
+    text='Contents\nChapter 8 – Selection ........ 14\n'+('Overview text. '*2000)
+    text+='\n[第 16 页]\nChapter 8 – Participant Selection\n8.1 Eligibility Criteria\na) Inclusion Criteria\nAdult participants.\n'
+    text+='b) Exclusion Criteria\n'+('A complete condition with its exception. '*190)+'\n8.2 Recruitment\nNext procedure.'
+    s=materials.source('Protocol',text);w=worker();w.a['sources']=[s]
+    sections=source_notebook.sections(s)
+    chosen=[x for x in sections if x['title'].startswith('b) Exclusion Criteria')]
+    assert len(chosen)==2 and all(x['pages']==[16] for x in chosen)
+    assert not any('......' in x['title'] for x in sections)
+    assert source_notebook.request_reads(w.a,[dict(source_id=s['id'],section_id=x['id']) for x in chosen])
+    supplied=source_context.sources(w.a)[0]
+    assert sum(r['end']-r['start'] for r in supplied['excerpts'])<=12000
+    assert all(any(r['start']<=x['start'] and r['end']>=x['end'] for r in supplied['excerpts']) for x in chosen)
+    assert s['text']==text
+
+
+def test_reading_list_tail_keeps_prior_requested_body_when_it_fits():
+    from backend import source_notebook,source_context
+    text='Chapter 4 – Selection\na) Inclusion Criteria\nAdults.\na) Presence of clinical or subclinical findings\nMore details.\n'
+    text+='b) Exclusion Criteria\n'+('Condition with an exception. '*205)+'\n4.2 Procedure\n'+('Other text. '*1800)
+    s=materials.source('Protocol',text);w=worker();w.a['sources']=[s]
+    sections=source_notebook.sections(s)
+    assert not any('Presence' in x['title'] for x in sections)
+    inclusion=next(x for x in sections if x['title']=='a) Inclusion Criteria')
+    exclusions=[x for x in sections if x['title'].startswith('b) Exclusion Criteria')]
+    assert len(exclusions)==2 and 'Presence' in text[inclusion['start']:inclusion['end']]
+    for chosen in ([inclusion,exclusions[0]],[exclusions[1]]):
+        source_notebook.request_reads(w.a,[dict(source_id=s['id'],section_id=x['id']) for x in chosen])
+    supplied=source_context.sources(w.a)[0]
+    assert sum(r['end']-r['start'] for r in supplied['excerpts'])<=12000
+    assert all(any(r['start']<=x['start'] and r['end']>=x['end'] for r in supplied['excerpts']) for x in [inclusion]+exclusions)
+
+
+@pytest.mark.parametrize('corrected',[False,True])
+def test_local_correction_is_bounded_and_does_not_spend_search_budget(monkeypatch,corrected):
+    from tests.quality_fixtures import notes,judgements,scope_audit,answer_scope_audit
+    w=worker();s=materials.source('Study','The effect is possible only under condition C.');w.a['sources']=[s]
+    seen=[]
+    async def structured(a,stage,instruction,schema,job,candidates=None,questions=()):
+        if schema.__name__=='ResearchNotes':
+            seen.append(candidates)
+            claim='仅在条件C下可能有效' if corrected and len(seen)>1 else '必然有效'
+            return schema.model_validate(notes(a,dict(summary='Synthetic report',evidence=[dict(source_id=s['id'],quote=s['text'],claim=claim,core_claim=True)]))).model_dump()
+        if schema.__name__=='EvidenceJudgements':
+            assert candidates[0]['verification']=='quote_matched'
+            result=judgements(candidates,a['research_contract'])
+            if len(seen)==1 or not corrected:
+                for row in result['judgements']:row.update(support='unsupported',reason='把可能写成必然')
+            return result
+        if schema.__name__=='EvidenceScopeAudit':return scope_audit(candidates)
+        if schema.__name__=='AnswerScopeAudit':return answer_scope_audit(candidates)
+        if schema.__name__=='CoverageAudit':
+            return dict(coverage=[dict(question_id=r['question_id'],status='supported',reason='Rechecked correction',evidence_ids=r['candidate_evidence_ids']) for r in candidates[0]['coverage']])
+        raise AssertionError(schema.__name__)
+    monkeypatch.setattr(research,'structured',structured)
+    asyncio.run(w.assess())
+    assert len(seen)==2 and seen[1][0]['support_reason']=='把可能写成必然'
+    assert w.calls==0 and w.pages==0 and w.sufficient()==corrected
+    assert s['notebook']['read_ranges']==[dict(start=0,end=len(s['text']))]
+
+
+@pytest.mark.parametrize('complete',[False,True])
+def test_optional_unmatched_extra_never_expands_a_fully_audited_requirement(monkeypatch,complete):
+    from tests.quality_fixtures import notes,judgements,scope_audit,answer_scope_audit
+    w=worker();s=materials.source('Original work','The original publication is identified.');w.a['sources']=[s]
+    async def structured(a,stage,instruction,schema,job,candidates=None,questions=()):
+        if schema.__name__=='ResearchNotes':
+            return schema.model_validate(notes(a,dict(summary='Synthetic report',evidence=[
+                dict(source_id=s['id'],quote=s['text'],claim='原研究身份已确认',core_claim=True),
+                dict(source_id=s['id'],quote='Invented optional detail.',claim='额外的具体数值',core_claim=True)]))).model_dump()
+        if schema.__name__=='EvidenceJudgements':return judgements(candidates,a['research_contract'])
+        if schema.__name__=='EvidenceScopeAudit':return scope_audit(candidates)
+        if schema.__name__=='AnswerScopeAudit':return answer_scope_audit(candidates)
+        if schema.__name__=='CoverageAudit':
+            return dict(coverage=[dict(question_id=r['question_id'],status='supported' if complete else 'unresolved',reason='Independent check of whole requirement',evidence_ids=r['candidate_evidence_ids']) for r in candidates[0]['coverage']])
+        raise AssertionError(schema.__name__)
+    monkeypatch.setattr(research,'structured',structured)
+    asyncio.run(w.assess())
+    assert w.sufficient()==complete
+    unmatched=next(i for i in w.issues() if i.get('system_kind')=='unmatched_quote')
+    assert unmatched['kind']==('limitation' if complete else 'blocking')
+    assert unmatched['status']=='open' and '额外的具体数值' in unmatched['claim']
+    assert all(e['claim']!='额外的具体数值' for e in w.notes['evidence'])
+
+
+def test_citation_edges_are_bounded_and_do_not_become_support():
+    from backend import citation_graph
+    seen=[]
+    async def request(channel,url,params):
+        seen.append(params)
+        if params is None:return httpx.Response(200,json={'id':'https://openalex.org/W1','doi':'https://doi.org/10.1000/seed'})
+        return httpx.Response(200,json={'results':[dict(id='https://openalex.org/W2',title='Follow-up',doi='https://doi.org/10.1000/follow',type='article')]})
+    seed=dict(id='S1',doi='10.1000/seed',citation_depth=1)
+    rows,attempts=asyncio.run(citation_graph.neighbors(seed,request))
+    assert len(seen)==3 and rows[0]['citation_depth']==2
+    assert rows[0]['status']=='metadata_only' and not rows[0].get('evidence_spans')
+    assert asyncio.run(citation_graph.neighbors(dict(seed,citation_depth=2),request))==([],[])
+    assert len(seen)==3
+
+
+def test_identifier_queries_preserve_exact_identity(monkeypatch):
+    from backend import search_plan
+    seen=[]
+    async def lookup(value):seen.append(value);return {'doi':value}
+    monkeypatch.setattr(academic,'lookup_doi',lookup)
+    assert asyncio.run(academic.crossref('https://doi.org/10.1000/study'))==[{'doi':'10.1000/study'}]
+    assert search_plan.compile_query('PMID:12345','pubmed')=='12345[uid]'
+    assert search_plan.compile_query('arxiv:2307.03172v2','arxiv')=='id:2307.03172v2'
+
+
+def test_invalid_check_label_remains_unresolved():
+    from backend.models import EvidenceJudgement
+    from backend import research_contract
+    from tests.quality_fixtures import assessment
+    e=assessment();e.update(evidence_id='E1',claim='Causal benefit',quote='Association',boundary='')
+    j=EvidenceJudgement.model_validate(dict(evidence_id='E1',support='supported',reason='Association only',basis='observed',checks={**e['support_checks'],'causality':'limited'})).model_dump()
+    research_contract.apply_judgements([e],[j])
+    assert e['support']=='unsupported' and e['support_checks']['causality']=='unknown'
+
+
+def test_arxiv_landing_is_upgraded_only_to_matching_version(monkeypatch):
+    from backend import source_reader
+    landing=materials.source('Study','An abstract.','https://arxiv.org/abs/2307.03172v2','web')
+    landing.update(status='abstract_only',bibliography={'title':'Study','document_type':'PP'})
+    async def index(q):return [dict(title='Study',arxiv_id='2307.03172v2',bibliography={'title':'Study','document_type':'PP'})]
+    async def read(url):
+        if '/html/' in url:raise ValueError('HTML unavailable')
+        return materials.source('PDF','arXiv:2307.03172v1 Different version.',url,'web',[dict(page=1,text='arXiv:2307.03172v1 Different version.')])
+    monkeypatch.setattr(academic,'arxiv',index);monkeypatch.setattr(materials,'read_url',read)
+    result=asyncio.run(source_reader.read_arxiv(landing['url'],landing))
+    assert result['status']=='abstract_only' and not result.get('identity_verified')
+
+
+def test_arxiv_verified_pdf_matches_discovery_identity():
+    from backend import source_reader
+    src=materials.source('PDF','arXiv:2307.03172v3 Correct.', 'https://arxiv.org/pdf/2307.03172v3','web')
+    src.update(arxiv_id='2307.03172v3',bibliography={'document_type':'PP'})
+    assert source_reader.candidate_matches(src,dict(title='Study',arxiv_id='2307.03172v3',bibliography={'document_type':'PP'}))
+    assert not source_reader.candidate_matches(src,dict(title='Study',arxiv_id='2307.03172v2',bibliography={'document_type':'PP'}))
+
+
+def test_named_doi_cannot_be_completed_by_a_secondary_description():
+    from backend import research_contract
+    from tests.quality_fixtures import assessment
+    a=store.create_article({'topic':'定位 DOI 10.1234/example，说明研究条件。'})
+    contract=research_contract.ensure(a);qid=contract['questions'][0]['id']
+    s=materials.source('An expert summary','A secondary summary mentions the requested paper.');a['sources']=[s]
+    e=dict(assessment(),source_id=s['id'],evidence_id='E1',quote=s['text'],claim='Study conditions',quality='suitable',question_ids=[qid])
+    rows=research_contract.coverage(a,dict(evidence=[e],coverage=[dict(question_id=qid,status='supported',reason='Reported in summary')]))
+    assert not research_contract.sufficient(rows) and rows[-1]['question_id'].startswith('K')
+    assert rows[-1]['status']=='unresolved'
+
+
+def test_research_question_needs_primary_support_not_repeated_transfers():
+    from backend import research_contract
+    from tests.quality_fixtures import assessment
+    a=store.create_article({'topic':'追溯原始实验，核查结论'})
+    contract=research_contract.ensure(a);contract['requires_primary']=True;qid=contract['questions'][0]['id']
+    e=dict(assessment(),source_id='S1',evidence_id='E1',quote='Secondary account.',claim='Claim',quality='limited',source_origin='secondary',support_basis='external_reference',question_ids=[qid])
+    rows=research_contract.coverage(a,dict(evidence=[e],coverage=[dict(question_id=qid,status='supported',reason='Repeated secondary account')]))
+    assert rows[0]['status']=='unresolved' and not research_contract.sufficient(rows)
+
+
+def test_metadata_candidate_keeps_real_abstract_from_failed_fulltext_path(monkeypatch):
+    from backend import browser_search
+    w=worker();w.disabled.add('crossref')
+    async def public(url):return True
+    async def fetch(url):
+        w.pages+=1
+        s=materials.source('Original work','Indexed abstract describes original results.',url,'web')
+        s.update(doi='10.1234/target',status='abstract_only');return s
+    monkeypatch.setattr(browser_search,'public_url',public);monkeypatch.setattr(w,'fetch',fetch)
+    r=dict(title='Original work',url='https://doi.org/10.1234/target',doi='10.1234/target',academic=True,provider='crossref',content='')
+    result=asyncio.run(w.read(r))
+    assert result['status']=='abstract_only' and result['text']=='Indexed abstract describes original results.'
+
+
+def test_opaque_redirect_is_identified_before_selection(monkeypatch):
+    from backend import discovery_identity,source_reader,public_network
+    real=httpx.AsyncClient;seen=[]
+    async def public(url):return True
+    def response(req):
+        seen.append(str(req.url))
+        return httpx.Response(302,headers={'location':'https://pubmed.ncbi.nlm.nih.gov/123/'}) if 'vertexaisearch' in str(req.url) else httpx.Response(403)
+    async def identify(url):
+        assert url=='https://pubmed.ncbi.nlm.nih.gov/123/'
+        return dict(title='Exact original',url=url,content='Actual indexed abstract.',doi='10.1234/original',academic=True,status='abstract_only',provider='europepmc')
+    monkeypatch.setattr(public_network,'public_url',public);monkeypatch.setattr(source_reader,'identify',identify)
+    monkeypatch.setattr(httpx,'AsyncClient',lambda **kw:real(transport=httpx.MockTransport(response),**kw))
+    row=dict(url='https://vertexaisearch.cloud.google.com/grounding-api-redirect/example',title='nih.gov',content='Model-generated paraphrase',status='excerpt_only',provider='native')
+    result=asyncio.run(discovery_identity.normalize(row))
+    assert result['doi']=='10.1234/original' and result['content']=='Actual indexed abstract.'
+    assert result['discovery_url']==row['url'] and len(seen)==2

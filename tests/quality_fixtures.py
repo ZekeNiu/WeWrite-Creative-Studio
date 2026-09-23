@@ -3,12 +3,16 @@ from backend.research_contract import CHECKS,ensure
 
 
 def assessment():
-    return dict(assessment_version=1,support='supported',support_basis='observed',support_reason='Synthetic direct support',support_checks=dict.fromkeys(CHECKS,'matched'))
+    return dict(assessment_version=1,support='supported',source_origin='primary',support_basis='observed',support_reason='Synthetic direct support',support_checks=dict.fromkeys(CHECKS,'matched'))
 
 
 def judgements(candidates,contract):
-    return dict(judgements=[dict(evidence_id=e['evidence_id'],support='supported',basis='observed',reason='Synthetic direct support',
+    return dict(judgements=[dict(evidence_id=e['evidence_id'],support='supported',basis='observed',source_origin='primary',reason='Synthetic direct support',
                     checks=dict.fromkeys(CHECKS,'matched'),question_ids=[q['id'] for q in contract['questions']]) for e in candidates])
+
+
+def scope_audit(candidates):
+    return dict(judgements=[dict(evidence_id=e['evidence_id'],conditions=[],scope='matched',reason='Synthetic scope comparison') for e in candidates])
 
 
 def notes(a,result):
@@ -19,3 +23,12 @@ def notes(a,result):
             if not e.get(key):e[key]=value
         if e.get('quality')=='unassessed':e['quality']='suitable'
     return result
+
+
+def coverage_audit(candidates):
+    return dict(coverage=[dict(question_id=r['question_id'],status=r['status'],reason='Synthetic coverage check',evidence_ids=r['evidence_ids']) for r in candidates[0]['coverage']])
+
+
+def answer_scope_audit(candidates):
+    return dict(judgements=[dict(question_id=r['question_id'],parts=[dict(request_quote=r['question'],evidence_ids=r['candidate_evidence_ids'],status='answered',reason='Synthetic complete answer')],
+        enumeration_requested=False,source_lists=[],complete=True,reason='Synthetic complete answer') for r in candidates[0]['coverage']],read_requests=[])

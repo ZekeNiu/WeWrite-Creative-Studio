@@ -1,5 +1,7 @@
 export const STAGES=['topic','sources','outline','write','review','visual','layout'] as const;
 export type Stage=typeof STAGES[number];
+export interface Source {notebook?:{read_characters?:number;total_characters?:number;notes:{category:string;note:string;quote:string;start:number;end:number}[];missing_categories:string[];pointers:{label:string;start:number}[]}}
+export interface ResearchStats {provider_queries?:number}
 export const LABELS:Record<string,string>={source_import:'导入资料',bound:'采用限定表述',research:'检索规划与资料整理',search:'搜索工具',topic:'选题',sources:'素材',outline:'大纲',write:'写作',review:'审核修改',visual:'配图',layout:'排版导出',revise:'修改选段',image:'生成图片',layout_advice:'阅读与结构建议'};
 export const STATUS:Record<string,string>={idle:'未开始',done:'已完成',stale:'需要更新',needs_input:'待你确认'};
 export interface Brief {column:string;domain:string;topic:string;audience:string;words:number;persona:string;tone:string;purpose:string;include:string;avoid:string;recent_days:number}

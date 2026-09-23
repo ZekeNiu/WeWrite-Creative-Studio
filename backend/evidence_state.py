@@ -4,6 +4,8 @@ import hashlib
 import json
 import re
 
+SOURCE_IDENTITY_FIELDS=('title','url','original_url','read_url','access_scope','identity_verified','identity_status','metadata_provenance')
+
 
 def digest(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
@@ -15,7 +17,7 @@ def objective(a):
 
 
 def source_key(s):
-    return digest({k:s.get(k) for k in ('id','selected','text','use','personal_material','bibliography')})
+    return digest({k:s.get(k) for k in ('id','selected','text','use','personal_material','bibliography')+SOURCE_IDENTITY_FIELDS})
 
 
 def selected(a):
@@ -44,6 +46,19 @@ def assessed(e):
     return evaluated(e) and e.get('support') in ('supported','limited') and e.get('quality') in ('suitable','limited')
 
 
+def span_summary(spans):
+    """Summaries preserve verified wording and never silently promote rejected claims."""
+    rows=[]
+    for e in spans:
+        label=('适用性待复核' if not evaluated(e) else '缺少支持' if not assessed(e)
+               else '有限支持' if e.get('support')=='limited' or e.get('quality')=='limited' or e.get('boundary') else '已有支持')
+        row=label+'：'+e['claim']+('；边界：'+e['boundary'] if e.get('boundary') else '')
+        basis={'author_interpretation':'作者解释','external_reference':'转引其他研究'}.get(e.get('support_basis'))
+        if basis:row+='；依据类型：'+basis
+        if row not in rows:rows.append(row)
+    return '\n'.join(rows)
+
+
 def current_spans(a):
     return [e for c in a.get('evidence',{}).get('claims',[]) if not c.get('stale') for e in c.get('evidence',[])]
 
@@ -65,7 +80,7 @@ def project(a):
             issue.update(status='open',resolution='原核实记录缺少完整的适用性评估，请复核')
     for source in a['sources']:
         source['evidence_spans']=[copy.deepcopy(e) for e in spans if e['source_id']==source['id']]
-        source['summary']='；'.join(e['claim']+('（'+e['boundary']+'）' if e.get('boundary') else '') for e in source['evidence_spans'])[:360]
+        source['summary']=span_summary(source['evidence_spans'])
     summary='\n'.join(('依据待更新' if c.get('stale') else '适用性待复核' if c.get('assessment_pending') else '有限支持' if c.get('status')=='bounded' else '缺少支持' if c.get('status')=='unsupported' else '已有支持')+'：'+c['text']+('；边界：'+c['boundary'] if c.get('boundary') else '') for c in a['evidence']['claims'])
     a['evidence']['summary']=summary
     if a.get('research'):
@@ -100,10 +115,12 @@ def merge_issues(a, notes, requested=()):
             rows.pop(duplicate,None)
         item['merged_ids']=duplicates
         evidence=[e for e in notes.get('evidence',[]) if assessed(e) and e.get('quality')=='suitable' and
-            ((item.get('claim_id') and item['claim_id']==e.get('claim_id')) or
-             (item.get('claim') and normal(item['claim'])==normal(e['claim'])))]
+            ((item.get('claim') and normal(item['claim'])==normal(e['claim'])) or
+             (not item.get('claim') and item.get('claim_id') and item['claim_id']==e.get('claim_id')))]
         supported=bool(evidence) and bool(item.get('resolution'))
+        if item.get('status')=='resolved' and not supported:item['resolution']='本轮尚未取得支持该完整主张的有效证据'
         item.update(id=iid,status='resolved' if item.get('status')=='resolved' and supported else 'open')
+        if item['status']=='resolved':item['resolution']=span_summary(evidence)
         rows[iid]={**lookup.get(iid,{}),**item};seen.add(item['text'])
     for kind,key in [('blocking','gaps'),('limitation','conflicts')]:
         for text in notes.get(key,[]):
@@ -169,6 +186,7 @@ def changed(a, before):
 
 def material_view(a):
     from .flow_state import issues
+    from .source_context import POLICY_VERSION
     r=a.get('research',{});rows=issues(a)
     required=[x for x in rows if (x.get('kind')=='blocking' and x.get('status') in ('open','stale')) or x.get('application_state') in ('pending','partial')]
     boundaries=[x for x in rows if x.get('kind')=='limitation' and x.get('status') in ('open','stale') or x.get('status')=='bounded']
@@ -177,10 +195,12 @@ def material_view(a):
     legacy_ready=not r.get('policy_version') and ((bool(r) and not r.get('pending')) or (a['stages']['sources']=='done' and bool(a.get('evidence'))))
     usable=bool(claims or r.get('evidence') or legacy_ready) and not r.get('stale')
     unassessed=sum(bool(c.get('assessment_pending')) for c in claims)
+    policy_changed=bool(r.get('policy_version') and r['policy_version']!=POLICY_VERSION)
     if new: state='new_materials';message=f'{len(new)} 条新采用的材料尚未纳入判断';action='verify_new'
     elif r.get('stale'): state='changed';message='相关依据或文章目标已变化，需要更新对应判断';action='verify'
     elif required: state='gaps';message=f'{len(required)} 项建议或稿件改动待处理，可带限定继续创作';action='continue' if r.get('next_queries') and not r.get('exhausted') else 'supplement'
     elif unassessed: state='gaps';message=f'{unassessed} 项主张适用性待复核，可查找并整理资料或带限定继续创作';action='verify'
+    elif policy_changed: state='gaps';message='这份核查使用了旧证据政策，可继续创作，关键依据需要复核';action='verify'
     elif usable: state='ready';message='当前资料可进入大纲，请保留以下写作边界';action='outline'
     else: state='initial';message='先检查已有材料，再按缺口查找资料';action='collect'
     delta=r.get('delta')
@@ -200,6 +220,7 @@ def sync(a):
     a['research']['issues']=issues(a)
     view=material_view(a)
     a['research']['pending']=bool(view['required'])
-    from .research_contract import sufficient
-    a['research']['coverage_sufficient']=sufficient(a['research'].get('coverage',[])) and not a['research'].get('stale',False)
+    from .research_contract import sufficient,VERSION
+    from .source_context import POLICY_VERSION
+    a['research']['coverage_sufficient']=sufficient(a['research'].get('coverage',[])) and not a['research'].get('stale',False) and a['research'].get('policy_version')==POLICY_VERSION and a.get('research_contract',{}).get('version')==VERSION
     a['stages']['sources']='stale' if a['research'].get('stale') else 'needs_input' if view['pending'] or view['new_source_ids'] else 'done' if view['ready'] else 'idle'
