@@ -123,7 +123,18 @@ def headers(s):
     return h
 
 
-def http_error(status):
+def http_error(status,detail=''):
+    # Gateways may report billing failures as 403. Identify the structured cause
+    # without reflecting arbitrary upstream text (which can contain credentials).
+    try: data=json.loads(detail)
+    except (ValueError,TypeError):data=None
+    error=data.get('error',data) if isinstance(data,dict) else None
+    if isinstance(error,dict):
+        code=str(error.get('code','')).lower()
+        kind=str(error.get('type','')).lower()
+        message=str(error.get('message','')).strip().lower()
+        if code=='insufficient_balance' or (kind=='billing_error' and message in ('insufficient balance','insufficient account balance')):
+            return '模型服务账户余额不足，请在当前服务商处充值后重试'
     return {400:'模型不接受当前请求，请检查接口协议、模型名称和高级参数',401:'API Key 无效或已过期，请检查服务配置',403:'服务拒绝访问，请检查 Key 的分组或模型权限',
             404:'模型或接口地址不存在，请检查协议、地址和模型名称',429:'请求过于频繁或额度不足，请稍后重试'}.get(status,f'上游服务返回 HTTP {status}，请检查服务状态后重试')
 
@@ -174,7 +185,7 @@ async def generate(s, system, prompt, emit=None):
                     detail=(await response_body(response)).decode('utf-8',errors='replace').lower()
                     if response.status_code in (400,422) and body.get('response_format') and re.search(r'response_format|json_schema|json schema|structured.output',detail) and re.search(r'unsupported|not supported|not support|does not support|unrecognized|unknown parameter|不支持|未知参数',detail):
                         raise StructuredOutputUnsupported('当前接口明确不支持结构化输出参数')
-                    raise ValueError(http_error(response.status_code))
+                    raise ValueError(http_error(response.status_code,detail))
                 if 'text/event-stream' not in response.headers.get('content-type',''):
                     raw=await response_body(response); d=json.loads(raw)
                     if d.get('error'): raise ValueError('模型返回错误，请检查模型权限和额度')

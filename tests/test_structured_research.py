@@ -92,6 +92,35 @@ def test_other_provider_errors_never_trigger_automatic_retry(monkeypatch,status,
     assert len(calls)==1
 
 
+@pytest.mark.parametrize('body,expected',[
+    ({'code':'INSUFFICIENT_BALANCE','message':'Insufficient account balance'},'余额不足'),
+    ({'error':{'message':'insufficient balance','type':'billing_error'}},'余额不足'),
+    ({'error':{'code':'insufficient_balance','message':'private-test-key'}},'余额不足'),
+    ({'error':{'message':'private-test-key','type':'permission_error'}},'分组或模型权限'),
+    ({'error':{'message':'billing request was denied','type':'billing_error'}},'分组或模型权限'),
+    ({'error':'private-test-key'},'分组或模型权限'),
+    (['INSUFFICIENT_BALANCE'],'分组或模型权限'),
+    ('insufficient balance private-test-key','分组或模型权限'),
+])
+def test_research_billing_errors_keep_raw_response_and_unknown_usage(monkeypatch,tmp_path,body,expected):
+    calls=[]
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(403,json=body)
+    service,article,job=environment(monkeypatch,handler)
+    before=dict(service)
+    monkeypatch.setattr(providers,'generate',providers.generate)
+    monkeypatch.setattr(providers,'frames',providers.frames)
+    monkeypatch.setattr(providers,'response_body',providers.response_body)
+    capture=Capture(providers,tmp_path/'capture');capture.case.set('case')
+    with pytest.raises(ValueError,match=expected) as exc:invoke(article,job)
+    assert 'private-test-key' not in str(exc.value)
+    assert len(calls)==1 and service==before
+    usage=store.usage(article['id'])
+    assert len(usage)==1 and usage[0]['status']=='unknown' and usage[0]['estimated_cost'] is None
+    assert json.loads((tmp_path/'capture/raw/case/0001.response.txt').read_text('utf8'))==body
+
+
 def test_interrupted_stream_never_triggers_format_fallback(monkeypatch):
     calls=[]
     def handler(request):
