@@ -250,7 +250,7 @@ class ResearchNotes(BaseModel):
 
 
 class EvidenceAdditions(BaseModel):
-    evidence: list[EvidenceSpan] = Field(default_factory=list,max_length=12)
+    evidence: list[EvidenceSpan] = Field(max_length=12)
 
 
 class SourceNote(BaseModel):

@@ -83,39 +83,50 @@ async def structured(a,stage,instruction,schema,job_id,candidates=None,questions
         partial+=delta
         if time.monotonic()-last>.5:
             store.update_job(job_id,partial=partial);last=time.monotonic()
-    try:
-        data=context(a,stage,questions)
-        if schema in (EvidenceJudgements,EvidenceScopeAudit):
-            data=audit_context(a,stage,questions,{e['source_id'] for e in candidates or []})
-        elif schema is EvidenceAdditions:
-            data=audit_context(a,stage,questions,{item['source_id'] for item in candidates or []})
-        elif schema in (CoverageAudit,AnswerScopeAudit):
-            data=audit_context(a,stage,questions)
-            rows=[row for group in candidates or [] for row in group.get('coverage',[])]
-            ids={row['question_id'] for row in rows}
-            contract=data['research_contract']
-            target_ids={t['id'] for t in contract.get('source_targets',[])}
-            data['research_contract']={**contract,
-                'questions':[dict(id=row['question_id'],text=row['question'],required=row['required'],
-                    scope='source_identity' if row['question_id'] in target_ids else 'user_requirement') for row in rows],
-                'source_targets':[t for t in contract.get('source_targets',[]) if t['id'] in ids]}
-            instruction+=' 只核对本次candidates.coverage列出的问题编号；完整用户原句用于理解意图，不为其他组返回结论。'
-            instruction+=' research_contract.questions中scope=source_identity是系统单列的文献身份项，只确认该文献身份与实际访问范围。完整用户要求中的条件、数字或结果由scope=user_requirement的问题核查，不在身份项重复要求；身份确认也不能替代那些内容问题的回答。'
-        prompt=json.dumps({'task':instruction,'context':data,'candidates':candidates or [],'schema':schema.model_json_schema()},ensure_ascii=False)
-        try:raw,usage=await providers.generate(s,SYSTEM,prompt,emit)
-        except providers.StructuredOutputUnsupported:
+    data=context(a,stage,questions)
+    if schema in (EvidenceJudgements,EvidenceScopeAudit):
+        data=audit_context(a,stage,questions,{e['source_id'] for e in candidates or []})
+    elif schema is EvidenceAdditions:
+        data=audit_context(a,stage,questions,{item['source_id'] for item in candidates or []})
+    elif schema in (CoverageAudit,AnswerScopeAudit):
+        data=audit_context(a,stage,questions)
+        rows=[row for group in candidates or [] for row in group.get('coverage',[])]
+        ids={row['question_id'] for row in rows}
+        contract=data['research_contract']
+        target_ids={t['id'] for t in contract.get('source_targets',[])}
+        data['research_contract']={**contract,
+            'questions':[dict(id=row['question_id'],text=row['question'],required=row['required'],
+                scope='source_identity' if row['question_id'] in target_ids else 'user_requirement') for row in rows],
+            'source_targets':[t for t in contract.get('source_targets',[]) if t['id'] in ids]}
+        instruction+=' 只核对本次candidates.coverage列出的问题编号；完整用户原句用于理解意图，不为其他组返回结论。'
+        instruction+=' research_contract.questions中scope=source_identity是系统单列的文献身份项，只确认该文献身份与实际访问范围。完整用户要求中的条件、数字或结果由scope=user_requirement的问题核查，不在身份项重复要求；身份确认也不能替代那些内容问题的回答。'
+    prompt=json.dumps({'task':instruction,'context':data,'candidates':candidates or [],'schema':schema.model_json_schema()},ensure_ascii=False)
+    for attempt in range(1,4):
+        partial='';last=0
+        try:
+            try:raw,usage=await providers.generate(s,SYSTEM,prompt,emit)
+            except providers.StructuredOutputUnsupported:
+                store.add_usage(a['id'],stage='research',model=s['model'],service=s['name'],status='unknown',estimated_cost=None)
+                store.event(job_id,'research',message='正在使用同一模型继续校验结果',structured_output='explicitly_unsupported')
+                s={k:v for k,v in s.items() if k!='response_schema'}
+                partial='';last=0
+                raw,usage=await providers.generate(s,SYSTEM,prompt,emit)
+        except BaseException:
+            store.update_job(job_id,partial=partial)
             store.add_usage(a['id'],stage='research',model=s['model'],service=s['name'],status='unknown',estimated_cost=None)
-            store.event(job_id,'research',message='正在使用同一模型继续校验结果',structured_output='explicitly_unsupported')
-            s={k:v for k,v in s.items() if k!='response_schema'}
-            raw,usage=await providers.generate(s,SYSTEM,prompt,emit)
-    except BaseException:
-        store.update_job(job_id,partial=partial)
-        store.add_usage(a['id'],stage='research',model=s['model'],service=s['name'],status='unknown',estimated_cost=None)
-        raise
-    store.add_usage(a['id'],stage='research',**usage)
-    store.update_job(job_id,partial=raw)
-    try: return parse_structured(raw,schema)
-    except ValueError: raise ValueError('检索规划或证据整理格式无效，原始结果已保留，可重试') from None
+            raise
+        charged=store.add_usage(a['id'],stage='research',**usage)
+        store.update_job(job_id,partial=raw)
+        try:return parse_structured(raw,schema)
+        except ValueError:
+            # Retain every rejected response before partial is replaced. Never select
+            # among competing objects or feed an invalid answer back as evidence.
+            store.event(job_id,'research',structured_output='invalid',attempt=attempt,attempt_limit=3,
+                schema=schema.__name__,raw=raw,usage_id=charged['id'],
+                request=dict(system=SYSTEM,prompt=prompt,service={k:s[k] for k in
+                    ('id','name','model','protocol','max_tokens','temperature','response_schema','stream') if k in s}),
+                message=f'结果格式未通过校验，正在重新请求（{attempt+1}/3）' if attempt<3 else '结果格式多次未通过校验，原始返回已保存')
+    raise ValueError('检索规划或证据整理格式无效，原始结果已保留，可重试') from None
 
 
 def validate_spans(notes,sources):

@@ -15,6 +15,7 @@ from tools.benchmark_support import Capture
     (models.SearchSelection,dict(url='https://example.org/source',reason='fragment'),dict(urls=[])),
     (models.IssueScope,dict(id='I1',kind='limitation',reason='fragment'),dict(decisions=[])),
     (models.ResearchNotes,dict(summary='source summary fragment'),dict(summary='report',evidence=[])),
+    (models.EvidenceAdditions,dict(source_id='S1',quote='original',claim='intermediate'),dict(evidence=[])),
 ])
 def test_intermediate_fragments_are_not_complete_results(schema,fragment,final):
     fragment=json.dumps(fragment);expected=schema.model_validate(final).model_dump();final=json.dumps(final)
@@ -141,6 +142,88 @@ def test_full_response_is_checked_including_outside_a_code_fence(monkeypatch,fen
     if fenced_valid:
         with pytest.raises(ValueError,match='格式无效'):invoke(article,job)
     else:assert invoke(article,job)=={'judgements':[]}
+
+
+@pytest.mark.parametrize('invalid',[
+    '{"judgements":[]}\n{"judgements":[]}',
+    '{"judgements": "invalid schema"}',
+])
+def test_invalid_format_reissues_identical_request_and_retains_each_attempt(monkeypatch,tmp_path,invalid):
+    requests=[]
+    def handler(request):
+        requests.append(json.loads(request.content))
+        if len(requests)<3:
+            return httpx.Response(200,json=dict(choices=[dict(message=dict(content=invalid),finish_reason='stop')],usage=dict(prompt_tokens=2,completion_tokens=3)))
+        return completed()
+    service,article,job=environment(monkeypatch,handler);before=dict(service)
+    monkeypatch.setattr(providers,'generate',providers.generate)
+    monkeypatch.setattr(providers,'frames',providers.frames)
+    monkeypatch.setattr(providers,'response_body',providers.response_body)
+    capture=Capture(providers,tmp_path/'capture');capture.case.set('case')
+    assert invoke(article,job)==dict(judgements=[])
+    assert service==before and len(requests)==3 and requests[0]==requests[1]==requests[2]
+    usage=store.usage(article['id']);assert len(usage)==3
+    assert all(row['status']=='completed' and row['estimated_cost'] is None for row in usage)
+    failures=[e for e in store.events(job['id'],0) if e.get('structured_output')=='invalid']
+    assert [e['attempt'] for e in failures]==[1,2]
+    assert all(e['raw']==invalid and e['attempt_limit']==3 for e in failures)
+    assert {e['usage_id'] for e in failures}<={row['id'] for row in usage}
+    assert all(e['request']['prompt']==requests[0]['messages'][1]['content'] for e in failures)
+    assert 'private-test-key' not in json.dumps(failures)
+    records=[json.loads((tmp_path/f'capture/raw/case/{i:04}.json').read_text('utf8')) for i in range(1,4)]
+    assert [r['raw'] for r in records]==[invalid,invalid,'{"judgements":[]}']
+    assert store.job(job['id'])['partial']=='{"judgements":[]}'
+
+
+def test_invalid_format_stops_at_limit_without_adopting_any_answer(monkeypatch):
+    requests=[];invalid='{"judgements":[]}\n{"judgements":[]}'
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200,json=dict(choices=[dict(message=dict(content=invalid),finish_reason='stop')]))
+    _,article,job=environment(monkeypatch,handler)
+    with pytest.raises(ValueError,match='格式无效'):invoke(article,job)
+    assert len(requests)==3 and len(store.usage(article['id']))==3
+    assert all(row['status']=='completed' for row in store.usage(article['id']))
+    failures=[e for e in store.events(job['id'],0) if e.get('structured_output')=='invalid']
+    assert [e['attempt'] for e in failures]==[1,2,3]
+    assert store.job(job['id'])['partial']==invalid
+
+
+def test_retry_resets_partial_and_does_not_retry_transport_or_cancellation(monkeypatch):
+    async def scenario(error):
+        _,article,job=environment(monkeypatch,lambda request:completed())
+        calls=[]
+        async def generate(service,system,prompt,emit):
+            calls.append(prompt)
+            if len(calls)==1:
+                await emit('first invalid')
+                return 'first invalid',dict(status='completed',estimated_cost=None)
+            await emit('second partial')
+            raise error
+        monkeypatch.setattr(providers,'generate',generate)
+        with pytest.raises(type(error)):
+            await research.structured(article,'sources','核查给定证据',models.EvidenceJudgements,job['id'])
+        assert len(calls)==2 and calls[0]==calls[1]
+        assert store.job(job['id'])['partial']=='second partial'
+        assert len(store.usage(article['id']))==2
+        assert sum(row['status']=='unknown' for row in store.usage(article['id']))==1
+    asyncio.run(scenario(ValueError('connection failed')))
+    asyncio.run(scenario(asyncio.CancelledError()))
+
+
+def test_retry_never_trims_schema_overflow_to_obtain_a_result(monkeypatch):
+    value=dict(summary='report',evidence=[],intent=dict(title='Synthetic',angle='Synthetic',reason='Synthetic',questions=[f'question {i}' for i in range(9)]))
+    assert models.ResearchNotes.model_validate(dict(value,intent=dict(value['intent'],questions=value['intent']['questions'][:8])))
+    raw=json.dumps(value)
+    calls=[]
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200,json=dict(choices=[dict(message=dict(content=raw),finish_reason='stop')]))
+    _,article,job=environment(monkeypatch,handler)
+    with pytest.raises(ValueError,match='格式无效'):
+        asyncio.run(research.structured(article,'sources','保留全部用户问题',models.ResearchNotes,job['id']))
+    assert len(calls)==3
+    assert all(e['raw']==raw for e in store.events(job['id'],0) if e.get('structured_output')=='invalid')
 
 
 @pytest.mark.parametrize('kind',['missing_finish','truncated','multiple_choices'])
