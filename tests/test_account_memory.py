@@ -136,7 +136,8 @@ def test_example_only_abstract_style_reaches_generation(client,monkeypatch):
     memory.item_action(1,'examples',ex['id'],'confirm')
     ctx=memory.context(a);serialized=store.encode(ctx)
     assert ctx['examples'][0]['rules'][0]['text']=='长短段落交替'
-    assert '火星' not in serialized and '王博士' not in serialized and '99' not in serialized
+    assert '火星' not in serialized and '王博士' not in serialized and '99颗宝石' not in serialized
+    assert set(ctx['examples'][0])=={'id','title','rules','scope','column'}
     other={**a,'brief':{**a['brief'],'column':'AI'}};assert not memory.context(other)['examples']
     memory.item_action(2,'examples',ex['id'],'revoke');assert not memory.context(a)['examples']
 
