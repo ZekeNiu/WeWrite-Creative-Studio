@@ -36,6 +36,16 @@ def test_uncited_fact_and_missing_segment_are_not_passed(client):
     assert not checked and issues
 
 
+def test_unknown_fact_check_labels_preserve_other_findings_without_passing(client):
+    a,s=source_article();parts,result=audit_reply(a,s)
+    result['segments'][0]['facts'][0]['checks']['quantity']='unexpected_label'
+    parsed=editorial.FactAudit.model_validate(result).model_dump()
+    checked,issues=editorial.audit_findings(a,parts,parsed)
+    assert checked and parsed['segments'][0]['facts'][0]['checks']['quantity']=='unknown'
+    assert checked[0]['facts'][0]['checked_status']=='unsupported'
+    assert issues and issues[0]['severity']=='blocker'
+
+
 def test_five_dimensions_are_complete_bounded_and_thresholded():
     review=dict(decision='pass',issues=[],dimensions=dict.fromkeys(editorial.DIMENSIONS,4))
     assert editorial.gate(review,dict(complete=True,issues=[]))['decision']=='pass'

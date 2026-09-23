@@ -5,7 +5,7 @@ import hashlib
 import json
 import re
 import time
-from pydantic import BaseModel,Field
+from pydantic import BaseModel,Field,field_validator
 from typing import Literal
 from . import store,providers,source_context,research_contract,review_state
 from .models import EvidenceJudgement
@@ -43,6 +43,11 @@ class FactFinding(BaseModel):
     basis:Literal['observed','author_interpretation','external_reference','not_applicable','unassessed']='unassessed'
     checks:dict[str,Literal['matched','mismatch','unknown','not_applicable']]=Field(default_factory=dict)
     boundary:str=''
+
+    @field_validator('checks',mode='before')
+    @classmethod
+    def conservative_unknown(cls,value):
+        return EvidenceJudgement.conservative_unknown(value)
 
 
 class AuditedSegment(BaseModel):
