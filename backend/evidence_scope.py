@@ -50,9 +50,11 @@ def apply(spans, judgements, pdf_source_ids=(), read_sources=()):
                 elif not counterpart or not any(counterpart in normal(e.get(k,'')) for k in ('claim','boundary')):
                     reasons.append('条件对照未能定位到实际主张或边界')
                 possibility=re.search(r'\b(?:may|might|could)\b|可能|或许|也许',condition['source_condition'])
-                inference=e.get('support_basis') in ('author_interpretation','external_reference')
-                certain=re.search(r'将|必然|一定|必定|会',condition['claim_condition'])
-                if possibility and (inference or certain) and not re.search(r'\b(?:may|might|could|can)\b|可|能够|或许|也许|未必|不一定|有望',condition['claim_condition']):
+                # Observed counts can still contain uncertain attribution. Only
+                # a reported past inability is exempt from possibility wording.
+                inability=(e.get('support_basis')=='observed' and re.search(r'\bcould not\b',condition['source_condition'])
+                           and re.search(r'未能|无法|不能|未检测|未发现|未识别',condition['claim_condition']))
+                if possibility and not inability and not re.search(r'\b(?:may|might|could|can)\b|可|能够|或许|也许|未必|不一定|有望',condition['claim_condition']):
                     reasons.append('该分句未保留原文的可能性；条件前提或其他分句的限定不能替代结果的推测强度')
         e['scope_alignment']=row
         if reasons:

@@ -111,3 +111,22 @@ def test_observed_past_inability_is_not_automatically_a_hypothesis():
     condition=dict(source_condition=e['quote'],claim_condition=e['claim'],status='matched',reason='报告实测结果')
     evidence_scope.apply([e],[verdict(conditions=[condition])])
     assert e['support']=='supported'
+
+
+@pytest.mark.parametrize('claim,accepted',[
+    ('其余12例中有7例归因于分类错误。',False),
+    ('其余12例中有7例可能归因于分类错误。',True),
+])
+def test_observed_counts_do_not_make_their_possible_attribution_certain(claim,accepted):
+    e=dict(span(),quote='Of the remaining 12 cases, 7 could be attributed to classification errors.',
+        claim=claim,boundary='观察性病例分析',support_basis='observed')
+    condition=dict(source_condition=e['quote'],claim_condition=claim,status='matched',reason='人数一致')
+    evidence_scope.apply([e],[verdict(conditions=[condition])])
+    assert (e['support']=='supported')==accepted
+
+
+def test_observed_capability_can_retain_ability_wording():
+    e=dict(span(),quote='The instrument could detect the signal.',claim='仪器能够检测到信号。',support_basis='observed')
+    condition=dict(source_condition=e['quote'],claim_condition=e['claim'],status='matched',reason='能力陈述')
+    evidence_scope.apply([e],[verdict(conditions=[condition])])
+    assert e['support']=='supported'

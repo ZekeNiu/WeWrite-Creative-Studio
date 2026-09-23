@@ -487,6 +487,7 @@ class Research:
             '核对当前任务需要的全部关键问题；只列阻碍继续写作的实质 gaps 和 conflicts，不为凑篇数补查。'
             '只读到摘要不得推断全文。issues 分类：blocking 仅用于无法省略且阻碍当前写作任务的核心依据；'
             '必需条件只以 research_contract 中 required=true 的用户原句和明确采用方案为准；creative_intent 中自动展开的计划、检索规划 questions 和模型建议都不是新增必需条件。人格不是写作目标。证据迫使核心方向改变时填写 direction_change（原因与替代方向），不得静默降低目标。手动主题未展开时，在 intent 中展开切入点、价值、交付、关键待验证主张，不能将假设当事实。'
+            '先辨别用户是在要求论证某立场，还是查证、比较或判断一个说法是否成立。后者的否定结果和反证正是原任务的答案，不属于改变方向；不能把待检验的说法当成用户已决定必须支持的立场，也不能因此要求用户批准转为事实查证。只有改变用户明确采用的目的才填写direction_change；核实后已回答的质疑不要继续作为未解决blocking。'
             '普通研究局限、样本量不足、尚未开展的研究、可并列介绍的学术争议均为 limitation，写进边界而非阻塞。'
             '每个问题给出 text、kind、source_ids、claim。gaps 只列 blocking；conflicts 记录可保留的分歧。'
             '已有问题保留原 id 及 claim_id；同问题改写不得创建新身份。evidence 使用已有 claim_id（新主张可留空），type 区分事实、推断与意见。定向核实只返回目标问题及其受影响关联项，不重做无关的已处理问题；确实核实完成的标 status=resolved，说明 resolution 并指向本轮 evidence 的 source_ids；'
