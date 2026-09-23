@@ -252,6 +252,18 @@ def test_revoked_rule_is_not_reactivated_by_another_human_pair(client,monkeypatc
     assert not memory.context(first)['rules']
 
 
+def test_duplicate_model_rules_do_not_inflate_independent_pair_count(client,monkeypatch):
+    a=human_pair(client);mock_style(monkeypatch)
+    async def repeated(*args):
+        r=dict(category='rhythm',text='长短段落交替')
+        return json.dumps(dict(rules=[r,r])),dict(status='completed')
+    monkeypatch.setattr(providers,'generate',repeated)
+    j=client.post('/api/account/jobs',headers=H,json=dict(kind='learn',revision=0,article_id=a['id'],pair_id=memory.pairs(a)[0]['id'])).json()
+    assert wait(client,j)['status']=='completed'
+    assert len(memory.get()['rules'])==1 and len(memory.get()['rules'][0]['sources'])==1
+    assert memory.context(a)['rules'][0]['count']==1
+
+
 def test_full_pipeline_uses_memory_without_polluting_fact_audit(client,model,monkeypatch):
     seeded_rule();seen=[];original=providers.generate
     async def spy(service,system,prompt,emit=None):

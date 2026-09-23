@@ -235,7 +235,8 @@ def context(a):
         age = max(0, (now-timestamp(rule['updated'])).total_seconds()/86400)
         weight = 1.0 if rule['status'] == 'confirmed' else round(math.pow(.5, age/90), 3)
         if weight < .1: continue
-        rules.append({k: rule[k] for k in ('id', 'category', 'text', 'status', 'scope', 'column', 'sources')} | dict(weight=weight, count=len(rule['sources'])))
+        rules.append({k: rule[k] for k in ('id', 'category', 'text', 'status', 'scope', 'column')} |
+                     dict(weight=weight, count=len(rule['sources']), source_pair_ids=[p['id'] for p in rule['sources'][-8:]]))
     examples = [{k: x[k] for k in ('id', 'title', 'rules', 'scope', 'column')} for x in value['examples'] if x['status'] == 'confirmed' and (x['scope'] == 'account' or x['column'] == column)]
     all_history = history(page_size=1000000)['items']
     indexed = []
@@ -360,7 +361,7 @@ async def run(jid, kind, value, blob):
                         for rule in extracted['rules']:
                             old = next((x for x in account['rules'] if x['text'] == rule['text'] and x['category'] == rule['category'] and x['column'] == column), None)
                             if old:
-                                old['sources'].append(pair)
+                                if not any(p['id']==pair['id'] for p in old['sources']):old['sources'].append(pair)
                                 if old['status']=='soft':old['updated']=store.now()
                             else: account['rules'].append(dict(rule, id=store.uid(), column=column, scope='column', status='soft', sources=[pair], created=store.now(), updated=store.now()))
                     else:
