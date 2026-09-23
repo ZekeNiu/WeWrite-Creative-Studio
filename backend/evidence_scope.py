@@ -16,6 +16,7 @@ INSTRUCTION = (
     'claim或boundary含时间数字时，每一项单列条件对照，引用须包含完整时间关系与界限；约某时点不等于该时限内，至少持续某时长不等于恰好该时长，范围不能只取一个端点。单位换算保留原界限，不能只核对数字相同。'
     '假说、可能、推测和观察相关不能强化为已验证因果；这种强度限定同样属于条件。没有适用条件时conditions为空，不能编造条件。'
     '逐个分句核对推测强度；保留“若/如果”的前提，并不允许把该前提下“可能发生”的结果写成“将/必然发生”。另一分句中的可能性或boundary中笼统的假说标签，不能代替本分句的限定。'
+    '程度降低不等于完全丧失：reduced ability表示能力降低，不能改成无法完成。物理量及其阈值须保持原名词和量纲，force（力）、stress（应力）、strain（应变）不能互换，也不能把功率当能量或把构成比当风险。'
     '主张或边界中的附加事实若找不到同来源依据，或其所需条件没有读到，scope=unknown；不以空conditions略过缺据的附加判断。'
     '不得凭常识补全；引用、条件或范围不确定时scope=unknown。仅逐条返回可核对的原文对照和结论，不输出思考过程。'
 )
@@ -56,6 +57,16 @@ def apply(spans, judgements, pdf_source_ids=(), read_sources=()):
                            and re.search(r'未能|无法|不能|未检测|未发现|未识别',condition['claim_condition']))
                 if possibility and not inability and not re.search(r'\b(?:may|might|could|can)\b|可|能够|或许|也许|未必|不一定|有望',condition['claim_condition']):
                     reasons.append('该分句未保留原文的可能性；条件前提或其他分句的限定不能替代结果的推测强度')
+                source=condition['source_condition'];claim=condition['claim_condition']
+                reduced=re.search(r'\b(?:reduced|diminished|impaired) (?:the )?ability\b',source,re.I)
+                if reduced and re.search(r'无法|不能|不可能',claim) and not re.search(r'\b(?:unable|cannot|could not)\b',source,re.I):
+                    reasons.append('能力降低不能改为完全无法完成；须保留原文程度')
+                # Reject explicit substitutions between distinct physical quantities;
+                # this does not infer a conversion or independently approve a claim.
+                for original,substitute,required in [('force','应力','stress'),('strain','应力','stress'),('stress','应变','strain')]:
+                    target=re.search(r'应变(?!能力|技巧)',claim) if substitute=='应变' else substitute in claim
+                    if re.search(r'\b'+original+r'\b',source,re.I) and target and not re.search(r'\b'+required+r'\b',source,re.I):
+                        reasons.append('物理量名称不一致：'+original+'不能直接改为'+substitute)
         e['scope_alignment']=row
         if reasons:
             e['support']='unsupported';e['quality']='insufficient'

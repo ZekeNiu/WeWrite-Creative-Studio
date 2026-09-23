@@ -130,3 +130,30 @@ def test_observed_capability_can_retain_ability_wording():
     condition=dict(source_condition=e['quote'],claim_condition=e['claim'],status='matched',reason='能力陈述')
     evidence_scope.apply([e],[verdict(conditions=[condition])])
     assert e['support']=='supported'
+
+
+@pytest.mark.parametrize('claim,accepted',[
+    ('延迟导致系统无法调整输出。',False),
+    ('延迟降低系统调整输出的能力。',True),
+])
+def test_reduced_ability_does_not_mean_complete_inability(claim,accepted):
+    e=dict(span(),quote='The delay reduced the ability to adjust the output.',claim=claim,support_basis='observed')
+    condition=dict(source_condition=e['quote'],claim_condition=claim,status='matched',reason='模型认为近义')
+    evidence_scope.apply([e],[verdict(conditions=[condition])])
+    assert (e['support']=='supported')==accepted
+
+
+@pytest.mark.parametrize('original,claim,accepted',[
+    ('The compressive force threshold decreased.','压应力阈值降低。',False),
+    ('The compressive force threshold decreased.','压缩力阈值降低。',True),
+    ('The strain increased.','应力增加。',False),
+    ('The strain increased.','应变增加。',True),
+    ('The stress increased.','应变增加。',False),
+    ('The force and stress thresholds decreased.','力与应力阈值降低。',True),
+    ('Stress increased the ability to adapt.','压力提高了应变能力。',True),
+])
+def test_explicit_mechanical_quantities_cannot_be_interchanged(original,claim,accepted):
+    e=dict(span(),quote=original,claim=claim,support_basis='observed')
+    condition=dict(source_condition=original,claim_condition=claim,status='matched',reason='模型认为近义')
+    evidence_scope.apply([e],[verdict(conditions=[condition])])
+    assert (e['support']=='supported')==accepted
