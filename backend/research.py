@@ -538,7 +538,7 @@ class Research:
                     '逐项解释全部前提、阈值、例外、确认顺序和适用范围，不把清单压成几个常见示例。claim与boundary中的每个事实都须有依据。'
                     'source_identity仅核对指定来源自身的身份和实际访问范围，可逐字引用其bibliography.title；不由题名推断结果。'
                     'question_ids和source_id仅使用本组给定值；填写source_type、adoption_reason、use_scope、quality与core_claim。'
-                    '这些是尚待独立核实的候选，不输出自我通过结论。'+source_context.CLAIM_SUPPORT_POLICY,
+                    '这些是尚待独立核实的候选，不输出自我通过结论。',
                     EvidenceAdditions,self.job_id,batch,questions=self.questions)
                 allowed={(t['question_id'],t['source_id']) for t in batch}
                 if any(not e['question_ids'] or any((qid,e['source_id']) not in allowed for qid in e['question_ids']) for e in patch['evidence']):
@@ -609,7 +609,7 @@ class Research:
                     'quote_origin=bibliography 的引文只位于书目题名，不是摘要或正文。只有纯文献身份确认才 identity_only=true 且 basis=not_applicable；不能由题名证明疗效、因果或实际研究结果，含此类主张必须 unsupported，身份之外的事实需要另外引用真实摘要/正文。普通正文证据 identity_only=false。'
                     '按来源身份规则填写source_origin，在reason中说明归属依据与正文支持；转述另一研究的结果必须basis=external_reference。'
                     'supported 仅限来源直接支持且无必要条件缺失；limited 必须有明确边界；contradicted 是原文否定该判断；其他为 unsupported。'
-                    'question_ids 只能列确实回答了任务书核心问题的ID，背景介绍不能算回答。reason 简述可核查理由，不输出思考过程。'+source_context.CLAIM_SUPPORT_POLICY+source_context.NUMERIC_POLICY+source_context.QUOTE_PROVENANCE_POLICY,
+                    'question_ids 只能列确实回答了任务书核心问题的ID，背景介绍不能算回答。reason 简述可核查理由，不输出思考过程。'+source_context.QUOTE_PROVENANCE_POLICY,
                     EvidenceJudgements,self.job_id,[{k:e.get(k) for k in ('evidence_id','source_id','quote','claim','boundary','location','source_status','quote_origin','verification')} for e in batch],questions=self.questions)
                 # Bind cached verdicts to both claim and exact source contents through evidence_id.
                 research_contract.apply_judgements(batch,checked['judgements'])
@@ -642,7 +642,7 @@ class Research:
                     '仅验收用户原句和明确采用方案的条件。不能把检索规划自行扩展的机制、作者、后续实验设想变成新要求；解释证据边界不等于必须找到已经证明因果的实验。'
                     'candidate_evidence_ids 是已逐条独立核实、可供判读的证据池，不表示它们都回答了这个问题。逐个问题重新核对适用性，只选择真正回答该问题的候选编号作为 evidence_ids。之前 evidence_ids 或 question_ids 漏标不代表证据不存在。'
                     'requires_source_content 只有问题纯粹要求定位或核对文献身份时才为false；要求说明研究条件、核对数字、机制或研究结论时必须true，书目题名不能替代正文或摘要中的事实。'
-                    '具体说明用户原句中的哪项要求仍缺失；不能要求用户未指定的细分项目、对照实验或机制。书目身份以已核验元数据为准，不要求将题名作者拼成正文引文。'+source_context.COVERAGE_PROVENANCE_POLICY+'用户要求数字溯源且未完成时，相应问题必须 unresolved，不能标 supported 或 limited。'+source_context.LOOKUP_SCOPE_POLICY+source_context.COVERAGE_COMPLETENESS_POLICY,
+                    '具体说明用户原句中的哪项要求仍缺失；不能要求用户未指定的细分项目、对照实验或机制。书目身份以已核验元数据为准，不要求将题名作者拼成正文引文。'+source_context.COVERAGE_PROVENANCE_POLICY+'用户要求数字溯源且未完成时，相应问题必须 unresolved，不能标 supported 或 limited。'+source_context.COVERAGE_COMPLETENESS_POLICY,
                     CoverageAudit,self.job_id,[audit_group],questions=self.questions)
                 self.update('正在逐项核对完整问题与所要求的条件清单')
                 scope=await structured(self.a,self.stage,coverage_scope.INSTRUCTION,AnswerScopeAudit,self.job_id,[audit_group],questions=self.questions)
@@ -731,12 +731,14 @@ class Research:
             self.query_ledger.append(entry);tasks.append((item,search_plan.channels(self,item),entry))
         self.read_limit=2 if len(tasks)>1 else None
         for turn in range(max((len(channels) for _,channels,_ in tasks),default=0)):
+            collected=False
             for item,channels,entry in tasks:
                 if turn>=len(channels):continue
                 if self.calls>=self.cfg['max_calls'] or self.pages>=self.cfg['max_pages']:
                     for _,_,pending in tasks:
                         if pending['status'] not in ('covered','exhausted'):pending['status']='budget_exhausted'
                     self.read_limit=None
+                    if collected:await self.assess()
                     await self.drain_candidates()
                     return
                 channel=channels[turn];group=channel if channel in ('native','tavily') else 'browser' if channel in WEB_GROUPS['browser'] else None
@@ -751,13 +753,17 @@ class Research:
                 entry['attempts'].append(attempt)
                 if rows:
                     readable=await self.collect(rows,query,channel)
+                    collected=True
                     if not readable:attempt['status']='no_relevant_evidence'
-                    await self.assess()
-                    if self.sufficient():
-                        entry['status']='covered';self.policy_issue=''
-                        for _,_,pending in tasks:
-                            if pending['status']=='planned':pending['status']='skipped_covered'
-                        self.read_limit=None;return
+            # Give each question one bounded reading turn before reviewing the
+            # combined materials. The existing assessment cache and checks own
+            # sufficiency; retrieval itself never declares evidence verified.
+            if collected:await self.assess()
+            if self.sufficient():
+                self.policy_issue=''
+                for _,_,pending in tasks:
+                    pending['status']='skipped_covered' if pending['status']=='planned' else 'covered'
+                self.read_limit=None;return
             if turn==1:
                 await self.trace_citations()
                 self.read_limit=2 if len(tasks)>1 else None
@@ -831,9 +837,11 @@ class Research:
     async def drain_candidates(self):
         # Read deferred selections even when search calls are exhausted; page budget is separate.
         while self.deferred and self.pages<self.cfg['max_pages'] and not self.sufficient():
-            row=self.deferred.pop(0)
-            self.query_readable=set()
-            await self.collect([row],row.get('query',''),row.get('provider',''),selected=True)
+            for _ in range(2):
+                if not self.deferred or self.pages>=self.cfg['max_pages']:break
+                row=self.deferred.pop(0)
+                self.query_readable=set()
+                await self.collect([row],row.get('query',''),row.get('provider',''),selected=True)
             await self.assess()
         if self.deferred:self.update('其余候选已保存，可继续读取',remaining_candidates=len(self.deferred))
 
@@ -842,6 +850,7 @@ class Research:
         if not self.academic_needed or not self.cfg['academic_enabled'] or not self.open_targets():return
         parents=[s for s in self.a['sources'] if s.get('selected') and (doi(s) or s.get('openalex_id')) and s.get('citation_depth',0)<2 and s['id'] not in self.citation_expanded]
         parents.sort(key=lambda s:-sum(2 if e.get('core_claim') else 1 for e in self.notes.get('evidence',[]) if e['source_id']==s['id'] and e.get('quality')!='insufficient'))
+        collected=False
         for src in parents[:2]:
             if self.calls>=self.cfg['max_calls'] or self.pages>=self.cfg['max_pages'] or self.sufficient():break
             self.citation_expanded.add(src['id'])
@@ -856,7 +865,8 @@ class Research:
             self.query_ledger.append(entry);self.current_query=entry;self.query_readable=set();self.read_limit=2
             await self.collect(rows,entry['question'],'citation_graph')
             self.read_limit=None
-            if rows:await self.assess()
+            collected=collected or bool(rows)
+        if collected:await self.assess()
 
     def progress_key(self):
         return digest([evidence_state.selected(self.a),sorted(x['id'] for x in self.issues() if x['status'] in ('resolved','bounded','excluded')),sorted((e['source_id'],e['quote']) for e in self.notes.get('evidence',[]) if e.get('quality')!='insufficient')])

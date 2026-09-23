@@ -5,7 +5,7 @@ import re
 import time
 from PIL import Image
 from pydantic import ValidationError
-from . import store, providers, prompts, materials, rendering, research, creative
+from . import store, providers, prompts, materials, rendering, research, creative,editorial
 from .models import STAGES, LABELS, SCHEMAS
 from .structured_output import parse as parse_structured
 
@@ -41,13 +41,19 @@ def validate_result(stage,result,a):
         from .bibliography import citation_ids
         citations=citation_ids(result)
         if any(c not in sources for c in citations): raise ValueError('正文引用了不存在的来源编号，结果已保留但未应用')
+    if stage=='outline':
+        arguments={x['id'] for x in a.get('argument_synthesis',{}).get('chain',[])}
+        claims={x['id'] for x in a.get('evidence',{}).get('claims',[])}
+        for section in result['sections']:
+            if set(section.get('argument_ids',[]))-arguments or set(section.get('claim_ids',[]))-claims:
+                raise ValueError('大纲引用了不存在的判断或证据，结果已保留但未应用')
 
 
 def prerequisites(stage,a):
     from .flow_state import ready
     state=ready(a).get(stage)
     if state and not state['allowed']: raise ValueError(state['reason'])
-    if stage in ('layout_advice','revise') and not a['content'].strip():
+    if stage in ('layout_advice','revise','edit') and not a['content'].strip():
         raise ValueError('请先写作或导入正文')
 
 
@@ -76,7 +82,7 @@ def start(article_id,request):
         valid=parent(a)
         if not valid or valid['id']!=request.resume_job_id: raise ValueError('原待续任务已被替代或完成，请从当前环节操作')
     if a['revision']!=request.revision: raise store.Conflict('文章已更新，请等待保存完成后重试')
-    if request.stage not in [*STAGES,'revise','image','layout_advice','research']: raise ValueError('未知环节')
+    if request.stage not in [*STAGES,'revise','image','layout_advice','research','edit']: raise ValueError('未知环节')
     prerequisites(request.stage,a)
     j=store.create_job(article_id,request.model_dump())
     TASKS[j['id']]=asyncio.create_task(run(j['id']))
@@ -91,6 +97,7 @@ def cancel(id):
 
 
 async def call(job_id,stage,a,request):
+    factual=await editorial.audit(a,job_id) if stage=='review' else None
     if stage=='sources' and a.get('research',{}).get('analysis_signature')==research.analysis_signature() and a.get('evidence',{}).get('claims'):
         # Research already owns verified claim/evidence pairs. A second summary must not replace them.
         return dict(a['evidence'],intent=None,direction_change=a.get('creative_intent',{}).get('direction_change',''))
@@ -112,6 +119,7 @@ async def call(job_id,stage,a,request):
         store.add_usage(a['id'],stage=stage,model=s['model'],service=s['name'],status='unknown',estimated_cost=None,currency=s.get('currency','CNY'))
         raise
     result=parse(stage,raw); validate_result(stage,result,a)
+    if stage=='review':result=editorial.gate(result,factual)
     store.update_job(job_id,result=result)
     return result
 
@@ -139,7 +147,9 @@ def apply_result(a,stage,result,request):
                 v['outline']['sections']=[section if x['id']==section['id'] else x for x in v['outline']['sections']]
             else: v['outline']=result
             if v.get('research'): v['research']['outline_key']=research.digest(v['outline'])
-        elif stage=='write': v['content']=result
+        elif stage=='write':
+            v['content']=result
+            editorial.record_draft(v,'initial',result,origin='ai')
         elif stage=='review':
             from wewrite.commands.humanness_score import score_article
             from .review_state import signature
@@ -201,7 +211,10 @@ async def run(job_id):
             prerequisites(stage,a)
             store.update_job(job_id,stage=stage,target_stage=j['request']['stage'],message='正在'+LABELS.get(stage,{'revise':'修改选段','image':'生成图片','layout_advice':'分析阅读与结构'}.get(stage,stage)),partial='',result=None)
             store.event(job_id,'stage',stage=stage)
-            if stage in ('topic','sources','review','research'):
+            # Draft review owns its independent factual audit. Re-running the
+            # research pipeline here repeats notes and coverage checks before
+            # auditing the same draft; missing facts remain review findings.
+            if stage in ('topic','sources','research'):
                 a,pending=await research.gather(a,job_id,stage,req.get('instruction',''))
                 if pending and stage in ('sources','research'):
                     if stage in ('sources','research'):
@@ -217,6 +230,7 @@ async def run(job_id):
                         store.update_job(job_id,resumed_from=original['id'])
                         continue
                 store.update_job(job_id,status='completed',ended=store.now(),message='资料检索与整理已完成');return
+            if stage=='outline':a=await editorial.synthesize(a,job_id)
             if stage=='sources' and a.get('research',{}).get('evidence'):
                 result=a['evidence']
             elif stage=='layout':
@@ -234,6 +248,8 @@ async def run(job_id):
                 def suggest(v):
                     v['suggestions'].append(item);v['current_stage']='write'
                 a=store.save_article(a['id'],a['revision'],suggest,'生成修改建议')
+            elif stage=='edit':
+                a,_=await edit_candidate(a,job_id,req)
             elif stage=='layout_advice':
                 result=await call(job_id,stage,a,req)
                 a=store.save_article(a['id'],a['revision'],lambda v:v.update(layout_advice=result),'生成阅读与结构建议')
@@ -241,12 +257,15 @@ async def run(job_id):
                 result=await call(job_id,stage,a,req)
                 a=apply_result(a,stage,result,req)
                 if stage=='review': store.update_job(job_id,review_round_id=a['review']['round_id'])
-                if stage=='review' and a['auto']['review'] and result['decision']!='pass':
-                    fixed=apply_review_fixes(a)
-                    if fixed:
-                        a=fixed; store.update_job(job_id,message='正在复审修改后的正文（第 2 轮）')
-                        result=await call(job_id,'review',a,req); a=apply_result(a,'review',result,req)
-                        store.update_job(job_id,review_round_id=a['review']['round_id'])
+                if stage=='review' and a['auto']['review']:
+                    for editing_round in range(2):
+                        if a['review']['decision']=='pass':break
+                        store.update_job(job_id,message=f'正在整体编辑并独立复核（第 {editing_round+1}/2 轮）')
+                        a,candidate=await edit_candidate(a,job_id,req)
+                        report=candidate['review'];scores=report.get('dimensions',{})
+                        if any(x['severity']=='blocker' for x in report.get('issues',[])) or any(type(scores.get(k)) is not int or scores[k]<3 for k in editorial.DIMENSIONS):break
+                        a=editorial.adopt(a,candidate['id'],automatic=True)
+                        store.update_job(job_id,review_round_id=a['review']['round_id'],current_step='generation')
                 if stage=='visual' and a['auto']['visual']:
                     for plan in a['image_plans']: a=await generate_image(a,job_id,plan)
             store.event(job_id,'saved',revision=a['revision'])
@@ -267,3 +286,16 @@ async def run(job_id):
         store.update_job(job_id,status='failed',ended=store.now(),message=message)
     finally:
         store.event(job_id,'finished',status=store.job(job_id)['status']); TASKS.pop(job_id,None)
+
+
+async def edit_candidate(a,job_id,request):
+    import copy
+    base=copy.deepcopy(a)
+    edited=await editorial.edit(base,job_id,request.get('instruction',''))
+    a,candidate=editorial.save_candidate(base,job_id,edited,dict(decision='needs_input',issues=[],summary='候选尚未完成独立核查'))
+    proposed=copy.deepcopy(base);proposed['content']=edited['content']
+    report=await call(job_id,'review',proposed,request)
+    a=editorial.candidate_review(a['id'],candidate['id'],report)
+    candidate=next(x for x in a['editorial_candidates'] if x['id']==candidate['id'])
+    store.update_job(job_id,editorial_candidate_id=candidate['id'],message='整体编辑候选及核查已保存，请查看差异')
+    return a,candidate

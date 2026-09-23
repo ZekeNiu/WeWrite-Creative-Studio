@@ -63,6 +63,30 @@ async def main():
         await expect(page.locator('.prose-editor')).to_contain_text('模拟验收样稿')
         await nav('审核修改');await page.locator('.workspace-title-actions .primary').click()
         await expect(page.locator('.review-summary')).to_contain_text('AI 审核通过')
+        await page.get_by_role('button',name='生成整体编辑候选',exact=True).click()
+        candidate=page.locator('.editorial-candidate').first
+        await expect(candidate.locator('summary').first).to_contain_text('已独立核查')
+        await candidate.locator('summary').first.click()
+        await candidate.get_by_text('逐段查看差异',exact=True).click()
+        await expect(candidate.get_by_text('未改变的段落',exact=True)).to_be_visible()
+        await expect(candidate.get_by_text('修改后',exact=True)).to_be_visible()
+        await page.screenshot(path=str(OUT/'whole-draft-candidate.png'),full_page=True)
+        before=(await article())['content']
+        await candidate.get_by_role('button',name='采用整体编辑稿',exact=True).click()
+        await wait_article(lambda a:any(x['kind']=='edited' for x in a.get('draft_versions',[])))
+        assert (await article())['content']!=before and '## 理解边界' in (await article())['content']
+        adopted=(await article())['content']
+        await page.get_by_role('button',name='生成整体编辑候选',exact=True).click()
+        rejected=page.locator('.editorial-candidate').first
+        await expect(rejected.locator('summary').first).to_contain_text('已独立核查')
+        await rejected.locator('summary').first.click()
+        await rejected.get_by_role('button',name='不采用此候选',exact=True).click()
+        await wait_article(lambda a:any(x['status']=='rejected' for x in a.get('editorial_candidates',[])))
+        assert (await article())['content']==adopted
+        await page.get_by_role('button',name='记录人工定稿',exact=True).click()
+        final=await wait_article(lambda a:any(x['kind']=='human_final' for x in a.get('draft_versions',[])))
+        assert final['draft_versions'][-1]['human_edit_base']==''
+        assert final['review']['completion']=='ai'
         await nav('配图');await page.get_by_role('switch',name='启用 AI 配图',exact=True).click()
         await page.get_by_role('button',name='生成配图方案',exact=True).last.click()
         await expect(page.get_by_label('图片提示词',exact=True)).to_be_visible()
@@ -118,7 +142,15 @@ async def main():
         await page.screenshot(path=str(OUT/'layout-desktop.png'),full_page=True)
         await nav('写作');await page.get_by_role('button',name='历史版本',exact=True).click()
         await expect(page.get_by_role('dialog')).to_contain_text('第 1 /')
-        await page.get_by_role('dialog').get_by_role('button',name='关闭',exact=True).click()
+        # The snapshot immediately before recording the final restores the AI
+        # draft and both editorial decisions, without manufacturing a human pair.
+        final_record=page.locator('.record-row').filter(has=page.get_by_text('记录人工定稿',exact=True))
+        await final_record.get_by_role('button',name='恢复此版本',exact=True).click()
+        await expect(page.get_by_role('dialog')).to_have_count(0)
+        restored=await wait_article(lambda a:not any(x['kind']=='human_final' for x in a.get('draft_versions',[])))
+        assert restored['content']==adopted
+        assert any(x['status']=='adopted' for x in restored['editorial_candidates'])
+        assert any(x['status']=='rejected' for x in restored['editorial_candidates'])
         completed_id=a['id']
         fixture=await (await page.request.get(BASE+'/api/qa-fixture')).json()
         await page.goto(BASE+'/#'+fixture['id'])
@@ -179,8 +211,8 @@ async def main():
         await expect(page.locator('.library-card')).to_have_count(1)
         await expect(page.locator('.library')).to_contain_text('第 2 / 2 页')
         assert not errors,errors
-        (OUT/'result.json').write_text(json.dumps(dict(passed=True,simulated=True,article_id=completed_id,continuous_save=True,failed_save_retained=True,exclude_undo=True,limits_persist=True,full_workflow=True,viewports=[1440,1100,390],long_evidence=True,keyboard_drawer=True,storage_disabled=True),ensure_ascii=False,indent=2),'utf-8')
-        print('PASS complete current UI workflow, saves, exclude/undo, evidence, widths, keyboard and storage restrictions')
+        (OUT/'result.json').write_text(json.dumps(dict(passed=True,simulated=True,article_id=completed_id,continuous_save=True,failed_save_retained=True,exclude_undo=True,limits_persist=True,full_workflow=True,editorial_adopt_reject=True,editorial_final_restore=True,viewports=[1440,1100,390],long_evidence=True,keyboard_drawer=True,storage_disabled=True),ensure_ascii=False,indent=2),'utf-8')
+        print('PASS complete current UI workflow, editorial adopt/reject/final/restore, saves, exclude/undo, evidence, widths, keyboard and storage restrictions')
     except BaseException:
         await page.screenshot(path=str(OUT/'failure.png'),full_page=True)
         (OUT/'failure.txt').write_text(await page.locator('body').inner_text(),'utf-8')

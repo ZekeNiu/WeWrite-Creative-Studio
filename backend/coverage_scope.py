@@ -6,7 +6,7 @@ from .evidence_state import span_summary
 
 INSTRUCTION = (
     '这是回答完整性核查，不生成新的研究结论。逐个核对candidates.coverage中的用户问题与evidence中已经核实的回答。不要信任旧coverage的状态与理由，也不以来源已经下载当作该问题已经得到回答。'
-    'parts逐项列出该问题原句中全部实际要求，request_quote逐字引用原句，evidence_ids仅选当前candidate_evidence_ids中确实回答该要求的证据，缺失标missing。不要把用户未问的细化内容增加为新要求，纯文献定位不要求核对题名里的研究结果。'
+    'parts逐项列出该问题原句中需要资料回答的事实性要求，request_quote逐字引用原句，evidence_ids仅选当前candidate_evidence_ids中确实回答该要求的证据，缺失标missing。受众、语气、篇幅和呈现方式交给成稿编辑，不列为证据缺口；不要把用户未问的细化内容增加为新要求，纯文献定位不要求核对题名里的研究结果。'
     '若用户要求说明或列出某组条件、标准、规则、步骤或要求，enumeration_requested=true，须从已经读到的相应原文清单按条核对source_lists；不得按现有回答挑选几项反过来假装完整清单。'
     '执行摘要中的概述、几个典型例子、介绍页只列的主要条件不等于正式条件全集。完整列表仍在未展示章节时complete_read=false；没有读取整份条件列表不能判断每项都已覆盖。'
     '有编号的清单必须按原文顺序每个编号单列一个items，source_quote保留原编号，不得将多个编号合成一项；检查编号跳跃及清单末尾的定义和例外。不同清单分别列出source_lists。'

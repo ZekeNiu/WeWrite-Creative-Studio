@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import io
 import json
 import os
@@ -237,6 +238,9 @@ def patch(id:str,payload:ArticlePatch):
                 if key=='sources':
                     a.setdefault('excluded_sources',[]).extend(x for x in a[key] if x['id'] not in incoming)
                 c[key]=[{**x,**{f:incoming[x['id']][f] for f in fields if f in incoming.get(x['id'],{})}} for x in a[key] if x['id'] in incoming]
+        if 'content' in c and c['content']!=a['content']:
+            from .editorial import note_human_change
+            note_human_change(a)
         a.update(c)
         if stage in STAGES: a['current_stage']=stage
         if stage=='setup' and a['brief']['topic']:
@@ -244,6 +248,32 @@ def patch(id:str,payload:ArticlePatch):
         if stage in ('write','outline','layout'):
             a['stages'][stage]='done' if (a['content'] if stage=='write' else a.get(stage)) else 'idle'
     return store.save_article(id,payload.revision,mutate,'手动编辑',invalidate=None if stage=='preferences' else stage)
+
+
+@app.post('/api/articles/{id}/editorial/{candidate_id}')
+def editorial_action(id:str,candidate_id:str,value:dict):
+    from . import editorial
+    a=store.get_article(id)
+    if a['revision']!=value['revision']:raise store.Conflict('文章已更新，请查看最新内容后再操作')
+    if value.get('action')=='accept':return editorial.adopt(a,candidate_id)
+    if value.get('action')!='reject':raise ValueError('未知候选操作')
+    def change(v):
+        c=next((x for x in v.get('editorial_candidates',[]) if x['id']==candidate_id),None)
+        if not c or c['status']!='pending':raise ValueError('候选不存在或已处理')
+        c['status']='rejected'
+    return store.save_article(id,value['revision'],change,'不采用整体编辑候选')
+
+
+@app.post('/api/articles/{id}/drafts/final')
+def finalize_draft(id:str,value:dict):
+    from . import editorial,review_state
+    def change(v):
+        if not v['content'].strip():raise ValueError('请先完成正文')
+        base=v.get('human_edit_base') or {}
+        editorial.record_draft(v,'human_final',v['content'],parent_id=base.get('draft_id') or v.get('current_draft_id'),origin='human',
+            human_edit_base=base.get('draft_id',''),review_state=review_state.label(v),review=copy.deepcopy(v.get('review',{})))
+        v.pop('human_edit_base',None)
+    return store.save_article(id,value['revision'],change,'记录人工定稿')
 
 
 @app.post('/api/articles/{id}/research/issues/actions')
@@ -400,7 +430,10 @@ def apply_issue(id:str,issue_id:str,value:dict):
             quote=issue['quote']
             if not quote or a['content'].count(quote)!=1: raise ValueError('原文已改变或存在重复，请在正文中手动修改后复审')
             issue['applied_replacement']=value.get('replacement',issue['suggestion'])
+            from . import editorial
+            if issue['applied_replacement']!=issue['suggestion']:editorial.note_human_change(a)
             a['content']=a['content'].replace(quote,issue['applied_replacement'],1)
+            if issue['applied_replacement']==issue['suggestion']:editorial.record_draft(a,'edited',a['content'],origin='ai')
             a['stages']['review']='stale'
         issue['status']='accepted' if action=='accept' else 'rejected'
     return store.save_article(id,value['revision'],change,'接受审核修改' if action=='accept' else '拒绝审核意见',invalidate='write' if action=='accept' else None,review_action=True)
@@ -413,7 +446,11 @@ def apply_suggestion(id:str,sid:str,value:dict):
         if not s: raise ValueError('修改建议不存在')
         if value.get('action')=='accept':
             if not s['original'] or a['content'].count(s['original'])!=1: raise ValueError('原文已改变或有重复，无法安全替换，请重新选段')
-            a['content']=a['content'].replace(s['original'],value.get('replacement',s['replacement']),1)
+            from . import editorial
+            replacement=value.get('replacement',s['replacement'])
+            if replacement!=s['replacement']:editorial.note_human_change(a)
+            a['content']=a['content'].replace(s['original'],replacement,1)
+            if replacement==s['replacement']:editorial.record_draft(a,'edited',a['content'],origin='ai')
         a['suggestions']=[x for x in a['suggestions'] if x['id']!=sid]
     return store.save_article(id,value['revision'],change,'处理修改建议',invalidate='write' if value.get('action')=='accept' else None)
 

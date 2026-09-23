@@ -82,10 +82,12 @@ def test_no_tavily_automatic_research_and_cache(client,network,column):
     done=wait(client,j);assert done['status']=='completed',done
     a=client.get('/api/articles/'+a['id']).json()
     assert a['research']['summary'] and a['sources'][0]['evidence_spans'][0]['verification']=='quote_matched'
-    assert a['sources'][0]['status']=='retrieved' and network==['google']
+    assert a['sources'][0]['status']=='retrieved' and network==['google','google']
+    # Both planned questions receive their first turn before one combined audit.
+    searched=list(network)
     assert providers.service_for('research')['model']=='analysis'
     j=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json={'stage':'research','revision':a['revision'],'chain':False}).json()
-    assert wait(client,j)['status']=='completed' and network==['google']
+    assert wait(client,j)['status']=='completed' and network==searched
 
 
 @pytest.mark.parametrize('protocol',['responses','anthropic'])
@@ -203,18 +205,14 @@ def test_missing_evidence_allows_review_without_changing_draft(client,network,mo
     from backend import workflow
     async def review_call(*args): return dict(decision='pass',summary='保留限定',issues=[],dimensions={})
     monkeypatch.setattr(workflow,'call',review_call)
-    original=providers.generate
-    async def conflicting(s,system,prompt,emit=None):
-        text,usage=await original(s,system,prompt,emit)
-        if json.loads(prompt)['schema']['title']=='ResearchNotes':
-            value=json.loads(text);value['gaps']=['核心人群无法确定，无法回答任务'];text=json.dumps(value)
-        return text,usage
-    monkeypatch.setattr(providers,'generate',conflicting)
-    a=article(client);a=store.save_article(a['id'],a['revision'],lambda v:v.update(content='保留的正文'),'fixture')
+    a=article(client)
+    a=store.save_article(a['id'],a['revision'],lambda v:v.update(content='保留的正文',
+        research=dict(gaps=['核心人群无法确定，无法回答任务'],pending=True)),'fixture')
     j=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json={'stage':'review','revision':a['revision']}).json()
     assert wait(client,j)['status']=='completed'
     a=client.get('/api/articles/'+a['id']).json()
     assert a['content']=='保留的正文' and a['stages']['review']=='done' and a['research']['gaps']
+    assert network==[]  # Draft review preserves existing gaps without starting discovery again.
 
 
 def test_restart_marks_search_interrupted_without_replay(client):
