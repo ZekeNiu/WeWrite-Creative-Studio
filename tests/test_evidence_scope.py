@@ -77,3 +77,37 @@ def test_boundary_condition_must_come_from_the_same_actually_shown_source():
     assert e['support']=='supported'
     evidence_scope.apply([e],[row],read_sources=[dict(id='S2',text='Only under condition C can the estimate be made.')])
     assert e['support']=='unsupported'
+
+
+@pytest.mark.parametrize('claim,accepted',[
+    ('若负荷未被预期，控制器将无法稳定系统。',False),
+    ('若负荷未被预期，控制器可能无法稳定系统。',True),
+])
+def test_a_conditional_premise_does_not_preserve_a_possible_conclusion(claim,accepted):
+    e=dict(span(),quote='If the load is unanticipated, the controller may fail to stabilize the system.',
+        claim=claim,boundary='这是一项机制假说',support_basis='author_interpretation')
+    condition=dict(source_condition=e['quote'],claim_condition=claim,status='matched',reason='保留若的前提')
+    evidence_scope.apply([e],[verdict(conditions=[condition])])
+    assert (e['support']=='supported')==accepted
+
+
+def test_possibility_in_another_clause_cannot_qualify_a_certain_conclusion():
+    e=dict(span(),quote='Errors could increase demand. The controller may fail.',claim='错误可能增加需求；控制器将失效。',boundary='假说推演')
+    conditions=[dict(source_condition='Errors could increase demand.',claim_condition='错误可能增加需求',status='matched',reason='可能性一致'),
+        dict(source_condition='The controller may fail.',claim_condition='控制器将失效',status='matched',reason='模型错误通过')]
+    evidence_scope.apply([e],[verdict(conditions=conditions)])
+    assert e['support']=='unsupported'
+
+
+def test_calendar_month_may_is_not_a_possibility_marker():
+    e=dict(span(),quote='Published in May 2020.',claim='发表于2020年5月。')
+    condition=dict(source_condition=e['quote'],claim_condition=e['claim'],status='matched',reason='书目日期')
+    evidence_scope.apply([e],[verdict(conditions=[condition])])
+    assert e['support']=='supported'
+
+
+def test_observed_past_inability_is_not_automatically_a_hypothesis():
+    e=dict(span(),quote='The analysis could not detect a change.',claim='分析未检测到变化。',support_basis='observed')
+    condition=dict(source_condition=e['quote'],claim_condition=e['claim'],status='matched',reason='报告实测结果')
+    evidence_scope.apply([e],[verdict(conditions=[condition])])
+    assert e['support']=='supported'

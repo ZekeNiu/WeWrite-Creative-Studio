@@ -25,8 +25,9 @@ def expressions(text):
         relation=('point',)
         interval=re.search(r'(?:between\s+|from\s+)?('+NUMBER+r')\s*(?:and|to|至|到|[–—-])\s*$',before)
         if interval:relation=('range',Decimal(interval[1])*factor)
-        elif re.search(r'(?:within\s+(?:(?:the\s+)?(?:past|following|next|last)\s+)?|(?:the\s+)?(?:past|last)\s+|at most\s+|no more than\s+|不超过|至多|最多|过去|最近|近|[≤<])\s*'+APPROX+r'$',before) or re.match(r'\s*(?:以?内|以内|以下)',after):relation=('upper',)
+        elif re.search(r'(?:within\s+(?:(?:the\s+)?(?:past|following|next|last)\s+)?|(?:the\s+)?(?:past|last)\s+|at most\s+|no more than\s+|不超过|至多|最多|过去|最近|[≤<])\s*'+APPROX+r'$',before) or re.match(r'\s*(?:以?内|以内|以下)',after):relation=('upper',)
         elif re.search(r'(?:at least\s+|no less than\s+|至少|不少于|[≥>])\s*'+APPROX+r'$',before) or re.match(r'\s*(?:以上|以外)',after):relation=('lower',)
+        elif re.search(r'近\s*$',before):relation=('ambiguous',)
         results.append(((Decimal(match[1])*factor,unit),relation))
     return results
 
@@ -42,6 +43,6 @@ def errors(evidence,conditions):
         counterpart=expressions(condition['claim_condition'])
         for quantity,relation in counterpart:
             same=[kind for value,kind in original if value==quantity]
-            if same and any(kind!=relation for kind in same):
+            if same and relation!=('ambiguous',) and ('ambiguous',) not in same and any(kind!=relation for kind in same):
                 reasons.append('时间点、上下限或时间窗口的对照不一致；不同时间条件须分别引用')
     return reasons

@@ -460,7 +460,7 @@ class Research:
         feedback=[]
         for e in self.notes.get('evidence',[]):
             if e.get('support')!='unsupported':continue
-            item={k:e.get(k) for k in ('source_id','claim','boundary','support_reason','scope_alignment')}
+            item={k:e.get(k) for k in ('source_id','claim','boundary','support_reason','support_basis','support_checks','scope_alignment')}
             if e.get('verification')=='quote_matched':item['original_quote']=e['quote']
             feedback.append(item)
         sources={s['id']:s for s in self.a['sources']}
@@ -474,6 +474,7 @@ class Research:
         feedback += [dict(question=r['question'],answer_scope=r['answer_scope']) for r in self.coverage if r.get('required') and r['status']=='unresolved' and r.get('answer_scope')]
         verified=[e for e in self.notes.get('evidence',[]) if evidence_state.assessed(e)]
         if verified:feedback.append(dict(previous_verified_evidence=verified))
+        if repair_round and self.open_targets():feedback.append(dict(unresolved_issues=self.open_targets()))
         self.notes=validate_spans(await structured(self.a,self.stage,
             '整理核心发现及原文支持关系；evidence.quote 必须逐字复制来源中的连续片段，claim 写支持的判断，boundary 写适用范围。'
             '每条 claim 聚焦一个可核对判断；来自不同位置的事实拆成不同 evidence。quote 使用足以支持该判断的连续原文，不拼接不同片段，不省略中间文字或自行改写公式；找不到连续原文时请求回读或保留缺口。'
@@ -482,6 +483,7 @@ class Research:
             'original_passages是从同来源已读范围检出的真实连续原文，带字符起止位置；attempted_quote是未定位的旧引文，不可当原文。原文可能被脚注、表格或页眉打断，不能删除插入内容再拼接两端；可改引未被打断的完整句子或分别引用连续片段，并重新核对主张与边界。检出相近原文不代表它支持原主张。'
             'original_quote是已定位的原文；scope_alignment是被拒的条件对照记录，不是原文。其source_condition可能自行缩写、遗漏括号或拼接文字，不能照抄失败对照；依据original_quote保留完整原词及括号重作核对。'
             'previous_verified_evidence是同一材料已经核实的条目与原始引文；保持其正确部分，仅补全缺口及修正被拒条目，不在每轮重写全部已有结果或增加未要求的解释。'
+            'unresolved_issues保留本轮实际未解决的问题。resolved事项的claim必须逐字对应一条已核实evidence.claim；仅claim_id相同不代表完整主张得到支持。一个事项包含多个判断时逐项核实，不能把分散证据拼成未核实的大结论。自动建议如果只是重复已经回答的问题，应依据已核实条目重新整理；原有待核问题与人工决定不能默默删除。'
             '核对当前任务需要的全部关键问题；只列阻碍继续写作的实质 gaps 和 conflicts，不为凑篇数补查。'
             '只读到摘要不得推断全文。issues 分类：blocking 仅用于无法省略且阻碍当前写作任务的核心依据；'
             '必需条件只以 research_contract 中 required=true 的用户原句和明确采用方案为准；creative_intent 中自动展开的计划、检索规划 questions 和模型建议都不是新增必需条件。人格不是写作目标。证据迫使核心方向改变时填写 direction_change（原因与替代方向），不得静默降低目标。手动主题未展开时，在 intent 中展开切入点、价值、交付、关键待验证主张，不能将假设当事实。'
@@ -524,6 +526,7 @@ class Research:
                     'time单独核对当前主张是否确实适用于用户所问时期：只有当前帮助页且没有早期版本依据，不能支持首次发布时的功能，即使当前页面逐字写明也必须time=unknown。非时间相关问题为not_applicable。'
                     '无关维度标 not_applicable，缺少判断所必需的信息标 unknown，矛盾标 mismatch；不能用模型记忆补充材料。'
                     '必须给出 basis：observed=本研究实测结果，author_interpretation=作者机制解释或推测，external_reference=转述另一研究，not_applicable=非研究来源的直接陈述。原文写了某个机制不等于本研究测量或验证了它；须结合研究设计识别，无法判断时 unassessed。'
+                    '试验方案、规范或规则中直接规定的条件属于原始文件陈述，basis=not_applicable；它们不是实测疗效，也不是作者对结果的推测。每项均显式填写basis，不因不适用实测分类而省略。'
                     'quote_origin=bibliography 的引文只位于书目题名，不是摘要或正文。只有纯文献身份确认才 identity_only=true 且 basis=not_applicable；不能由题名证明疗效、因果或实际研究结果，含此类主张必须 unsupported，身份之外的事实需要另外引用真实摘要/正文。普通正文证据 identity_only=false。'
                     'source_origin 逐条区分 primary 原始研究/原始官方记录、secondary 二手解读、background 背景资料、unassessed 未能判定。百科、机构对另一论文的介绍仍是二手来源，不能因权威域名而标原始研究；转述另一研究的结果必须 basis=external_reference。系统综述自身的综合分析是其原始结果，但其中转述单项试验仍属转引。'
                     'supported 仅限来源直接支持且无必要条件缺失；limited 必须有明确边界；contradicted 是原文否定该判断；其他为 unsupported。'
@@ -587,7 +590,8 @@ class Research:
         unmatched_core=any(i.get('system_kind')=='unmatched_quote' and i['kind']=='blocking' for i in self.notes.get('issues',[]))
         incomplete_read_list=any(r.get('required') and r['status']=='unresolved' and r.get('answer_scope') and r['answer_scope']['source_lists']
                                 and all(x['complete_read'] for x in r['answer_scope']['source_lists']) for r in checked_rows)
-        if repair_round<1 and (rejected_core or unmatched_core or incomplete_read_list):
+        unbound_issue=research_contract.sufficient(self.coverage) and bool(self.open_targets())
+        if repair_round<1 and (rejected_core or unmatched_core or incomplete_read_list or unbound_issue):
             # Local correction keeps the same materials, search and read limits.
             self.update('正在根据独立核查结果修正关键表述',repair_round=repair_round+1)
             self.notes_key=None

@@ -63,3 +63,11 @@ def test_temporal_rule_changes_invalidate_previous_analysis(monkeypatch,tmp_path
     monkeypatch.setattr(evidence_scope.temporal_scope,'__file__',str(rule))
     before=research.analysis_signature();rule.write_text('LIMIT = 2')
     assert research.analysis_signature()!=before
+
+
+@pytest.mark.parametrize('original,claim',[
+    ('The material lasted approximately 6 months.','材料寿命接近6个月。'),
+    ('A measurement within the past 6 months.','近6个月的测量。'),
+])
+def test_ambiguous_near_does_not_determine_a_time_bound(original,claim):
+    assert check(original,claim)['support']=='supported'
