@@ -52,7 +52,7 @@ def analysis_signature():
     try: model=providers.fingerprint(providers.service_for('research'),'text')
     except ValueError:model=None
     return digest([model,SYSTEM,source_context.POLICY_VERSION,research_contract.VERSION,
-                   [hashlib.sha256(p.read_bytes()).hexdigest() for p in (Path(__file__),Path(source_notebook.__file__),Path(source_context.__file__),Path(evidence_scope.__file__),Path(coverage_scope.__file__))],ResearchNotes.model_json_schema(),EvidenceJudgements.model_json_schema(),EvidenceScopeAudit.model_json_schema(),AnswerScopeAudit.model_json_schema()])
+                   [hashlib.sha256(p.read_bytes()).hexdigest() for p in (Path(__file__),Path(source_notebook.__file__),Path(source_context.__file__),Path(evidence_scope.__file__),Path(evidence_scope.temporal_scope.__file__),Path(coverage_scope.__file__))],ResearchNotes.model_json_schema(),EvidenceJudgements.model_json_schema(),EvidenceScopeAudit.model_json_schema(),AnswerScopeAudit.model_json_schema()])
 
 
 def context(a,stage,questions=()):
@@ -92,10 +92,13 @@ async def structured(a,stage,instruction,schema,job_id,candidates=None,questions
             rows=[row for group in candidates or [] for row in group.get('coverage',[])]
             ids={row['question_id'] for row in rows}
             contract=data['research_contract']
+            target_ids={t['id'] for t in contract.get('source_targets',[])}
             data['research_contract']={**contract,
-                'questions':[dict(id=row['question_id'],text=row['question'],required=row['required']) for row in rows],
+                'questions':[dict(id=row['question_id'],text=row['question'],required=row['required'],
+                    scope='source_identity' if row['question_id'] in target_ids else 'user_requirement') for row in rows],
                 'source_targets':[t for t in contract.get('source_targets',[]) if t['id'] in ids]}
             instruction+=' 只核对本次candidates.coverage列出的问题编号；完整用户原句用于理解意图，不为其他组返回结论。'
+            instruction+=' research_contract.questions中scope=source_identity是系统单列的文献身份项，只确认该文献身份与实际访问范围。完整用户要求中的条件、数字或结果由scope=user_requirement的问题核查，不在身份项重复要求；身份确认也不能替代那些内容问题的回答。'
         prompt=json.dumps({'task':instruction,'context':data,'candidates':candidates or [],'schema':schema.model_json_schema()},ensure_ascii=False)
         try:raw,usage=await providers.generate(s,SYSTEM,prompt,emit)
         except providers.StructuredOutputUnsupported:
@@ -454,7 +457,12 @@ class Research:
         if self.notes_key==key: return
         self.update('正在核对关键结论与原文证据')
         read_ranges={s['id']:s['excerpts'] for s in source_context.sources(self.a,self.questions)}
-        feedback=[{k:e.get(k) for k in ('source_id','claim','boundary','support_reason')} for e in self.notes.get('evidence',[]) if e.get('support')=='unsupported']
+        feedback=[]
+        for e in self.notes.get('evidence',[]):
+            if e.get('support')!='unsupported':continue
+            item={k:e.get(k) for k in ('source_id','claim','boundary','support_reason','scope_alignment')}
+            if e.get('verification')=='quote_matched':item['original_quote']=e['quote']
+            feedback.append(item)
         sources={s['id']:s for s in self.a['sources']}
         for issue in self.notes.get('issues',[]):
             if issue.get('system_kind')!='unmatched_quote':continue
@@ -472,6 +480,7 @@ class Research:
             '用户要求正式条件清单时，逐条解释原清单的独立条目，保留其全部限制与例外，不把多个正式条目压成一条概览。可以省去重复修辞，不能用泛称替换具体适用对象或省去原文定义。'
             'candidates若有前轮核查反馈，只是被拒绝的主张及具体理由，不是事实来源；依据实际原文补全条件、降低断言或请求回读，不重复输出同一缺陷。边界中的事实同样需要核对。'
             'original_passages是从同来源已读范围检出的真实连续原文，带字符起止位置；attempted_quote是未定位的旧引文，不可当原文。原文可能被脚注、表格或页眉打断，不能删除插入内容再拼接两端；可改引未被打断的完整句子或分别引用连续片段，并重新核对主张与边界。检出相近原文不代表它支持原主张。'
+            'original_quote是已定位的原文；scope_alignment是被拒的条件对照记录，不是原文。其source_condition可能自行缩写、遗漏括号或拼接文字，不能照抄失败对照；依据original_quote保留完整原词及括号重作核对。'
             'previous_verified_evidence是同一材料已经核实的条目与原始引文；保持其正确部分，仅补全缺口及修正被拒条目，不在每轮重写全部已有结果或增加未要求的解释。'
             '核对当前任务需要的全部关键问题；只列阻碍继续写作的实质 gaps 和 conflicts，不为凑篇数补查。'
             '只读到摘要不得推断全文。issues 分类：blocking 仅用于无法省略且阻碍当前写作任务的核心依据；'
@@ -582,6 +591,11 @@ class Research:
             # Local correction keeps the same materials, search and read limits.
             self.update('正在根据独立核查结果修正关键表述',repair_round=repair_round+1)
             self.notes_key=None
+            # A faulty audit quotation can be corrected without changing the
+            # underlying fact. Recheck rejected verdicts only in this one repair.
+            for e in spans:
+                if not evidence_state.assessed(e):self.judgement_cache.pop(e['evidence_id'],None)
+            if not self.sufficient():self.coverage_cache.pop(coverage_key,None)
             await self.assess(read_round,repair_round+1)
             return
         fully_answered=research_contract.sufficient(self.coverage)

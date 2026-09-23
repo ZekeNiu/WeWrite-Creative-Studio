@@ -46,19 +46,24 @@ def test_one_audit_group_cannot_vote_on_another_question(monkeypatch,duplicate_r
 
 
 @pytest.mark.parametrize('schema',[models.CoverageAudit,models.AnswerScopeAudit])
-def test_group_prompt_retains_original_intent_without_other_question_ids(monkeypatch,schema):
+@pytest.mark.parametrize('identity_only',[False,True])
+def test_group_prompt_retains_original_intent_without_other_question_ids(monkeypatch,schema,identity_only):
     prompts=[]
     def handler(request):
         prompts.append(json.loads(json.loads(request.content)['messages'][-1]['content']))
         value={'coverage':[]} if schema is models.CoverageAudit else {'judgements':[]}
         return httpx.Response(200,json={'choices':[{'message':{'content':json.dumps(value)},'finish_reason':'stop'}]})
     _,article,job=environment(monkeypatch,handler)
+    article['brief']['topic']='定位 DOI 10.1000/example 并说明全部条件'
     contract=research_contract.ensure(article)
     contract['questions'].append(dict(id='Q-other',text='Another requirement',required=True))
     before=copy.deepcopy(contract);qid=contract['questions'][0]['id']
     row=dict(question_id=qid,question=contract['questions'][0]['text'],required=True,candidate_evidence_ids=[])
+    if identity_only:
+        qid=contract['source_targets'][0]['id'];row.update(question_id=qid,question='指定来源：10.1000/example')
     asyncio.run(research.structured(article,'sources','Audit this group',schema,job['id'],[dict(coverage=[row])]))
     supplied=prompts[0]['context']['research_contract']
     assert supplied['original_request']==contract['original_request']
     assert [q['id'] for q in supplied['questions']]==[qid]
+    assert supplied['questions'][0]['scope']==('source_identity' if identity_only else 'user_requirement')
     assert contract==before

@@ -1,5 +1,6 @@
 """Check the reported condition alignment without trusting its aggregate verdict."""
 import re
+from . import temporal_scope
 
 
 INSTRUCTION = (
@@ -11,6 +12,7 @@ INSTRUCTION = (
     '不要用主张里的泛称替代原文的具体程度门槛，不把阈值列表误当作已保留使用前提。条件从原文提取，不按主张是否提及来选择条件。'
     '用户未要求完整清单且主张明确只介绍其中部分时，不要求介绍无关项目，但已介绍的每一项必须保留自己的全部限定。'
     '核对条件所限定的具体指标、对象和来源；一个指标的测试条件不能借给另一指标。概率必须保留给定前提和所指事件，不倒置条件概率。'
+    'claim或boundary含时间数字时，每一项单列条件对照，引用须包含完整时间关系与界限；约某时点不等于该时限内，至少持续某时长不等于恰好该时长，范围不能只取一个端点。单位换算保留原界限，不能只核对数字相同。'
     '假说、可能、推测和观察相关不能强化为已验证因果；这种强度限定同样属于条件。没有适用条件时conditions为空，不能编造条件。'
     '主张或边界中的附加事实若找不到同来源依据，或其所需条件没有读到，scope=unknown；不以空conditions略过缺据的附加判断。'
     '不得凭常识补全；引用、条件或范围不确定时scope=unknown。仅逐条返回可核对的原文对照和结论，不输出思考过程。'
@@ -35,6 +37,7 @@ def apply(spans, judgements, pdf_source_ids=(), read_sources=()):
             reasons.append('适用条件尚未完成独立对照')
         else:
             if row['scope']!='matched':reasons.append(row['reason'])
+            reasons.extend(temporal_scope.errors(e,row['conditions']))
             for condition in row['conditions']:
                 original=normal(condition['source_condition'],pdf)
                 counterpart=normal(condition['claim_condition'])
