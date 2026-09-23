@@ -62,6 +62,17 @@ def context(a,stage,questions=()):
             'issue_decisions':flow_state.issues(a)})
 
 
+def audit_context(a,stage,questions=(),source_ids=None):
+    """Keep actually shown original material, without previous AI verdicts."""
+    value=context(a,stage,questions)
+    value={k:v for k,v in value.items() if k in ('current_date','brief','research_contract','sources')}
+    value['sources']=[{k:v for k,v in s.items() if k!='evidence_spans'} for s in value['sources']
+                      if source_ids is None or s['id'] in source_ids]
+    for source in value['sources']:
+        source['source_notes']=[dict(quote=n.get('quote','')) for n in source.get('source_notes',[])]
+    return value
+
+
 async def structured(a,stage,instruction,schema,job_id,candidates=None,questions=()):
     s=providers.service_for('research')
     if s.get('protocol')=='chat':s=dict(s,response_schema=schema.model_json_schema(),stream=False)
@@ -72,7 +83,11 @@ async def structured(a,stage,instruction,schema,job_id,candidates=None,questions
         if time.monotonic()-last>.5:
             store.update_job(job_id,partial=partial);last=time.monotonic()
     try:
-        prompt=json.dumps({'task':instruction,'context':context(a,stage,questions),'candidates':candidates or [],'schema':schema.model_json_schema()},ensure_ascii=False)
+        data=context(a,stage,questions)
+        if schema in (EvidenceJudgements,EvidenceScopeAudit):
+            data=audit_context(a,stage,questions,{e['source_id'] for e in candidates or []})
+        elif schema in (CoverageAudit,AnswerScopeAudit):data=audit_context(a,stage,questions)
+        prompt=json.dumps({'task':instruction,'context':data,'candidates':candidates or [],'schema':schema.model_json_schema()},ensure_ascii=False)
         try:raw,usage=await providers.generate(s,SYSTEM,prompt,emit)
         except providers.StructuredOutputUnsupported:
             store.add_usage(a['id'],stage='research',model=s['model'],service=s['name'],status='unknown',estimated_cost=None)
@@ -415,11 +430,13 @@ class Research:
         feedback=[{k:e.get(k) for k in ('source_id','claim','boundary','support_reason')} for e in self.notes.get('evidence',[]) if e.get('support')=='unsupported']
         feedback += [dict(source_ids=i['source_ids'],claim=i['claim'],support_reason=i['text']) for i in self.notes.get('issues',[]) if i.get('system_kind')=='unmatched_quote']
         feedback += [dict(question=r['question'],support_reason=r['reason']) for r in self.coverage if r.get('required') and r['status']=='unresolved']
+        feedback += [dict(question=r['question'],answer_scope=r['answer_scope']) for r in self.coverage if r.get('required') and r['status']=='unresolved' and r.get('answer_scope')]
         verified=[e for e in self.notes.get('evidence',[]) if evidence_state.assessed(e)]
         if verified:feedback.append(dict(previous_verified_evidence=verified))
         self.notes=validate_spans(await structured(self.a,self.stage,
             '整理核心发现及原文支持关系；evidence.quote 必须逐字复制来源中的连续片段，claim 写支持的判断，boundary 写适用范围。'
             '每条 claim 聚焦一个可核对判断；来自不同位置的事实拆成不同 evidence。quote 使用足以支持该判断的连续原文，不拼接不同片段，不省略中间文字或自行改写公式；找不到连续原文时请求回读或保留缺口。'
+            '用户要求正式条件清单时，逐条解释原清单的独立条目，保留其全部限制与例外，不把多个正式条目压成一条概览。可以省去重复修辞，不能用泛称替换具体适用对象或省去原文定义。'
             'candidates若有前轮核查反馈，只是被拒绝的主张及具体理由，不是事实来源；依据实际原文补全条件、降低断言或请求回读，不重复输出同一缺陷。边界中的事实同样需要核对。'
             'previous_verified_evidence是同一材料已经核实的条目与原始引文；保持其正确部分，仅补全缺口及修正被拒条目，不在每轮重写全部已有结果或增加未要求的解释。'
             '核对当前任务需要的全部关键问题；只列阻碍继续写作的实质 gaps 和 conflicts，不为凑篇数补查。'
@@ -455,25 +472,29 @@ class Research:
                 ranges=[dict(start=e['offset'],end=e['offset']+len(e['quote'])) for e in unknown
                         if e['source_id']==src['id'] and e.get('quote_origin')=='source_text']
                 if ranges:source_notebook.save(src,[],signature,ranges)
-            checked=await structured(self.a,self.stage,
-                '独立核查 candidates 的每条判断，不采信前一轮自评。逐条返回 evidence_id、support、reason、question_ids 和 checks。'
-                'checks 必须包含 population/design/quantity/outcome/causality/scope，分别核对人群、研究设计、数字及分母、结局、因果强度、适用范围；'
-                '无关维度标 not_applicable，缺少判断所必需的信息标 unknown，矛盾标 mismatch；不能用模型记忆补充材料。'
-                '必须给出 basis：observed=本研究实测结果，author_interpretation=作者机制解释或推测，external_reference=转述另一研究，not_applicable=非研究来源的直接陈述。原文写了某个机制不等于本研究测量或验证了它；须结合研究设计识别，无法判断时 unassessed。'
-                'quote_origin=bibliography 的引文只位于书目题名，不是摘要或正文。只有纯文献身份确认才 identity_only=true 且 basis=not_applicable；不能由题名证明疗效、因果或实际研究结果，含此类主张必须 unsupported，身份之外的事实需要另外引用真实摘要/正文。普通正文证据 identity_only=false。'
-                'source_origin 逐条区分 primary 原始研究/原始官方记录、secondary 二手解读、background 背景资料、unassessed 未能判定。百科、机构对另一论文的介绍仍是二手来源，不能因权威域名而标原始研究；转述另一研究的结果必须 basis=external_reference。系统综述自身的综合分析是其原始结果，但其中转述单项试验仍属转引。'
-                'supported 仅限来源直接支持且无必要条件缺失；limited 必须有明确边界；contradicted 是原文否定该判断；其他为 unsupported。'
-                'question_ids 只能列确实回答了任务书核心问题的ID，背景介绍不能算回答。reason 简述可核查理由，不输出思考过程。'+source_context.CLAIM_SUPPORT_POLICY+source_context.NUMERIC_POLICY+source_context.QUOTE_PROVENANCE_POLICY,
-                EvidenceJudgements,self.job_id,[{k:e.get(k) for k in ('evidence_id','source_id','quote','claim','boundary','location','source_status','quote_origin','verification')} for e in unknown],questions=self.questions)
-            # Bind cached verdicts to both claim and exact source contents through evidence_id.
-            research_contract.apply_judgements(unknown,checked['judgements'])
-            accepted=[e for e in unknown if evidence_state.assessed(e)]
-            if accepted:
-                self.update('正在逐项对照适用前提、例外和条件顺序')
-                scoped=await structured(self.a,self.stage,evidence_scope.INSTRUCTION+source_context.QUOTE_PROVENANCE_POLICY,EvidenceScopeAudit,self.job_id,
-                    [{k:e.get(k) for k in ('evidence_id','source_id','quote','claim','boundary','location','source_status','quote_origin','verification')} for e in accepted],questions=self.questions)
-                evidence_scope.apply(accepted,scoped['judgements'],{s['id'] for s in self.a['sources'] if s.get('pages')},context(self.a,self.stage,self.questions)['sources'])
-            for e in unknown:self.judgement_cache[e['evidence_id']]={k:e.get(k) for k in ('support','support_reason','support_checks','support_basis','support_identity_only','source_origin','question_ids','assessment_version','quality','type','boundary','scope_alignment')}
+            # Check every span, while keeping each independent decision focused.
+            for offset in range(0,len(unknown),3):
+                batch=unknown[offset:offset+3]
+                checked=await structured(self.a,self.stage,
+                    '独立核查 candidates 的每条判断，不采信前一轮自评。逐条返回 evidence_id、support、reason、question_ids 和 checks。'
+                    'checks 必须包含 population/design/quantity/outcome/causality/scope/time，分别核对人群、研究设计、数字及分母、结局、因果强度、适用范围、任务所问时间与版本；'
+                    'time单独核对当前主张是否确实适用于用户所问时期：只有当前帮助页且没有早期版本依据，不能支持首次发布时的功能，即使当前页面逐字写明也必须time=unknown。非时间相关问题为not_applicable。'
+                    '无关维度标 not_applicable，缺少判断所必需的信息标 unknown，矛盾标 mismatch；不能用模型记忆补充材料。'
+                    '必须给出 basis：observed=本研究实测结果，author_interpretation=作者机制解释或推测，external_reference=转述另一研究，not_applicable=非研究来源的直接陈述。原文写了某个机制不等于本研究测量或验证了它；须结合研究设计识别，无法判断时 unassessed。'
+                    'quote_origin=bibliography 的引文只位于书目题名，不是摘要或正文。只有纯文献身份确认才 identity_only=true 且 basis=not_applicable；不能由题名证明疗效、因果或实际研究结果，含此类主张必须 unsupported，身份之外的事实需要另外引用真实摘要/正文。普通正文证据 identity_only=false。'
+                    'source_origin 逐条区分 primary 原始研究/原始官方记录、secondary 二手解读、background 背景资料、unassessed 未能判定。百科、机构对另一论文的介绍仍是二手来源，不能因权威域名而标原始研究；转述另一研究的结果必须 basis=external_reference。系统综述自身的综合分析是其原始结果，但其中转述单项试验仍属转引。'
+                    'supported 仅限来源直接支持且无必要条件缺失；limited 必须有明确边界；contradicted 是原文否定该判断；其他为 unsupported。'
+                    'question_ids 只能列确实回答了任务书核心问题的ID，背景介绍不能算回答。reason 简述可核查理由，不输出思考过程。'+source_context.CLAIM_SUPPORT_POLICY+source_context.NUMERIC_POLICY+source_context.QUOTE_PROVENANCE_POLICY,
+                    EvidenceJudgements,self.job_id,[{k:e.get(k) for k in ('evidence_id','source_id','quote','claim','boundary','location','source_status','quote_origin','verification')} for e in batch],questions=self.questions)
+                # Bind cached verdicts to both claim and exact source contents through evidence_id.
+                research_contract.apply_judgements(batch,checked['judgements'])
+                accepted=[e for e in batch if evidence_state.assessed(e)]
+                if accepted:
+                    self.update('正在逐项对照适用前提、例外和条件顺序')
+                    scoped=await structured(self.a,self.stage,evidence_scope.INSTRUCTION+source_context.QUOTE_PROVENANCE_POLICY,EvidenceScopeAudit,self.job_id,
+                        [{k:e.get(k) for k in ('evidence_id','source_id','quote','claim','boundary','location','source_status','quote_origin','verification')} for e in accepted],questions=self.questions)
+                    evidence_scope.apply(accepted,scoped['judgements'],{s['id'] for s in self.a['sources'] if s.get('pages')},context(self.a,self.stage,self.questions)['sources'])
+                for e in batch:self.judgement_cache[e['evidence_id']]={k:e.get(k) for k in ('support','support_reason','support_checks','support_basis','support_identity_only','source_origin','question_ids','assessment_version','quality','type','boundary','scope_alignment')}
         for e in spans:
             if e['evidence_id'] in self.judgement_cache:e.update(self.judgement_cache[e['evidence_id']])
         self.coverage=research_contract.coverage(self.a,self.notes,self.coverage,self.requested)
@@ -486,19 +507,24 @@ class Research:
         if not any(row['candidate_evidence_ids'] for row in audit_rows):self.coverage_cache[coverage_key]=dict(coverage=[],judgements=[],read_requests=[])
         if coverage_key not in self.coverage_cache:
             self.update('正在独立核对各项必需条件是否真正得到回答')
-            audit=await structured(self.a,self.stage,
-                '独立核对候选中的每个 coverage 问题是否被整体回答；逐条返回 question_id、status、reason、evidence_ids。'
-                '与问题相关、回答其中一部分、若干背景材料拼在一起，均不代表充分覆盖。用户指定研究设计、场景、人群、时间、原始出处或数字时，必须全部对应；不同研究不能拼成一项并不存在的研究。'
-                '例如要求某干预的随机试验，机制综述加另一干预的随机试验不能替代。要求溯源一个数字，找到同主题的另一个比例不能算完成溯源。'
-                'limited 只用于已回答问题但研究自身存在适用限制；遗漏必需条件、尚未找到所需出处必须 unresolved。contradicted 必须有直接反证，没找到不是反证。'
-                '仅验收用户原句和明确采用方案的条件。不能把检索规划自行扩展的机制、作者、后续实验设想变成新要求；解释证据边界不等于必须找到已经证明因果的实验。'
-                'candidate_evidence_ids 是已逐条独立核实、可供判读的证据池，不表示它们都回答了这个问题。逐个问题重新核对适用性，只选择真正回答该问题的候选编号作为 evidence_ids。之前 evidence_ids 或 question_ids 漏标不代表证据不存在。'
-                'requires_source_content 只有问题纯粹要求定位或核对文献身份时才为false；要求说明研究条件、核对数字、机制或研究结论时必须true，书目题名不能替代正文或摘要中的事实。'
-                '具体说明用户原句中的哪项要求仍缺失；不能要求用户未指定的细分项目、对照实验或机制。书目身份以已核验元数据为准，不要求将题名作者拼成正文引文。'+source_context.COVERAGE_PROVENANCE_POLICY+'用户要求数字溯源且未完成时，相应问题必须 unresolved，不能标 supported 或 limited。'+source_context.LOOKUP_SCOPE_POLICY+source_context.COVERAGE_COMPLETENESS_POLICY,
-                CoverageAudit,self.job_id,[audit_context],questions=self.questions)
-            self.update('正在逐项核对完整问题与所要求的条件清单')
-            scope=await structured(self.a,self.stage,coverage_scope.INSTRUCTION,AnswerScopeAudit,self.job_id,[audit_context],questions=self.questions)
-            self.coverage_cache[coverage_key]=dict(coverage=audit['coverage'],**scope)
+            combined=dict(coverage=[],judgements=[],read_requests=[])
+            for audit_group in research_contract.audit_groups(audit_context):
+                audit=await structured(self.a,self.stage,
+                    '独立核对候选中的每个 coverage 问题是否被整体回答；逐条返回 question_id、status、reason、evidence_ids。'
+                    '与问题相关、回答其中一部分、若干背景材料拼在一起，均不代表充分覆盖。用户指定研究设计、场景、人群、时间、原始出处或数字时，必须全部对应；不同研究不能拼成一项并不存在的研究。'
+                    '例如要求某干预的随机试验，机制综述加另一干预的随机试验不能替代。要求溯源一个数字，找到同主题的另一个比例不能算完成溯源。'
+                    'limited 只用于已回答问题但研究自身存在适用限制；遗漏必需条件、尚未找到所需出处必须 unresolved。contradicted 必须有直接反证，没找到不是反证。'
+                    '仅验收用户原句和明确采用方案的条件。不能把检索规划自行扩展的机制、作者、后续实验设想变成新要求；解释证据边界不等于必须找到已经证明因果的实验。'
+                    'candidate_evidence_ids 是已逐条独立核实、可供判读的证据池，不表示它们都回答了这个问题。逐个问题重新核对适用性，只选择真正回答该问题的候选编号作为 evidence_ids。之前 evidence_ids 或 question_ids 漏标不代表证据不存在。'
+                    'requires_source_content 只有问题纯粹要求定位或核对文献身份时才为false；要求说明研究条件、核对数字、机制或研究结论时必须true，书目题名不能替代正文或摘要中的事实。'
+                    '具体说明用户原句中的哪项要求仍缺失；不能要求用户未指定的细分项目、对照实验或机制。书目身份以已核验元数据为准，不要求将题名作者拼成正文引文。'+source_context.COVERAGE_PROVENANCE_POLICY+'用户要求数字溯源且未完成时，相应问题必须 unresolved，不能标 supported 或 limited。'+source_context.LOOKUP_SCOPE_POLICY+source_context.COVERAGE_COMPLETENESS_POLICY,
+                    CoverageAudit,self.job_id,[audit_group],questions=self.questions)
+                self.update('正在逐项核对完整问题与所要求的条件清单')
+                scope=await structured(self.a,self.stage,coverage_scope.INSTRUCTION,AnswerScopeAudit,self.job_id,[audit_group],questions=self.questions)
+                combined['coverage'].extend(audit['coverage'])
+                combined['judgements'].extend(scope['judgements'])
+                combined['read_requests'].extend(scope['read_requests'])
+            self.coverage_cache[coverage_key]=combined
         audit=self.coverage_cache[coverage_key]
         checked_rows=research_contract.audit_coverage(audit_rows,audit['coverage'],spans)
         checked_rows=coverage_scope.apply(checked_rows,audit['judgements'],audit_rows,spans,context(self.a,self.stage,self.questions)['sources'],{s['id'] for s in self.a['sources'] if s.get('pages')})
@@ -510,16 +536,27 @@ class Research:
             return
         rejected_core=any(e.get('core_claim') and not evidence_state.assessed(e) for e in spans)
         unmatched_core=any(i.get('system_kind')=='unmatched_quote' and i['kind']=='blocking' for i in self.notes.get('issues',[]))
-        if repair_round<1 and (rejected_core or unmatched_core):
+        incomplete_read_list=any(r.get('required') and r['status']=='unresolved' and r.get('answer_scope') and r['answer_scope']['source_lists']
+                                and all(x['complete_read'] for x in r['answer_scope']['source_lists']) for r in checked_rows)
+        if repair_round<1 and (rejected_core or unmatched_core or incomplete_read_list):
             # Local correction keeps the same materials, search and read limits.
             self.update('正在根据独立核查结果修正关键表述',repair_round=repair_round+1)
             self.notes_key=None
             await self.assess(read_round,repair_round+1)
             return
+        fully_answered=research_contract.sufficient(self.coverage)
+        if fully_answered:
+            # Both coverage audits already answered the original requirements
+            # using verified evidence. An extra unmatched quotation remains a
+            # rejected suggestion, rather than adding a new user requirement.
+            extras={i['text'] for i in self.notes.get('issues',[]) if i.get('system_kind')=='unmatched_quote'}
+            for item in self.notes.get('issues',[]):
+                if item.get('system_kind')=='unmatched_quote':item['kind']='limitation'
+            self.notes['gaps']=[g for g in self.notes['gaps'] if g not in extras]
         self.notes.setdefault('issues',[]).extend(research_contract.issues(self.coverage))
         for e in spans:
             if not evidence_state.assessed(e):
-                self.notes['issues'].append(dict(text='原文尚不能支持判断：'+e['claim'],kind='blocking' if e.get('core_claim') else 'limitation',
+                self.notes['issues'].append(dict(text='原文尚不能支持判断：'+e['claim'],kind='blocking' if e.get('core_claim') and not fully_answered else 'limitation',
                     claim=e['claim'],claim_id=e.get('claim_id',''),source_ids=[e['source_id']],status='open'))
         if not self.notes['evidence'] and not self.notes['gaps']:
             text='尚未取得可定位的原文证据，请补充材料或继续检索。'

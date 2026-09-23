@@ -326,6 +326,7 @@ class AnswerPart(BaseModel):
 
 class AnswerListItem(BaseModel):
     source_quote: str
+    answer_quote: str
     evidence_ids: list[str]
     covered: bool
     reason: str

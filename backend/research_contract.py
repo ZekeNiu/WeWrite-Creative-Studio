@@ -4,7 +4,7 @@ import re
 from . import creative,evidence_state
 
 VERSION=7
-CHECKS=('population','design','quantity','outcome','causality','scope')
+CHECKS=('population','design','quantity','outcome','causality','scope','time')
 
 
 def objective(a):
@@ -91,6 +91,16 @@ def audit_coverage(rows,verdicts,spans=()):
         if row['status']=='unresolved':row['status']=v['status']
         if spans:row['source_ids']=list(dict.fromkeys(sources[eid] for eid in ids))
     return result
+
+
+def audit_groups(value):
+    """Each audit sees only IDs that all questions in that call may select."""
+    groups={}
+    for row in value['coverage']:
+        key=tuple(sorted(row['candidate_evidence_ids']))
+        if key:groups.setdefault(key,[]).append(row)
+    return [dict(value,coverage=rows,evidence=[e for e in value['evidence'] if e['evidence_id'] in key])
+            for key,rows in groups.items()]
 
 
 def source_targets(text):

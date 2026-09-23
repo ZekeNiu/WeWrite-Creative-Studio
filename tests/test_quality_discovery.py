@@ -404,6 +404,30 @@ def test_local_correction_is_bounded_and_does_not_spend_search_budget(monkeypatc
     assert s['notebook']['read_ranges']==[dict(start=0,end=len(s['text']))]
 
 
+@pytest.mark.parametrize('complete',[False,True])
+def test_optional_unmatched_extra_never_expands_a_fully_audited_requirement(monkeypatch,complete):
+    from tests.quality_fixtures import notes,judgements,scope_audit,answer_scope_audit
+    w=worker();s=materials.source('Original work','The original publication is identified.');w.a['sources']=[s]
+    async def structured(a,stage,instruction,schema,job,candidates=None,questions=()):
+        if schema.__name__=='ResearchNotes':
+            return schema.model_validate(notes(a,dict(summary='Synthetic report',evidence=[
+                dict(source_id=s['id'],quote=s['text'],claim='原研究身份已确认',core_claim=True),
+                dict(source_id=s['id'],quote='Invented optional detail.',claim='额外的具体数值',core_claim=True)]))).model_dump()
+        if schema.__name__=='EvidenceJudgements':return judgements(candidates,a['research_contract'])
+        if schema.__name__=='EvidenceScopeAudit':return scope_audit(candidates)
+        if schema.__name__=='AnswerScopeAudit':return answer_scope_audit(candidates)
+        if schema.__name__=='CoverageAudit':
+            return dict(coverage=[dict(question_id=r['question_id'],status='supported' if complete else 'unresolved',reason='Independent check of whole requirement',evidence_ids=r['candidate_evidence_ids']) for r in candidates[0]['coverage']])
+        raise AssertionError(schema.__name__)
+    monkeypatch.setattr(research,'structured',structured)
+    asyncio.run(w.assess())
+    assert w.sufficient()==complete
+    unmatched=next(i for i in w.issues() if i.get('system_kind')=='unmatched_quote')
+    assert unmatched['kind']==('limitation' if complete else 'blocking')
+    assert unmatched['status']=='open' and '额外的具体数值' in unmatched['claim']
+    assert all(e['claim']!='额外的具体数值' for e in w.notes['evidence'])
+
+
 def test_citation_edges_are_bounded_and_do_not_become_support():
     from backend import citation_graph
     seen=[]

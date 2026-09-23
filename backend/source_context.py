@@ -1,7 +1,7 @@
 """Task-focused excerpts; stored source text is never shortened or rewritten."""
 import re
 
-POLICY_VERSION = 17
+POLICY_VERSION = 20
 TEMPORAL_SCOPE_POLICY = ('时间和版本也是适用范围：用户问首次发布、某年或某版时，当前帮助页与后续更新不能证明当时已具备全部功能。'
     '区分首次记录、后续技术解释和当前行为，核对来源日期与所述功能的生效版本；没有当时依据的新增能力不得混入早期结论，scope必须unknown并保留缺口。')
 QUOTE_PROVENANCE_POLICY = ('verification=quote_matched表示系统已将该条quote逐字定位到对应来源的实际正文/摘要（bibliography另标为书目题名）。'
@@ -30,6 +30,7 @@ CLAIM_SUPPORT_POLICY = ('核查对象是 claim 和 boundary 中每一个可核�
     '主体结论有据不能掩盖其中一项缺据；任何具体事实在所给原文或书目中没有依据时，对应 checks 必须为 unknown 且 support=unsupported，reason 点明缺项。'
     'limited 仅表示完整判断已有依据、但研究设计或适用范围有限，不能用于放行部分内容缺据的主张。'
     '边界中的实验系统、测试条件或人群也须有对应来源；不能从分子组成推断实验场景，不能将另一指标的脚注测试条件移给本指标。'
+    '翻译研究条件时准确保留对象层级和关系，使用直接表述，不以成语、比喻或近义概括替换原文的具体单位与范围；存在翻译歧义时保留关键原词并明确不确定。'
     '外部常识中正确也不等于当前材料已支持，不得凭记忆补全名称或因果解释。'+TEMPORAL_SCOPE_POLICY)
 NUMERIC_POLICY = ('对 claim 和 boundary 中每一项数字（包括括号、约数、分数分母、单位和时间窗）逐项与实际给出的原文或书目核对，'
     '不能只核对主要结论而忽略附加数字。不能从四舍五入的百分比反推实际人数或样本分母，也不能用“约/左右”补全缺失数字；'
