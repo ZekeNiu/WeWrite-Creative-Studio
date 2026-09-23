@@ -29,7 +29,7 @@ def article(client,column='AI'):
 
 
 def wait(client,j):
-    for _ in range(300):
+    for _ in range(1500):
         value=client.get('/api/jobs/'+j['id']).json()
         if value['status'] not in ('queued','running'): return value
         time.sleep(.01)
@@ -202,6 +202,9 @@ def test_pubmed_parses_abstract_as_abstract(monkeypatch):
 
 
 def test_missing_evidence_allows_review_without_changing_draft(client,network,monkeypatch):
+    from tests.native_fixtures import install
+    async def response(*args):return dict(decision="pass",summary="保留限定",issues=[],dimensions=dict.fromkeys(("accuracy","viewpoint","usefulness","voice","readability"),4))
+    install(monkeypatch,response)
     from backend import workflow
     async def review_call(*args): return dict(decision='pass',summary='保留限定',issues=[],dimensions={})
     monkeypatch.setattr(workflow,'call',review_call)

@@ -308,6 +308,8 @@ def start(kind, value, blob=None):
 
 
 async def run(jid, kind, value, blob):
+    from .execution_budget import ACTIVE
+    budget_token=ACTIVE.set(jid)
     from . import workflow, providers, materials, source_reader, source_imports
     from .structured_output import parse
     token = source_reader.READ_PROGRESS.set(lambda msg: store.update_job(jid, message=msg))
@@ -347,7 +349,8 @@ async def run(jid, kind, value, blob):
                 store.update_job(jid, partial=current+delta)
             try: raw, usage = await providers.generate(service, '你是公众号表达编辑。只提炼抽象表达方式，不复制内容，不推断账号的事实立场；仅返回约定JSON。', prompt, emit)
             except BaseException:
-                store.add_usage('__account__', stage='research', model=service['model'], status='unknown', estimated_cost=None)
+                from .execution_budget import ACTIVE
+                if not getattr(__import__('sys').exception(),'_metered',False):store.add_usage('__account__', stage='research', model=service['model'], status='unknown', estimated_cost=None)
                 raise
             store.add_usage('__account__', stage='research', **usage)
             extracted = parse(raw, StyleResult); store.update_job(jid, result=extracted, partial=raw)
@@ -373,5 +376,6 @@ async def run(jid, kind, value, blob):
     except asyncio.CancelledError: store.update_job(jid, status='cancelled', ended=store.now(), message='已停止；未应用未完成结果，已发出请求可能计费')
     except Exception as exc: store.update_job(jid, status='needs_input' if isinstance(exc, store.Conflict) else 'failed', ended=store.now(), message=str(exc))
     finally:
+        ACTIVE.reset(budget_token)
         source_reader.READ_PROGRESS.reset(token)
         store.event(jid, 'finished', status=store.job(jid)['status']); workflow.TASKS.pop(jid, None)

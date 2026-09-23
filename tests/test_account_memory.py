@@ -185,7 +185,9 @@ def test_revocation_during_generation_retains_candidate_and_blocks_apply(client,
     async def synthesize(a,*args):return a
     monkeypatch.setattr(research,'gather',gather);monkeypatch.setattr(editorial,'synthesize',synthesize)
     monkeypatch.setattr(workflow,'prerequisites',lambda *args:None)
-    monkeypatch.setattr(providers,'service_for',lambda *args:dict(model='mock',name='mock'))
+    monkeypatch.setattr(providers,'service_for',lambda *args:dict(model='mock',name='mock',protocol='chat'))
+    from tests.native_fixtures import install
+    install(monkeypatch)
     async def generate(service,system,prompt,emit=None):
         assert json.loads(prompt)['资料与当前内容']['account_reference']['rules']
         memory.item_action(1,'rules',memory.get()['rules'][0]['id'],'revoke')
@@ -195,7 +197,7 @@ def test_revocation_during_generation_retains_candidate_and_blocks_apply(client,
         return json.dumps(result,ensure_ascii=False) if isinstance(result,dict) else result,dict(status='completed')
     monkeypatch.setattr(providers,'generate',generate)
     j=store.create_job(a['id'],JobRequest(stage=stage,revision=a['revision'],chain=True).model_dump());asyncio.run(workflow.run(j['id']))
-    end=store.job(j['id']);assert end['status']=='needs_input' and end['account_candidate'] and end['result']
+    end=store.job(j['id']);assert end['status']=='needs_input' and end['account_candidate'] and end['native']
     assert store.get_article(a['id'])['content']=='人工原文' and not memory.context(a)['rules']
 
 
@@ -206,21 +208,22 @@ def test_account_change_between_response_and_save_cannot_win_race(client):
     assert store.get_article(a['id'])['content']==''
 
 
-def test_stale_whole_edit_is_saved_but_not_audited_or_adopted(client,monkeypatch):
+def test_stale_whole_edit_is_saved_but_not_adopted(client,monkeypatch):
     seeded_rule();a=new(client);a=patch(client,a,dict(content='原正文'),'write')
-    mock_style(monkeypatch)
-    async def generate(service,system,prompt,emit=None):
-        assert json.loads(prompt)['context']['account_reference']['rules']
+    from tests.native_fixtures import install
+    from backend import native_projection
+    monkeypatch.setattr(providers,'service_for',lambda *args:dict(model='mock',name='mock',protocol='chat'))
+    async def response(*args):
         memory.item_action(1,'rules',memory.get()['rules'][0]['id'],'revoke')
-        return json.dumps(dict(content='旧上下文候选',explanation='结构修改')),dict(status='completed')
-    monkeypatch.setattr(providers,'generate',generate)
-    async def no_audit(*args):raise AssertionError('Stale candidate must stop here')
-    monkeypatch.setattr(editorial,'audit',no_audit)
+        return dict(content='旧上下文候选',decision='pass',summary='结构修改',issues=[],dimensions=dict.fromkeys(editorial.DIMENSIONS,4))
+    install(monkeypatch,response)
     j=store.create_job(a['id'],JobRequest(stage='edit',revision=a['revision']).model_dump());asyncio.run(workflow.run(j['id']))
-    saved=store.get_article(a['id']);candidate=saved['editorial_candidates'][0]
-    assert saved['content']=='原正文' and candidate['content']=='旧上下文候选'
-    assert store.job(j['id'])['status']=='needs_input'
-    with pytest.raises(memory.StaleContext):editorial.adopt(saved,candidate['id'],automatic=True)
+    saved=store.get_article(a['id']);end=store.job(j['id'])
+    assert saved['content']=='原正文' and end['status']=='needs_input'
+    assert not saved.get('editorial_candidates')
+    files=client.get('/api/jobs/'+j['id']+'/native-artifacts/article.md').json()
+    assert files['content']=='旧上下文候选'
+
 
 
 def test_cancelled_learning_never_applies_and_external_failure_usage_unknown(client,monkeypatch):
@@ -279,8 +282,8 @@ def test_full_pipeline_uses_memory_without_polluting_fact_audit(client,model,mon
     assert client.get('/api/articles/'+a['id']+'/export/zip').status_code==200
     for schema in ('TopicsResult','OutlineResult','write'):
         assert any(s==schema and c.get('account_reference',{}).get('rules') for s,c in seen)
-    assert any(s=='FactAudit' for s,c in seen)
+    assert not any(s=='FactAudit' for s,c in seen)
     assert all('account_reference' not in c for s,c in seen if s in ('FactAudit','ReviewResult'))
     j=run(client,a,'edit',chain=False);assert j['status']=='completed',j
-    assert any(s=='EditedDraft' and c.get('account_reference') for s,c in seen)
+    assert not any(s=='EditedDraft' for s,c in seen)
     assert {'topic','outline','write','edit'} <= {u['stage'] for u in memory.uses(a['id'])}

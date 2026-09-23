@@ -67,7 +67,7 @@ async def main():
         await expect(page.locator('.review-summary')).to_contain_text('AI 审核通过')
         await page.get_by_role('button',name='生成整体编辑候选',exact=True).click()
         candidate=page.locator('.editorial-candidate').first
-        await expect(candidate.locator('summary').first).to_contain_text('已独立核查')
+        await expect(candidate.locator('summary').first).to_contain_text('已完成复审')
         await candidate.locator('summary').first.click()
         await candidate.get_by_text('逐段查看差异',exact=True).click()
         await expect(candidate.get_by_text('未改变的段落',exact=True)).to_be_visible()
@@ -80,7 +80,7 @@ async def main():
         adopted=(await article())['content']
         await page.get_by_role('button',name='生成整体编辑候选',exact=True).click()
         rejected=page.locator('.editorial-candidate').first
-        await expect(rejected.locator('summary').first).to_contain_text('已独立核查')
+        await expect(rejected.locator('summary').first).to_contain_text('已完成复审')
         await rejected.locator('summary').first.click()
         await rejected.get_by_role('button',name='不采用此候选',exact=True).click()
         await wait_article(lambda a:any(x['status']=='rejected' for x in a.get('editorial_candidates',[])))

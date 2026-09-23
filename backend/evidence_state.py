@@ -66,6 +66,7 @@ def current_spans(a):
 def project(a):
     """Current claims own evidence; source details are only a projection."""
     if 'claims' not in a.get('evidence',{}):return
+    if a['evidence'].get('engine')=='wewrite-native':return
     spans=current_spans(a)
     for c in a['evidence']['claims']:
         evidence=c.get('evidence',[])
@@ -223,4 +224,5 @@ def sync(a):
     from .research_contract import sufficient,VERSION
     from .source_context import POLICY_VERSION
     a['research']['coverage_sufficient']=sufficient(a['research'].get('coverage',[])) and not a['research'].get('stale',False) and a['research'].get('policy_version')==POLICY_VERSION and a.get('research_contract',{}).get('version')==VERSION
-    a['stages']['sources']='stale' if a['research'].get('stale') else 'needs_input' if view['pending'] or view['new_source_ids'] else 'done' if view['ready'] else 'idle'
+    if a.get('evidence',{}).get('engine')!='wewrite-native':
+        a['stages']['sources']='stale' if a['research'].get('stale') else 'needs_input' if view['pending'] or view['new_source_ids'] else 'done' if view['ready'] else 'idle'

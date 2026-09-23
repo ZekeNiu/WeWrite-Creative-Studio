@@ -35,6 +35,25 @@ from .account_api import router as account_router
 app.include_router(account_router)
 
 
+def native_artifacts(job_id):
+    record=store.job(job_id).get('native') or {}
+    execution=record.get('id','');run_id=record.get('run_id','')
+    if not re.fullmatch(r'[a-f0-9]{32}',execution) or not re.fullmatch(r'[0-9]{8}-[0-9]{6}-[a-f0-9]{6}',run_id):raise ValueError('此任务没有上游产物')
+    return store.DATA/'native'/execution/'runs'/run_id
+
+
+@app.get('/api/jobs/{job_id}/native-artifacts')
+def native_artifact_list(job_id:str):
+    return [p.name for p in native_artifacts(job_id).iterdir() if p.is_file() and p.suffix in ('.md','.yaml','.json','.txt')]
+
+
+@app.get('/api/jobs/{job_id}/native-artifacts/{filename}')
+def native_artifact_read(job_id:str,filename:str):
+    root=native_artifacts(job_id).resolve();path=(root/filename).resolve()
+    if path.parent!=root or path.suffix not in ('.md','.yaml','.json','.txt') or not path.is_file():raise ValueError('产物不存在')
+    return dict(content=path.read_text('utf-8')[:1000000])
+
+
 @app.middleware('http')
 async def local_only(request: Request,call_next):
     host=request.headers.get('host','').split(':')[0]
@@ -145,8 +164,19 @@ async def test_native(value:dict|None=None):
 
 @app.post('/api/search/test')
 async def test_search():
-    rows=await providers.search('运动科学 研究',90)
-    return {'message':f'搜索连接成功，返回 {len(rows)} 条结果'}
+    from . import execution_budget as budget
+    job=store.create_job('connection-tavily',dict(stage='search'));record=None
+    price=providers.settings()['search'].get('tavily_price')
+    try:
+        if not security.key('tavily'):raise ValueError('请先填写搜索服务凭证')
+        record=budget.reserve(job['id'],dict(model='tavily',name='tavily'),fixed=price)
+        rows=await providers.search('运动科学 研究',90)
+        budget.charge(record,dict(status='completed',estimated_cost=price))
+        store.update_job(job['id'],status='completed',ended=store.now())
+        return {'message':f'搜索连接成功，返回 {len(rows)} 条结果'}
+    except BaseException:
+        if record:budget.charge(record,dict(status='unknown',estimated_cost=None))
+        store.update_job(job['id'],status='failed',ended=store.now());raise
 
 
 @app.post('/api/search/check')

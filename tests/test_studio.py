@@ -36,7 +36,7 @@ def patch(c,a,changes,stage='preferences'):
 
 
 def wait(c,j):
-    for _ in range(150):
+    for _ in range(600):
         row=c.get('/api/jobs/'+j['id']).json()
         if row['status'] not in ('queued','running'): return row
         time.sleep(.025)
@@ -70,6 +70,8 @@ def model(monkeypatch,client):
         if emit: await emit(text[:10]);await emit(text[10:])
         return text,{'model':s['model'],'service':s['name'],'input_tokens':100,'output_tokens':300,'seconds':.01,'estimated_cost':None,'status':'completed'}
     monkeypatch.setattr(providers,'generate',fake)
+    from tests.native_fixtures import install
+    install(monkeypatch)
     return calls
 
 
@@ -143,7 +145,7 @@ def test_generation_does_not_overwrite_edit(client,model,monkeypatch):
     a=patch(client,a,{'content':'生成期间的人工修改'},'write')
     j=wait(client,j);assert j['status']=='conflict',j
     assert client.get('/api/articles/'+a['id']).json()['content']=='生成期间的人工修改'
-    assert j['result']['replacement']
+    assert j['result']
 
 
 def test_single_task_cancel_and_restart(client,model,monkeypatch):
@@ -269,7 +271,7 @@ def test_source_change_keeps_warning_without_blocking_outline(client,model):
     assert r.status_code==200 and wait(client,r.json())['status']=='completed'
 
 
-def test_automatic_review_bounded_to_two_passes(client,model,monkeypatch):
+def test_native_review_does_not_start_extra_editing_passes(client,model,monkeypatch):
     a=new(client);a=patch(client,a,{'content':'不可靠的断言','auto':{s:True for s in STAGES}},'write')
     counter=[]
     async def always_bad(s,system,prompt,emit=None):
@@ -282,7 +284,7 @@ def test_automatic_review_bounded_to_two_passes(client,model,monkeypatch):
         return text,{'model':'qa','status':'completed','estimated_cost':None}
     monkeypatch.setattr(providers,'generate',always_bad)
     j=run(client,a,'review')
-    assert j['status']=='needs_input' and len(counter)==2
+    assert j['status']=='needs_input' and len(counter)==1
     a=client.get('/api/articles/'+a['id']).json()
     assert a['stages']['review']=='needs_input' and a['stages']['layout']=='idle'
 

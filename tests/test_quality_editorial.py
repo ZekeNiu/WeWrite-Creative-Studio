@@ -2,7 +2,7 @@ import copy
 import asyncio
 import pytest
 from backend import editorial,store,materials,review_state
-from tests.test_research import client
+from tests.test_studio import client,model
 from tests.quality_fixtures import assessment
 
 
@@ -78,29 +78,26 @@ def test_adopting_candidate_keeps_draft_and_verified_review_separate(client):
 
 
 @pytest.mark.parametrize('new_fact_error',[False,True])
-def test_automatic_whole_edit_is_bounded_and_rechecks_facts(client,monkeypatch,new_fact_error):
-    from backend import workflow,research
+def test_native_review_auto_adopts_only_passed_candidate(client,monkeypatch,new_fact_error):
+    from backend import providers,workflow,research
     from backend.models import JobRequest
+    from tests.native_fixtures import install
     a=store.create_article({'topic':'Synthetic editing'})
     def seed(v):v.update(content='原稿');v['auto']['review']=True;v['stages']['write']='done'
-    a=store.save_article(a['id'],a['revision'],seed,'fixture');calls=[];edits=[]
-    async def gather(a,*args):return a,False
-    async def review(job_id,stage,a,request):
-        calls.append(a['content'])
-        blocker=new_fact_error and len(calls)>1
-        return dict(decision='revise',summary='Still needs editing',dimensions=dict.fromkeys(editorial.DIMENSIONS,4),
-            issues=[dict(id='r',severity='blocker' if blocker else 'major',quote='',reason='New factual error' if blocker else 'Reorganize reasoning',suggestion='',source_ids=[],status='pending')])
-    async def edit(a,*args):
-        edits.append(a['content']);return dict(content=a['content']+'修改',explanation='Structural revision',changes=[])
-    monkeypatch.setattr(research,'gather',gather);monkeypatch.setattr(workflow,'call',review);monkeypatch.setattr(editorial,'edit',edit)
-    j=store.create_job(a['id'],JobRequest(stage='review',revision=a['revision'],chain=False).model_dump())
-    asyncio.run(workflow.run(j['id']))
+    a=store.save_article(a['id'],a['revision'],seed,'fixture')
+    async def forbidden(*args):raise AssertionError('No extra research or per-paragraph model audit')
+    monkeypatch.setattr(research,'gather',forbidden);monkeypatch.setattr(editorial,'audit',forbidden)
+    monkeypatch.setattr(providers,'service_for',lambda *args:dict(model='mock',protocol='chat'))
+    async def response(*args):
+        return dict(content='已整体修改的稿件',decision='revise' if new_fact_error else 'pass',summary='编辑结果',pass_number=2,
+            dimensions=dict.fromkeys(editorial.DIMENSIONS,4),issues=[dict(severity='blocker',reason='New factual error')] if new_fact_error else [])
+    install(monkeypatch,response)
+    j=store.create_job(a['id'],JobRequest(stage='review',revision=a['revision'],chain=False).model_dump());asyncio.run(workflow.run(j['id']))
     saved=store.get_article(a['id'])
-    assert len(edits)==(1 if new_fact_error else 2)
-    assert len(calls)==len(edits)+1
-    assert saved['content']==('原稿' if new_fact_error else '原稿修改修改')
+    assert saved['content']==('原稿' if new_fact_error else '已整体修改的稿件')
     assert saved['editorial_candidates'][-1]['status']==('pending' if new_fact_error else 'adopted')
-    assert saved['stages']['review']=='needs_input'
+    assert saved['stages']['review']==('needs_input' if new_fact_error else 'done')
+
 
 
 def test_manual_final_records_real_edit_pair_without_changing_ai_verdict(client):
@@ -117,26 +114,17 @@ def test_manual_final_records_real_edit_pair_without_changing_ai_verdict(client)
     assert final['review_state']!='AI 审核通过'
 
 
-def test_review_checks_draft_once_without_restarting_research(client,monkeypatch):
-    import json
-    from backend import workflow,research,providers
+def test_review_checks_native_draft_without_restarting_research(client,model,monkeypatch):
+    from backend import workflow,research
     from backend.models import JobRequest
     a=store.create_article({'topic':'A bounded editorial review'})
-    def seed(v):
-        v['content']='一段待审稿件';v['auto']['review']=False;v['stages']['write']='done'
-    a=store.save_article(a['id'],a['revision'],seed,'fixture');checked=[]
-    async def no_research(*args):raise AssertionError('Review must not restart discovery')
-    async def audit(article,job):
-        checked.append(article['content']);return dict(complete=True,issues=[])
-    async def generate(*args):
-        return json.dumps(dict(decision='pass',summary='No issues',issues=[],dimensions=dict.fromkeys(editorial.DIMENSIONS,4))),dict(status='completed')
-    monkeypatch.setattr(research,'gather',no_research);monkeypatch.setattr(editorial,'audit',audit)
-    monkeypatch.setattr(providers,'generate',generate)
-    monkeypatch.setattr(providers,'service_for',lambda *args:dict(model='mock',name='mock'))
-    j=store.create_job(a['id'],JobRequest(stage='review',revision=a['revision']).model_dump())
-    asyncio.run(workflow.run(j['id']))
+    a=store.save_article(a['id'],a['revision'],lambda v:v.update(content='一段待审稿件'),'fixture')
+    async def forbidden(*args):raise AssertionError('Native review owns fact checking')
+    monkeypatch.setattr(research,'gather',forbidden);monkeypatch.setattr(editorial,'audit',forbidden)
+    j=store.create_job(a['id'],JobRequest(stage='review',revision=a['revision']).model_dump());asyncio.run(workflow.run(j['id']))
     assert store.job(j['id'])['status']=='completed'
-    assert checked==['一段待审稿件'] and store.get_article(a['id'])['review']['decision']=='pass'
+    assert store.get_article(a['id'])['review']['decision']=='pass'
+
 
 
 def test_factual_audit_receives_originals_without_prior_self_assessment(client,monkeypatch):

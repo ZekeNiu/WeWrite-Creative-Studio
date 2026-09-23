@@ -106,14 +106,16 @@ async def structured(a,stage,instruction,schema,job_id,candidates=None,questions
         try:
             try:raw,usage=await providers.generate(s,SYSTEM,prompt,emit)
             except providers.StructuredOutputUnsupported:
-                store.add_usage(a['id'],stage='research',model=s['model'],service=s['name'],status='unknown',estimated_cost=None)
+                from .execution_budget import ACTIVE
+                if not getattr(__import__('sys').exception(),'_metered',False):store.add_usage(a['id'],stage='research',model=s['model'],service=s['name'],status='unknown',estimated_cost=None)
                 store.event(job_id,'research',message='正在使用同一模型继续校验结果',structured_output='explicitly_unsupported')
                 s={k:v for k,v in s.items() if k!='response_schema'}
                 partial='';last=0
                 raw,usage=await providers.generate(s,SYSTEM,prompt,emit)
         except BaseException:
             store.update_job(job_id,partial=partial)
-            store.add_usage(a['id'],stage='research',model=s['model'],service=s['name'],status='unknown',estimated_cost=None)
+            from .execution_budget import ACTIVE
+            if not getattr(__import__('sys').exception(),'_metered',False):store.add_usage(a['id'],stage='research',model=s['model'],service=s['name'],status='unknown',estimated_cost=None)
             raise
         charged=store.add_usage(a['id'],stage='research',**usage)
         store.update_job(job_id,partial=raw)
@@ -331,8 +333,13 @@ class Research:
         if channel not in self.attempted: self.attempted.append(channel)
         self.calls+=1;self.update('正在使用 '+CHANNEL_NAMES.get(channel,channel)+' 查找资料',channel=channel,query=query)
         self.stats['search_requests']+=1
-        record=store.add_usage(self.a['id'],stage='search',job_id=self.job_id,model=s['model'] if channel=='native' else channel,
-            service=s['name'] if channel=='native' else channel,reserved_cost=price,estimated_cost=None,currency='CNY',status='reserved')
+        from . import execution_budget
+        paid=channel in ('native','tavily')
+        record=execution_budget.reserve(self.job_id,s,query,2000,price) if channel=='native' else execution_budget.reserve(self.job_id,dict(model='tavily',name='tavily'),fixed=price) if paid else store.add_usage(self.a['id'],stage='search',job_id=self.job_id,model=channel,service=channel,reserved_cost=price,estimated_cost=None,currency='CNY',status='reserved')
+        if paid:store.update_usage(record['id'],stage='search')
+        def charged(**usage):
+            if paid:execution_budget.charge(record,usage)
+            else:store.update_usage(record['id'],**usage)
         started=time.monotonic()
         try:
             if channel=='native':
@@ -341,23 +348,25 @@ class Research:
                 self.update('供应商已执行内部子查询',channel=channel,provider_queries=meta.get('queries',[]),provider_query_count=meta['calls'])
                 if rows: store.capability(providers.fingerprint(s,'search'),dict(status='tested',sources=rows,queries=meta.get('queries',[]),protocol=s['protocol'],message='实际任务已取得联网工具记录'))
                 usage=meta.get('usage',{})
-                store.add_usage(self.a['id'],stage='research',job_id=self.job_id,model=s['model'],service=s['name'],
-                    input_tokens=usage.get('input_tokens'),output_tokens=usage.get('output_tokens'),estimated_cost=None,status='completed',currency=s['currency'])
                 price=price*meta['calls'] if price is not None else None
+                inp=usage.get('input_tokens',usage.get('prompt_tokens'));out=usage.get('output_tokens',usage.get('completion_tokens'))
+                if price is not None and inp is not None and out is not None and all(s.get(k) is not None for k in ('input_price','output_price')):price+=(inp*s['input_price']+out*s['output_price'])/1_000_000
+                else:price=None
+                store.update_usage(record['id'],input_tokens=inp,output_tokens=out)
             elif channel=='pubmed': rows=await search_tools.pubmed(query)
             elif channel in ('openalex','crossref','arxiv'): rows=await getattr(academic,channel)(query)
             elif channel=='tavily': rows=[dict(r,provider='tavily',status='excerpt_only') for r in await providers.search(query,days)]
             else: rows=await browser_search.search(query,channel)
-            store.update_usage(record['id'],reserved_cost=price,estimated_cost=price,status='completed',seconds=round(time.monotonic()-started,2))
+            charged(reserved_cost=price,estimated_cost=price,status='completed',seconds=round(time.monotonic()-started,2))
             store.cache_put(key,rows,3600 if self.stage=='topic' else 86400)
             self.channel_status[channel]='candidates' if rows else 'no_results'
             if rows and channel not in self.used: self.used.append(channel)
             return rows
         except asyncio.CancelledError:
-            store.update_usage(record['id'],status='unknown');raise
+            charged(status='unknown',estimated_cost=None);raise
         except Exception as exc:
             # Unknown paid requests are not replayed. Free indexes may retry on another query.
-            store.update_usage(record['id'],status='unknown',estimated_cost=0 if price==0 else None,seconds=round(time.monotonic()-started,2))
+            charged(status='unknown',estimated_cost=0 if price==0 else None,seconds=round(time.monotonic()-started,2))
             self.channel_failures[channel]=self.channel_failures.get(channel,0)+1
             if channel in ('native','tavily') or self.channel_failures[channel]>=2:self.disabled.add(channel)
             detail=str(exc).lower()

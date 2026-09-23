@@ -100,7 +100,7 @@ async def after_generation(page, base, article_id, out):
     # Make an actual subsequent call to verify the learned rule enters editing.
     await page.get_by_role('button',name='生成整体编辑候选',exact=True).click()
     candidate=page.locator('.editorial-candidate').first
-    await expect(candidate.locator('summary').first).to_contain_text('已独立核查')
+    await expect(candidate.locator('summary').first).to_contain_text('已完成复审')
     uses=await (await page.request.get(base+'/api/articles/'+article_id+'/account-uses')).json()
     assert uses['uses'][0]['context']['rules'][0]['text']=='段落长短自然变化'
     assert (await article())['content']==current['content']

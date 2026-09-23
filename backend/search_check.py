@@ -62,6 +62,8 @@ def start(request):
 
 
 async def run(job_id):
+    from .execution_budget import ACTIVE
+    budget_token=ACTIVE.set(job_id)
     job = store.job(job_id)
     a = store.get_article(job['article_id'])
     w = research.Research(a, job_id, 'sources')
@@ -92,6 +94,7 @@ async def run(job_id):
         phase={'retrieval':'检索','selection':'AI 筛选','reading':'原文读取','organizing':'AI 整理'}.get(w.telemetry['phase'],'资料处理')
         error=phase+'未完成：'+error
     finally:
+        ACTIVE.reset(budget_token)
         workflow.TASKS.pop(job_id, None)
     evidence = []
     for e in notes.get('evidence', []):

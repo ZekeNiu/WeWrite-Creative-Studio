@@ -60,6 +60,10 @@ async def generate(s,system,prompt,emit=None):
 
 
 providers.generate=generate
+from tests.native_fixtures import install as install_native
+class OfflinePatch:
+    def setattr(self,obj,name,value):setattr(obj,name,value)
+install_native(OfflinePatch())
 async def image_generate(*args,**kwargs):
     from PIL import Image
     buffer=io.BytesIO();Image.new('RGB',(160,100),'green').save(buffer,'PNG');return buffer.getvalue()

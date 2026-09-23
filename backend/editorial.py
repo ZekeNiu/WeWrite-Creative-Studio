@@ -97,7 +97,8 @@ async def generate(a,job_id,route,instruction,schema,extra=None):
     try:raw,usage=await providers.generate(service,prompts.system(route,a['brief']),prompt,emit)
     except BaseException:
         account_memory.finish_use(used,'incomplete')
-        store.add_usage(a['id'],stage=route,model=service['model'],service=service['name'],status='unknown',estimated_cost=None)
+        from .execution_budget import ACTIVE
+        if not getattr(__import__('sys').exception(),'_metered',False):store.add_usage(a['id'],stage=route,model=service['model'],service=service['name'],status='unknown',estimated_cost=None)
         raise
     account_memory.finish_use(used,'returned')
     store.add_usage(a['id'],stage=route,**usage);store.update_job(job_id,partial=raw)

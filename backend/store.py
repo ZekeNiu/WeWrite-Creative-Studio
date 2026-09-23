@@ -293,6 +293,9 @@ def events(job_id, after):
 
 
 def add_usage(article_id, **value):
+    request_id=value.pop('_request_id',None)
+    if request_id:
+        return update_usage(request_id,**value)
     row=dict(id=uid(),at=now(),**value)
     with connection() as db:
         db.execute('INSERT INTO usage VALUES(?,?,?)',(row['id'],article_id,encode(row)))
@@ -310,6 +313,7 @@ def update_usage(id,**changes):
         if row:
             value=json.loads(row[0]);value.update(changes)
             db.execute('UPDATE usage SET data=? WHERE id=?',(encode(value),id))
+            return value
 
 
 def article_dir(id):

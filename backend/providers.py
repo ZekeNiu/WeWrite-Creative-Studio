@@ -166,6 +166,11 @@ def extract_json_text(d, protocol):
 
 
 async def generate(s, system, prompt, emit=None):
+    from . import execution_budget
+    return await execution_budget.text_request(_generate,s,system,prompt,emit)
+
+
+async def _generate(s, system, prompt, emit=None):
     protocol=s['protocol']; started=time.monotonic(); text=''; usage={}; completed=False; truncated=False
     common={'model':s['model'],'stream':s.get('stream',True)}
     if protocol=='chat':

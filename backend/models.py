@@ -389,8 +389,14 @@ class ModelConnection(BaseModel):
 
 class CapabilityTest(BaseModel):
     model: str = Field(min_length=1)
-    kind: Literal['text', 'image', 'search']
+    kind: Literal['text', 'tools', 'image', 'search']
     protocol: Literal['inherit', 'responses', 'anthropic', 'gemini'] | None = None
+
+
+class ExecutionLimits(BaseModel):
+    max_requests: int = Field(32,ge=1,le=200)
+    max_tools: int = Field(120,ge=1,le=1000)
+    max_cost: float | None = Field(None,gt=0)
 
 
 class Settings(BaseModel):
@@ -398,6 +404,7 @@ class Settings(BaseModel):
     default_service: str = ''
     routes: dict[str, Route] = {}
     search: SearchConfig = SearchConfig()
+    execution: ExecutionLimits = ExecutionLimits()
     model_connections: list['ModelConnection'] = Field(default_factory=list)
     default_auto: dict[str, bool] = {s: False for s in STAGES}
 
@@ -429,6 +436,7 @@ class JobRequest(BaseModel):
     continuation_job_id: str = ''
     research_limits: ResearchLimits | None = None
     research_parent_id: str = ''
+    execution_limits: ExecutionLimits | None = None
 
 
 ApplicationState = Literal['applied','partial','pending','not_needed']

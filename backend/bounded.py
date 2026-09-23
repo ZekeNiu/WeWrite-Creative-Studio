@@ -71,6 +71,8 @@ def start(a, value):
 
 
 async def run(jid, snapshot, ids, mode='bound'):
+    from .execution_budget import ACTIVE
+    budget_token=ACTIVE.set(jid)
     applications=[]
     try:
         verb='移除不使用的主张' if mode=='exclude' else '采用限定表述'
@@ -118,7 +120,9 @@ async def run(jid, snapshot, ids, mode='bound'):
     except Exception as exc:
         message=str(exc) if isinstance(exc,(ValueError,store.Conflict)) else '生成未完成，请求可能已计费，不自动重试'
         store.update_job(jid,status='conflict' if isinstance(exc,store.Conflict) else 'failed',ended=store.now(),message=message+f'；此前已完成 {len(applications)} 项，改动可查看或撤销')
-    finally:workflow.TASKS.pop(jid,None)
+    finally:
+        ACTIVE.reset(budget_token)
+        workflow.TASKS.pop(jid,None)
 
 
 def undo(a, ids):

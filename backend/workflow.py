@@ -5,7 +5,7 @@ import re
 import time
 from PIL import Image
 from pydantic import ValidationError
-from . import store, providers, prompts, materials, rendering, research, creative,editorial,account_memory
+from . import store, providers, prompts, materials, rendering, research, creative,editorial,account_memory,native_runtime,native_workflow
 from .models import STAGES, LABELS, SCHEMAS
 from .structured_output import parse as parse_structured
 
@@ -35,7 +35,7 @@ def validate_result(stage,result,a):
         if stage=='review':
             if not items and result['decision']!='pass': raise ValueError('模型未给出可处理的审核意见，请重新审核；当前正文已保留')
             for x in items: x['status']='pending'
-            if items and result['decision']=='pass': result['decision']='revise'
+            if any(x['severity']!='minor' for x in items) and result['decision']=='pass': result['decision']='revise'
             if any(i['severity']=='blocker' for i in items): result['decision']='revise'
     if stage=='write':
         from .bibliography import citation_ids
@@ -121,7 +121,8 @@ async def call(job_id,stage,a,request):
     except BaseException:
         account_memory.finish_use(request.get('_account_use'),'incomplete')
         store.update_job(job_id,partial=text)
-        store.add_usage(a['id'],stage=stage,model=s['model'],service=s['name'],status='unknown',estimated_cost=None,currency=s.get('currency','CNY'))
+        from .execution_budget import ACTIVE
+        if not getattr(__import__('sys').exception(),'_metered',False):store.add_usage(a['id'],stage=stage,model=s['model'],service=s['name'],status='unknown',estimated_cost=None,currency=s.get('currency','CNY'))
         raise
     result=parse(stage,raw); validate_result(stage,result,a)
     if stage=='review':result=editorial.gate(result,factual)
@@ -185,8 +186,9 @@ def apply_review_fixes(a):
 
 
 async def generate_image(a,job_id,plan):
+    from .execution_budget import reserve,charge
     s=providers.service_for('image'); price=s.get('image_price')
-    reservation=store.add_usage(a['id'],stage='image',model=s['model'],service=s['name'],estimated_cost=price,currency=s.get('currency','CNY'),status='reserved')
+    reservation=reserve(job_id,dict(s,input_price=None,output_price=None),fixed=price)
     store.update_job(job_id,message='正在生成图片；连接中断时不会自动重复请求')
     try:
         blob=await providers.image_generate(s,plan['prompt'],a['visual']['size'])
@@ -195,9 +197,9 @@ async def generate_image(a,job_id,plan):
         filename=store.uid()+'.png'; p=store.article_dir(a['id'])/'assets'; p.mkdir(exist_ok=True)
         image.convert('RGB').save(p/filename,'PNG')
     except BaseException:
-        store.update_usage(reservation['id'],status='unknown',estimated_cost=None)
+        charge(reservation,dict(status='unknown',estimated_cost=None))
         raise
-    store.update_usage(reservation['id'],status='completed')
+    charge(reservation,dict(status='completed',estimated_cost=price))
     item=dict(plan,filename=filename,selected=True,created=store.now(),id=store.uid())
     store.update_job(job_id,result={'image':item})
     try:
@@ -209,6 +211,8 @@ async def generate_image(a,job_id,plan):
 
 
 async def run(job_id):
+    from .execution_budget import ACTIVE
+    budget_token=ACTIVE.set(job_id)
     j=store.job(job_id); a=store.get_article(j['article_id']); req={**j['request'],'_job_id':job_id}; stage=req['stage']
     try:
         if a['revision']!=req['revision']: raise store.Conflict('启动前文章已有更新，请重新开始')
@@ -220,7 +224,7 @@ async def run(job_id):
             # Draft review owns its independent factual audit. Re-running the
             # research pipeline here repeats notes and coverage checks before
             # auditing the same draft; missing facts remain review findings.
-            if stage in ('topic','sources','research'):
+            if stage=='research':
                 a,pending=await research.gather(a,job_id,stage,req.get('instruction',''))
                 if pending and stage in ('sources','research'):
                     if stage in ('sources','research'):
@@ -236,9 +240,12 @@ async def run(job_id):
                         store.update_job(job_id,resumed_from=original['id'])
                         continue
                 store.update_job(job_id,status='completed',ended=store.now(),message='资料检索与整理已完成');return
-            if stage=='outline':a=await editorial.synthesize(a,job_id)
-            if stage=='sources' and a.get('research',{}).get('evidence'):
-                result=a['evidence']
+            if stage in native_runtime.STAGES:
+                packet=await native_runtime.generate(a,job_id,stage,req)
+                a=native_workflow.apply(a,stage,packet,req)
+                if stage in ('review','edit'):store.update_job(job_id,review_round_id=a.get('review',{}).get('round_id'),current_step='generation')
+                if stage=='visual' and a['auto']['visual']:
+                    for plan in a['image_plans']:a=await generate_image(a,job_id,plan)
             elif stage=='layout':
                 rendering.render(a)
                 def layout_ready(v):
@@ -293,6 +300,7 @@ async def run(job_id):
         message=str(exc) if isinstance(exc,(ValueError,KeyError)) else '此环节未完成，内容已保留。请检查配置或重试。'
         store.update_job(job_id,status='failed',ended=store.now(),message=message)
     finally:
+        ACTIVE.reset(budget_token)
         store.event(job_id,'finished',status=store.job(job_id)['status']); TASKS.pop(job_id,None)
 
 
