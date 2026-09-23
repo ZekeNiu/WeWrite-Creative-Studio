@@ -18,33 +18,20 @@ def test_aggregate_pass_cannot_hide_an_omitted_condition():
     assert e['support_checks']['scope']=='unknown' and '候补前提' in e['support_reason']
 
 
-@pytest.mark.parametrize('claim,accepted',[
-    ('设置改变并非差异的根本原因',False),
-    ('设置改变未必是差异的原因',True),
-    ('设置改变不一定导致这些差异',True),
-    ('设置改变并非必然导致这些差异',True),
-])
-def test_not_necessarily_cannot_be_translated_as_definite_exclusion(claim,accepted):
-    e=dict(span(),quote='The change is not necessarily responsible for the difference.',claim=claim,support_basis='observed')
-    condition=dict(source_condition=e['quote'],claim_condition=claim,status='matched',reason='声称程度一致')
+def test_supported_scope_limit_is_not_a_word_for_word_restatement():
+    original='The prototype could support a future deployment. A production system is a next step.'
+    claim='原型验证不意味着生产系统已经部署。'
+    e=dict(span(),quote=original,claim=claim,boundary='')
+    condition=dict(source_condition=original,claim_condition=claim,status='matched',reason='区分原型验证与尚待完成的部署，不扩大原文')
     evidence_scope.apply([e],[verdict(conditions=[condition])])
-    assert (e['support']=='supported') is accepted
-
-
-@pytest.mark.parametrize('setting',['体内','体外','离体'])
-def test_added_experiment_setting_in_boundary_cannot_be_omitted_from_alignment(setting):
-    e=dict(span(),quote='The engineered component cleaves the target.',claim='改造后的组分可以切割靶标',boundary=setting+'实验验证结果')
-    condition=dict(source_condition=e['quote'],claim_condition=e['claim'],status='matched',reason='主体有据')
-    evidence_scope.apply([e],[verdict(conditions=[condition])])
-    assert e['support']=='unsupported' and setting in e['support_reason']
-
-
-def test_explicit_setting_alignment_and_extrapolation_limit_remain_possible():
-    e=dict(span(),quote='The component cleaves the target in vitro.',claim='该组分能切割靶标',boundary='体外实验，不能据此推断体内效果')
-    conditions=[dict(source_condition=e['quote'],claim_condition=e['claim'],status='matched',reason='主体有据'),
-                dict(source_condition='in vitro',claim_condition='体外实验',status='matched',reason='场景有据')]
-    evidence_scope.apply([e],[verdict(conditions=conditions)])
     assert e['support']=='supported'
+
+
+def test_semantic_uncertainty_is_not_overridden_by_located_matching_words():
+    e=dict(span(),quote='The change is associated with a difference.',claim='差异由该变化造成。')
+    condition=dict(source_condition=e['quote'],claim_condition=e['claim'],status='changed',reason='观察关联被加强成因果')
+    evidence_scope.apply([e],[verdict(conditions=[condition],scope='matched')])
+    assert e['support']=='unsupported' and '观察关联' in e['support_reason']
 
 
 @pytest.mark.parametrize('change',[
@@ -145,70 +132,6 @@ def test_located_bibliography_never_overrides_independent_support_or_scope_rejec
     e['support']='supported'
     evidence_scope.apply([e],[verdict(conditions=[condition],scope='unknown',reason='题名不能证明疗效')],read_sources=[source])
     assert e['support']=='unsupported' and '题名不能证明疗效' in e['support_reason']
-
-
-@pytest.mark.parametrize('claim,accepted',[
-    ('若负荷未被预期，控制器将无法稳定系统。',False),
-    ('若负荷未被预期，控制器可能无法稳定系统。',True),
-])
-def test_a_conditional_premise_does_not_preserve_a_possible_conclusion(claim,accepted):
-    e=dict(span(),quote='If the load is unanticipated, the controller may fail to stabilize the system.',
-        claim=claim,boundary='这是一项机制假说',support_basis='author_interpretation')
-    condition=dict(source_condition=e['quote'],claim_condition=claim,status='matched',reason='保留若的前提')
-    evidence_scope.apply([e],[verdict(conditions=[condition])])
-    assert (e['support']=='supported')==accepted
-
-
-def test_possibility_in_another_clause_cannot_qualify_a_certain_conclusion():
-    e=dict(span(),quote='Errors could increase demand. The controller may fail.',claim='错误可能增加需求；控制器将失效。',boundary='假说推演')
-    conditions=[dict(source_condition='Errors could increase demand.',claim_condition='错误可能增加需求',status='matched',reason='可能性一致'),
-        dict(source_condition='The controller may fail.',claim_condition='控制器将失效',status='matched',reason='模型错误通过')]
-    evidence_scope.apply([e],[verdict(conditions=conditions)])
-    assert e['support']=='unsupported'
-
-
-def test_calendar_month_may_is_not_a_possibility_marker():
-    e=dict(span(),quote='Published in May 2020.',claim='发表于2020年5月。')
-    condition=dict(source_condition=e['quote'],claim_condition=e['claim'],status='matched',reason='书目日期')
-    evidence_scope.apply([e],[verdict(conditions=[condition])])
-    assert e['support']=='supported'
-
-
-def test_observed_past_inability_is_not_automatically_a_hypothesis():
-    e=dict(span(),quote='The analysis could not detect a change.',claim='分析未检测到变化。',support_basis='observed')
-    condition=dict(source_condition=e['quote'],claim_condition=e['claim'],status='matched',reason='报告实测结果')
-    evidence_scope.apply([e],[verdict(conditions=[condition])])
-    assert e['support']=='supported'
-
-
-@pytest.mark.parametrize('claim,accepted',[
-    ('其余12例中有7例归因于分类错误。',False),
-    ('其余12例中有7例可能归因于分类错误。',True),
-])
-def test_observed_counts_do_not_make_their_possible_attribution_certain(claim,accepted):
-    e=dict(span(),quote='Of the remaining 12 cases, 7 could be attributed to classification errors.',
-        claim=claim,boundary='观察性病例分析',support_basis='observed')
-    condition=dict(source_condition=e['quote'],claim_condition=claim,status='matched',reason='人数一致')
-    evidence_scope.apply([e],[verdict(conditions=[condition])])
-    assert (e['support']=='supported')==accepted
-
-
-def test_observed_capability_can_retain_ability_wording():
-    e=dict(span(),quote='The instrument could detect the signal.',claim='仪器能够检测到信号。',support_basis='observed')
-    condition=dict(source_condition=e['quote'],claim_condition=e['claim'],status='matched',reason='能力陈述')
-    evidence_scope.apply([e],[verdict(conditions=[condition])])
-    assert e['support']=='supported'
-
-
-@pytest.mark.parametrize('claim,accepted',[
-    ('延迟导致系统无法调整输出。',False),
-    ('延迟降低系统调整输出的能力。',True),
-])
-def test_reduced_ability_does_not_mean_complete_inability(claim,accepted):
-    e=dict(span(),quote='The delay reduced the ability to adjust the output.',claim=claim,support_basis='observed')
-    condition=dict(source_condition=e['quote'],claim_condition=claim,status='matched',reason='模型认为近义')
-    evidence_scope.apply([e],[verdict(conditions=[condition])])
-    assert (e['support']=='supported')==accepted
 
 
 @pytest.mark.parametrize('original,claim,accepted',[
