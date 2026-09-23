@@ -18,6 +18,35 @@ def test_aggregate_pass_cannot_hide_an_omitted_condition():
     assert e['support_checks']['scope']=='unknown' and '候补前提' in e['support_reason']
 
 
+@pytest.mark.parametrize('claim,accepted',[
+    ('设置改变并非差异的根本原因',False),
+    ('设置改变未必是差异的原因',True),
+    ('设置改变不一定导致这些差异',True),
+    ('设置改变并非必然导致这些差异',True),
+])
+def test_not_necessarily_cannot_be_translated_as_definite_exclusion(claim,accepted):
+    e=dict(span(),quote='The change is not necessarily responsible for the difference.',claim=claim,support_basis='observed')
+    condition=dict(source_condition=e['quote'],claim_condition=claim,status='matched',reason='声称程度一致')
+    evidence_scope.apply([e],[verdict(conditions=[condition])])
+    assert (e['support']=='supported') is accepted
+
+
+@pytest.mark.parametrize('setting',['体内','体外','离体'])
+def test_added_experiment_setting_in_boundary_cannot_be_omitted_from_alignment(setting):
+    e=dict(span(),quote='The engineered component cleaves the target.',claim='改造后的组分可以切割靶标',boundary=setting+'实验验证结果')
+    condition=dict(source_condition=e['quote'],claim_condition=e['claim'],status='matched',reason='主体有据')
+    evidence_scope.apply([e],[verdict(conditions=[condition])])
+    assert e['support']=='unsupported' and setting in e['support_reason']
+
+
+def test_explicit_setting_alignment_and_extrapolation_limit_remain_possible():
+    e=dict(span(),quote='The component cleaves the target in vitro.',claim='该组分能切割靶标',boundary='体外实验，不能据此推断体内效果')
+    conditions=[dict(source_condition=e['quote'],claim_condition=e['claim'],status='matched',reason='主体有据'),
+                dict(source_condition='in vitro',claim_condition='体外实验',status='matched',reason='场景有据')]
+    evidence_scope.apply([e],[verdict(conditions=conditions)])
+    assert e['support']=='supported'
+
+
 @pytest.mark.parametrize('change',[
     dict(source_condition='Invented condition',claim_condition='A',status='matched'),
     dict(source_condition='only if A is unavailable',claim_condition='只有A不可用',status='matched'),

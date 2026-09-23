@@ -578,8 +578,8 @@ class Research:
                         if e['source_id']==src['id'] and e.get('quote_origin')=='source_text']
                 if ranges:source_notebook.save(src,[],signature,ranges)
             # Check every span, while keeping each independent decision focused.
-            for offset in range(0,len(unknown),3):
-                batch=unknown[offset:offset+3]
+            for offset in range(0,len(unknown)):
+                batch=unknown[offset:offset+1]
                 checked=await structured(self.a,self.stage,
                     '独立核查 candidates 的每条判断，不采信前一轮自评。逐条返回 evidence_id、support、reason、question_ids 和 checks。'
                     'checks 必须包含 population/design/quantity/outcome/causality/scope/time，分别核对人群、研究设计、数字及分母、结局、因果强度、适用范围、任务所问时间与版本；'
