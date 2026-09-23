@@ -153,7 +153,7 @@ def validate_spans(notes,sources):
                           location='书目题名（非摘要或正文）' if bibliographic else f'第 {page} 页' if page else f'{label}字符 {offset+1}',
                           verification='quote_matched',source_status=s.get('status',''),
                           support='unassessed',support_reason='',assessment_version=1,
-                          evidence_id='E'+digest([s['id'],s.get('text',''),s.get('bibliography'),quote,e['claim'],e.get('boundary','')])[:16]))
+                          evidence_id='E'+digest([evidence_state.source_key(s),quote,e['claim'],e.get('boundary','')])[:16]))
         if e.get('quality')=='insufficient':
             message='来源不足以支持主张：'+e['claim']
             kind='blocking' if e.get('core_claim') else 'limitation'
@@ -607,7 +607,7 @@ class Research:
                     '必须给出 basis：observed=本研究实测结果，author_interpretation=作者机制解释或推测，external_reference=转述另一研究，not_applicable=非研究来源的直接陈述。原文写了某个机制不等于本研究测量或验证了它；须结合研究设计识别，无法判断时 unassessed。'
                     '试验方案、规范或规则中直接规定的条件属于原始文件陈述，basis=not_applicable；它们不是实测疗效，也不是作者对结果的推测。每项均显式填写basis，不因不适用实测分类而省略。'
                     'quote_origin=bibliography 的引文只位于书目题名，不是摘要或正文。只有纯文献身份确认才 identity_only=true 且 basis=not_applicable；不能由题名证明疗效、因果或实际研究结果，含此类主张必须 unsupported，身份之外的事实需要另外引用真实摘要/正文。普通正文证据 identity_only=false。'
-                    'source_origin 逐条区分 primary 原始研究/原始官方记录、secondary 二手解读、background 背景资料、unassessed 未能判定。百科、机构对另一论文的介绍仍是二手来源，不能因权威域名而标原始研究；转述另一研究的结果必须 basis=external_reference。系统综述自身的综合分析是其原始结果，但其中转述单项试验仍属转引。'
+                    '按来源身份规则填写source_origin，在reason中说明归属依据与正文支持；转述另一研究的结果必须basis=external_reference。'
                     'supported 仅限来源直接支持且无必要条件缺失；limited 必须有明确边界；contradicted 是原文否定该判断；其他为 unsupported。'
                     'question_ids 只能列确实回答了任务书核心问题的ID，背景介绍不能算回答。reason 简述可核查理由，不输出思考过程。'+source_context.CLAIM_SUPPORT_POLICY+source_context.NUMERIC_POLICY+source_context.QUOTE_PROVENANCE_POLICY,
                     EvidenceJudgements,self.job_id,[{k:e.get(k) for k in ('evidence_id','source_id','quote','claim','boundary','location','source_status','quote_origin','verification')} for e in batch],questions=self.questions)

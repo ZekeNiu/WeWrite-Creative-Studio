@@ -1,7 +1,7 @@
 """Task-focused excerpts; stored source text is never shortened or rewritten."""
 import re
 
-POLICY_VERSION = 35
+POLICY_VERSION = 36
 TEMPORAL_SCOPE_POLICY = ('时间和版本也是适用范围：用户问首次发布、某年或某版时，当前帮助页与后续更新不能证明当时已具备全部功能。'
     '区分首次记录、后续技术解释和当前行为，核对来源日期与所述功能的生效版本；没有当时依据的新增能力不得混入早期结论，scope必须unknown并保留缺口。')
 QUOTE_PROVENANCE_POLICY = ('verification=quote_matched表示系统已将该条quote逐字定位到对应来源的实际正文/摘要（bibliography另标为书目题名）。'
@@ -38,6 +38,8 @@ NUMERIC_POLICY = ('对 claim 和 boundary 中每一项数字（包括括号、�
     '明确区分原文实测值与可复算的精确算术/单位换算：有原文分子分母时可计算比例、两周可换算14天；'
     '必须说明推导且不能增加原文没有的测量精度或改变统计口径。概率值要同时核对事件与给定前提，不能把假设成立时观察到数据的概率写成假设成立的概率。')
 POLICY = '''按具体主张判断来源是否适用，不能仅凭域名、论文身份或用户上传就认定可靠。
+先区分原始发布者、当前托管页面与实际发言者。original_url是读取入口，read_url是实际读到的地址，url或bibliography.url可能是文献定位地址；metadata_provenance记录元数据出处，不是正文出处。identity_verified仅表示公开副本与文献身份匹配，不保证页面由原发布者运营或其中每句话都是原始结果。
+source_origin逐条区分primary原始研究/原始官方记录、secondary二手解读或转引、background背景资料、unassessed归属未确认。结合实际读取地址、页面署名、出版信息与元数据说明归属依据；相似标题、文风或域名不能证明官方身份，翻译/转载页不能直接称为官方原页，官方站点的论坛发言仍按实际作者和发言性质判断。无法确认时保留unassessed并说明缺口，不凭记忆补全归属。原始研究的已核对公开副本可以支持本研究结果；机构介绍另一研究仍为二手，系统综述自身的综合分析与其转述单项试验分开。
 待处理建议不阻止创作，但不能因此视为已核实。对 open/stale 或缺少支持的具体数字、机制断言，限定或省略；不要自动联网或将假设写成事实。遵守 bounded 的实际限定说法和 excluded 的弃用决定。保留文章的问题价值，核心方向无法成立时明确原因，不静默改题。
 科研和健康结论优先原始研究、系统综述、专业书籍和权威机构资料；技术实践和产品能力优先官方文档、原始研究、有明确作者与可核对依据的专业博客。
 维基百科可支持背景与概念梳理；关键数字、因果关系和争议性判断尽量追溯其参考文献中的原始出处。营销转载、无署名聚合页和搜索摘要只能作为发现线索，不能因重复出现而增加证据强度。
@@ -107,7 +109,7 @@ def excerpts(source, keywords, limit=12000):
 
 
 def sources(a, questions=(), total=65000, per_source=12000):
-    from .evidence_state import current_spans
+    from .evidence_state import current_spans,SOURCE_IDENTITY_FIELDS
     canonical='claims' in a.get('evidence',{})
     extra=current_spans(a) if canonical else list(a.get('research',{}).get('evidence',[]))
     selected=[]
@@ -129,7 +131,7 @@ def sources(a, questions=(), total=65000, per_source=12000):
         allowance=min(per_source,remaining,max(allowance,requested))
         chunks=excerpts(s,keywords,max(0,allowance)) if allowance else []
         remaining-=sum(len(c['text']) for c in chunks)
-        row={k:s.get(k) for k in ('id','title','url','kind','status','published_date','bibliography')}
+        row={k:s.get(k) for k in ('id','kind','status','published_date','bibliography')+SOURCE_IDENTITY_FIELDS}
         from .source_notebook import sections,pointers
         row.update(sections=sections(s),source_notes=s.get('notebook',{}).get('notes',[]),table_supplement_pointers=pointers(s),supplementary_material=s.get('supplementary_material',[]))
         row.update(text='\n\n[…原文中间部分未展示…]\n\n'.join(c['text'] for c in chunks),

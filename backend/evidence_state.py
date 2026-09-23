@@ -4,6 +4,8 @@ import hashlib
 import json
 import re
 
+SOURCE_IDENTITY_FIELDS=('title','url','original_url','read_url','access_scope','identity_verified','identity_status','metadata_provenance')
+
 
 def digest(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
@@ -15,7 +17,7 @@ def objective(a):
 
 
 def source_key(s):
-    return digest({k:s.get(k) for k in ('id','selected','text','use','personal_material','bibliography')})
+    return digest({k:s.get(k) for k in ('id','selected','text','use','personal_material','bibliography')+SOURCE_IDENTITY_FIELDS})
 
 
 def selected(a):
