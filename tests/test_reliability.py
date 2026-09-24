@@ -76,10 +76,12 @@ def test_unassessed_quote_is_not_support(client):
     assert evidence_state.merge_issues(a, notes)[0]['status'] == 'open'
 
 
-def test_article_limits_persist(client):
+def test_legacy_article_limits_can_be_read_without_affecting_execution(client):
     a = new(client); limits = dict(max_calls=33, max_pages=40, max_rounds=3)
-    a = patch(client, a, dict(research_limits=limits))
+    a = store.save_article(a['id'],a['revision'],lambda value:value.update(research_limits=limits),'fixture')
     assert client.get('/api/articles/' + a['id']).json()['research_limits'] == limits
+    job=store.create_job(a['id'],dict(stage='research',research_limits=dict(max_calls=1,max_pages=1,max_rounds=0)))
+    assert not any(key in research.Research(a,job['id'],'research').cfg for key in limits)
 
 
 def test_scoped_completion_and_cache_key(client):
@@ -262,10 +264,11 @@ def test_review_invalidates_on_evidence_and_decisions_not_presentation(client):
     review_state.present(a);assert a['stages']['review']=='stale'
 
 
-def test_limits_precedence_for_single_and_batch_verification(client,monkeypatch):
+def test_legacy_limits_do_not_propagate_to_verification(client,monkeypatch):
     from backend.models import IssueAction
     from backend import issue_actions
-    a=patch(client,seeded(client),dict(research_limits=dict(max_calls=33,max_pages=40,max_rounds=3)))
+    previous=seeded(client)
+    a=store.save_article(previous['id'],previous['revision'],lambda value:value.update(research_limits=dict(max_calls=33,max_pages=40,max_rounds=3)),'fixture')
     requests=[]
     def start(aid,request):requests.append(request);return None
     monkeypatch.setattr(workflow,'start',start)
@@ -273,10 +276,10 @@ def test_limits_precedence_for_single_and_batch_verification(client,monkeypatch)
         issue_actions.apply(a['id'],IssueAction(revision=a['revision'],action='verify',issue_ids=ids,action_id=str(ids)))
         job=store.create_job(a['id'],requests[-1].model_dump())
         worker=research.Research(a,job['id'],'research')
-        assert worker.cfg['max_calls']==33
+        assert not any(k in worker.cfg for k in ('max_calls','max_pages','max_rounds'))
         store.update_job(job['id'],status='completed')
     job=store.create_job(a['id'],dict(stage='research',research_limits=dict(max_calls=7,max_pages=8,max_rounds=1)))
-    assert research.Research(a,job['id'],'research').cfg['max_calls']==7
+    assert not any(k in research.Research(a,job['id'],'research').cfg for k in ('max_calls','max_pages','max_rounds'))
 
 
 def test_old_evidence_missing_assessment_is_only_marked_pending(client):

@@ -26,8 +26,8 @@ def safe_usage(value):
     return dict(input_tokens=number('input_tokens','prompt_tokens'),output_tokens=number('output_tokens','completion_tokens'))
 
 
-def search_result(s,rows,meta,limit,http_status,blocks,tool_calls):
-    """Persist safe counts/usage before evidence and limit validation."""
+def search_result(s,rows,meta,http_status,blocks,tool_calls):
+    """Persist safe counts/usage before validating real search evidence."""
     from .execution_budget import search_usage
     valid=[]
     for row in rows:
@@ -36,35 +36,36 @@ def search_result(s,rows,meta,limit,http_status,blocks,tool_calls):
             if url.scheme in ('http','https') and url.hostname and not url.username and not url.password:valid.append(row)
         except (ValueError,TypeError):continue
     rows=list({r['url']:r for r in valid}.values())
-    managed=s['protocol']=='gemini' or (s['protocol']=='anthropic' and providers.deepseek_official(s['base_url']))
     warnings=[]
-    if managed and s['protocol']=='anthropic':
-        warnings.append('DeepSeek 官方内部检索次数由服务端决定，无法提前严格限制；工作台按实际发出的 API 请求执行预算，内部检索可能产生额外费用。')
+    if s['protocol']=='anthropic' and providers.deepseek_official(s['base_url']):
+        warnings.append('DeepSeek 官方内部检索次数由服务端决定；实际检索可能产生额外费用。')
+    category=meta.get('failure_category')
+    partial=category=='output_truncated' and bool(meta['calls'] and rows and not meta.get('tool_errors'))
+    if partial:
+        warnings.append('搜索回复不完整；已取得的真实工具来源仅作线索，仍须读取原文核实。')
+        for row in rows:
+            row.update(content='',search_warning=warnings[-1],verification_required=True)
+        category=''
     usage=search_usage(s,meta)
     diagnostic=dict(request_count=1,tool_calls=tool_calls,result_blocks=blocks,source_count=len(rows),
         tool_id_fingerprints=meta.get('tool_id_fingerprints',[]),
-        provider_queries=meta['calls'] if s['protocol']=='gemini' else None,requested_limit=limit,
-        limit_status='provider_managed' if managed else 'exceeded' if meta['calls']>limit else 'within_limit',warnings=warnings,
+        provider_queries=len(set(meta.get('queries',[]))) if s['protocol']=='gemini' else None,warnings=warnings,partial=partial,
         request_sent=True,response_received=True,http_status=http_status,service=service_identity(s),usage=usage,
-        finish_reason=meta.get('finish_reason','unknown'),tool_errors=meta.get('tool_errors',[]),max_tokens=2000)
+        finish_reason=meta.get('finish_reason','unknown'),tool_errors=meta.get('tool_errors',[]),max_tokens=s.get('max_tokens',8000))
     meta['search_diagnostic']=diagnostic
     record_search(s,diagnostic)
-    category=meta.get('failure_category')
     if category:
-        message={'output_truncated':'搜索输出达到 2000 Token 上限而截断；已保留用量，本任务不重发该请求',
+        message={'output_truncated':'搜索回复达到当前服务的输出参数而截断，且未取得可用来源；本任务不重发该请求',
                  'search_incomplete':'搜索服务尚未完成本轮；已保留诊断，本任务不自动续发付费请求',
                  'refusal':'搜索服务拒绝了本次请求，已停止',
                  'rate_limit':'搜索工具返回限流；已保留诊断',
                  'search_unavailable':'搜索工具暂时不可用；已保留诊断',
                  'search_tool_error':'搜索工具返回错误；请查看错误码后调整配置'}[category]
         exc=bind(ServiceFailure(message,category=category,request_sent=True,response_received=True,http_status=http_status,
-            finish_reason=diagnostic['finish_reason'],provider_code=next(iter(diagnostic['tool_errors']),''),parameters={'max_tokens':2000}),s)
+            finish_reason=diagnostic['finish_reason'],provider_code=next(iter(diagnostic['tool_errors']),''),parameters={'max_tokens':diagnostic['max_tokens']}),s)
         exc.usage=usage
     elif not meta['calls'] or not rows:
         exc=SearchEvidenceMissing('接口已响应，但未取得真实搜索工具记录及有效来源；当前服务的联网接入未验证',usage)
-    elif not managed and meta['calls']>limit:
-        exc=bind(ServiceFailure(f'{s.get("name") or "当前服务"} 返回 {meta["calls"]} 次搜索工具调用，超过本次上限 {limit}；已保留诊断，本次调用未通过次数限制校验',category='search_limit_exceeded',request_sent=True,response_received=True,http_status=http_status),s)
-        exc.usage=usage
     else:return rows,meta
     exc.details.update(http_status=http_status,search_diagnostic=diagnostic)
     raise exc
@@ -76,17 +77,17 @@ def outcome(reason,errors=()):
     codes={'too_many_requests','unavailable','max_uses_exceeded','invalid_tool_input','query_too_long','request_too_large'}
     errors=list(dict.fromkeys(x if isinstance(x,str) and x in codes else 'unknown_tool_error' for x in errors))
     category=''
-    if reason in ('max_tokens','max_output_tokens','MAX_TOKENS'):category='output_truncated'
-    elif reason in ('refusal','SAFETY','RECITATION','BLOCKLIST','PROHIBITED_CONTENT','SPII'):category='refusal'
-    elif reason in ('pause_turn','incomplete','failed'):category='search_incomplete'
+    if reason in ('refusal','SAFETY','RECITATION','BLOCKLIST','PROHIBITED_CONTENT','SPII'):category='refusal'
     elif errors:
         category='rate_limit' if set(errors)=={'too_many_requests'} else 'search_unavailable' if set(errors)=={'unavailable'} else 'search_tool_error'
+    elif reason in ('max_tokens','max_output_tokens','MAX_TOKENS'):category='output_truncated'
+    elif reason in ('pause_turn','incomplete','failed'):category='search_incomplete'
     return dict(finish_reason=reason,tool_errors=errors,failure_category=category)
 
 
-async def native(s,query,limit=1):
+async def native(s,query):
     trace=dict(request_sent=False,response_received=False)
-    try:return await _native(s,query,limit,trace)
+    try:return await _native(s,query,trace)
     except BaseException as exc:
         if isinstance(exc,(TypeError,KeyError,AttributeError)):
             exc=bind(ServiceFailure('搜索接口响应结构异常；本次未通过联网验证',category='malformed_response',
@@ -98,8 +99,7 @@ async def native(s,query,limit=1):
         details=getattr(exc,'details',{})
         if hasattr(exc,'details'):exc.details['operation']='search'
         if 'search_diagnostic' not in details:
-            diagnostic=dict(request_count=int(trace['request_sent']),tool_calls=None,result_blocks=None,source_count=None,requested_limit=limit,
-                limit_status='unknown',warnings=[],service=service_identity(s),
+            diagnostic=dict(request_count=int(trace['request_sent']),tool_calls=None,result_blocks=None,source_count=None,warnings=[],service=service_identity(s),
                 request_sent=details.get('request_sent',trace['request_sent']),response_received=details.get('response_received',trace['response_received']),
                 http_status=details.get('http_status',trace.get('http_status')),usage=getattr(exc,'usage',None))
             record_search(s,diagnostic)
@@ -107,18 +107,18 @@ async def native(s,query,limit=1):
         raise exc
 
 
-async def _native(s,query,limit,trace):
-    if s['protocol']=='gemini': return await gemini(s,query,limit,trace)
+async def _native(s,query,trace):
+    if s['protocol']=='gemini': return await gemini(s,query,trace)
     if s['protocol']=='responses':
         path='responses'
         body={'model':s['model'],'input':'联网检索以下问题，优先原始来源，返回出处：'+query,
-              'tools':[{'type':'web_search'}],'tool_choice':'required','max_tool_calls':limit,
-              'include':['web_search_call.action.sources'],'max_output_tokens':2000,'stream':False}
+              'tools':[{'type':'web_search'}],'tool_choice':'required',
+              'include':['web_search_call.action.sources'],'max_output_tokens':s.get('max_tokens',8000),'stream':False}
     elif s['protocol']=='anthropic':
         path='messages'
-        body={'model':s['model'],'max_tokens':2000,'stream':False,
+        body={'model':s['model'],'max_tokens':s.get('max_tokens',8000),'stream':False,
               'messages':[{'role':'user','content':'请使用 web_search 搜索并列出来源：'+query}],
-              'tools':[{'type':'web_search_20250305','name':'web_search','max_uses':limit}]}
+              'tools':[{'type':'web_search_20250305','name':'web_search'}]}
     else: raise ValueError('当前文本协议未接入原生搜索；将使用其他检索渠道')
     started=time.monotonic()
     try:
@@ -182,10 +182,10 @@ async def _native(s,query,limit,trace):
     meta=dict(calls=len(used),seconds=round(time.monotonic()-started,2),usage=trace['usage'],**outcome(reason,errors))
     # Fingerprints allow comparing repeated IDs without storing arbitrary provider text.
     meta['tool_id_fingerprints']=sorted(hashlib.sha256(str(x).encode()).hexdigest()[:16] for x in used)
-    return search_result(s,rows,meta,limit,response.status_code,blocks,len(used))
+    return search_result(s,rows,meta,response.status_code,blocks,len(used))
 
 
-async def gemini(s,query,limit=1,trace=None):
+async def gemini(s,query,trace=None):
     trace=trace if trace is not None else {}
     # Use only the configured gateway. A relay credential must never be sent elsewhere.
     base=re.sub(r'/(?:v1|v1beta)/?$', '', s['base_url'].rstrip('/'))
@@ -196,7 +196,7 @@ async def gemini(s,query,limit=1,trace=None):
             trace['request_sent']=True
             r=await client.post(url,headers={'x-goog-api-key':s['secret'],'Authorization':'Bearer '+s['secret']},
                 json={'contents':[{'role':'user','parts':[{'text':'请使用 Google Search 检索并给出来源：'+query}]}],
-                      'tools':[{'google_search':{}}], 'generationConfig':{'maxOutputTokens':2000}})
+                      'tools':[{'google_search':{}}], 'generationConfig':{'maxOutputTokens':s.get('max_tokens',8000)}})
             trace.update(response_received=True,http_status=r.status_code)
             if r.status_code>=400: raise bind(http_failure(r.status_code,r.text,r.headers),s)
             data=r.json()
@@ -218,8 +218,8 @@ async def gemini(s,query,limit=1,trace=None):
     reasons=[c.get('finishReason') for c in data.get('candidates',[])]
     reason=next((x for x in reasons if x and x!='STOP'),next(iter(reasons),None))
     if data.get('promptFeedback',{}).get('blockReason'):reason='SAFETY'
-    return search_result(s,rows,dict(calls=len(set(queries)),queries=queries,seconds=round(time.monotonic()-started,2),
-        usage=trace['usage'],**outcome(reason)),limit,r.status_code,len(rows),None)
+    return search_result(s,rows,dict(calls=len(set(queries)) or int(bool(rows)),queries=queries,seconds=round(time.monotonic()-started,2),
+        usage=trace['usage'],**outcome(reason)),r.status_code,len(rows),None)
 
 
 _ncbi_last=0.0

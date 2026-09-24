@@ -20,7 +20,7 @@ def client(tmp_path,monkeypatch):
     with TestClient(app) as c:
         providers.save_settings(Settings.model_validate({'services':[{'id':'s','key':'fixture-secret','name':'Fixture','model':'text','protocol':'responses'}],
             'default_service':'s','routes':{'image':{'service_id':'s','model':'image'},'sources':{'service_id':'s','model':'analysis'}},
-            'search':{'native_service_id':'s','native_model':'search','pubmed_enabled':False,'academic_enabled':False,'max_rounds':1}}))
+            'search':{'native_service_id':'s','native_model':'search','pubmed_enabled':False,'academic_enabled':False}}))
         yield c
 
 
@@ -169,11 +169,13 @@ def test_image_test_uses_node_override_without_price(client,monkeypatch):
     assert cfg['route_capabilities']['image']['status']=='untested'
 
 
-def test_limits_and_cancel_preserve_original(client,network,monkeypatch):
+def test_legacy_limits_do_not_stop_search_or_read_and_cancel_preserves_original(client,network,monkeypatch):
     c=providers.settings();c['search'].update(max_calls=1,max_pages=1);providers.save_settings(Settings.model_validate(c))
     a=article(client);j=store.create_job(a['id'],{'stage':'research'});w=research.Research(a,j['id'],'sources')
-    w.search_model=None  # Exercise the free channel's call/page caps.
-    asyncio.run(w.discover(['q1','q2','q3']));assert w.calls==1 and w.pages==1
+    w.search_model=None;w.calls=1;w.pages=1
+    asyncio.run(w.channel('google','q1'))
+    asyncio.run(w.fetch('https://example.org/research'))
+    assert w.calls==2 and w.pages>1
     store.update_job(j['id'],status='completed')
     async def slow(*args,**kwargs):await asyncio.sleep(5)
     monkeypatch.setattr(providers,'generate',slow)

@@ -73,7 +73,6 @@ async def main(args):
     manifest=dict(metric_version=METRIC_VERSION,cases_sha256=hashlib.sha256(payload).hexdigest(),code_root=str(code),mode=args.mode,round=args.round,
                   code_sha256=hashlib.sha256(b''.join(p.read_bytes() for p in sorted((code/'backend').glob('*.py')))).hexdigest(),
                   timeout_seconds=args.timeout,
-                  search_limits={k:cfg['search'].get(k) for k in ('max_calls','max_pages','max_rounds')},
                   runner_sha256=hashlib.sha256(Path(__file__).read_bytes()+Path(__file__).with_name('benchmark_support.py').read_bytes()).hexdigest(),
                   concurrency=args.concurrency,**identity(cfg))
     manifest_once(output,manifest)

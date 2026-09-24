@@ -5,7 +5,6 @@ import httpx
 import pytest
 from backend import agent_transport, providers, store, capabilities, search_tools
 from backend.service_errors import ServiceFailure
-from backend.execution_budget import BudgetExceeded
 from tests.test_native_runtime import article, session
 
 
@@ -53,10 +52,10 @@ async def test_repeated_empty_response_stops_without_losing_original(monkeypatch
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize('failure',[ServiceFailure('HTTP failure',category='permission'),BudgetExceeded('cap'),asyncio.CancelledError()])
-async def test_search_never_swallows_service_budget_or_cancel(monkeypatch,failure):
+@pytest.mark.parametrize('failure',[ServiceFailure('HTTP failure',category='permission'),asyncio.CancelledError()])
+async def test_search_never_swallows_service_failure_or_cancel(monkeypatch,failure):
     s=session(article());s.search_config.update(enabled=True,allow_fallback=True,browser_enabled=True)
-    monkeypatch.setattr(providers,'effective_service',lambda *_:dict(protocol='gemini',model='synthetic'))
+    monkeypatch.setattr(providers,'effective_service',lambda *_:dict(protocol='gemini',model='synthetic',max_tokens=8000))
     monkeypatch.setattr(s,'reserve',lambda *args:(_ for _ in ()).throw(failure))
     from backend import browser_search
     called=[]
@@ -67,15 +66,15 @@ async def test_search_never_swallows_service_budget_or_cancel(monkeypatch,failur
 
 
 @pytest.mark.anyio
-async def test_tool_internal_budget_failure_ends_session_without_another_model_call(monkeypatch):
+async def test_tool_internal_service_failure_ends_session_without_another_model_call(monkeypatch):
     s=session(article());calls=[]
     monkeypatch.setattr(providers,'service_for',lambda *_:dict(model='synthetic',protocol='chat'))
     async def turn(*args):
         calls.append(True)
         return dict(wire=[],calls=[dict(id='search',name='WebSearch',arguments={'query':'test'})],text='',usage={})
-    async def limited(*args,**kwargs):raise BudgetExceeded('tool-internal budget exhausted')
+    async def limited(*args,**kwargs):raise ServiceFailure('tool-internal service failure',category='permission')
     monkeypatch.setattr(agent_transport,'turn',turn);monkeypatch.setattr(s,'search',limited)
-    with pytest.raises(BudgetExceeded):await s.run()
+    with pytest.raises(ServiceFailure):await s.run()
     assert len(calls)==1
 
 
@@ -87,13 +86,13 @@ def test_parameter_changes_invalidate_tools_capability():
 
 
 @pytest.mark.anyio
-async def test_correction_cannot_exceed_original_request_cap(monkeypatch):
-    s=session(article());s.limits['max_requests']=1;calls=[]
+async def test_tool_correction_is_metered_without_request_cap(monkeypatch):
+    s=session(article());calls=[]
     monkeypatch.setattr(providers,'service_for',lambda *_:dict(model='synthetic',protocol='chat'))
     async def empty(*args):calls.append(True);return dict(wire=[],calls=[],text='',usage={})
     monkeypatch.setattr(agent_transport,'turn',empty)
-    with pytest.raises(BudgetExceeded):await s.run()
-    assert len(calls)==1
+    with pytest.raises(ServiceFailure):await s.run()
+    assert len(calls)==2 and store.job(s.job_id)['execution_usage']['requests']==2
 
 
 @pytest.mark.anyio

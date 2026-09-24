@@ -3,7 +3,7 @@ import copy
 import json
 import pytest
 from backend import store,materials,source_reader,source_imports,academic,research,workflow,evidence_state,bounded
-from backend.models import IssueAction,JobRequest,ResearchLimits
+from backend.models import IssueAction,JobRequest
 from tests.test_studio import client,model,new,patch,run,wait,H
 from tests.test_creative_flow import seeded
 
@@ -133,20 +133,20 @@ def test_trash_restore_purge_and_active_task_guard(client):
     assert not folder.exists() and store.get_article(other['id'])
 
 
-def test_metadata_queries_do_not_spend_search_quota(client,monkeypatch):
+def test_metadata_queries_are_recorded_independently_of_search(client,monkeypatch):
     a=new(client);j=store.create_job(a['id'],dict(stage='research',revision=a['revision']))
-    worker=research.Research(a,j['id'],'research');worker.calls=worker.cfg['max_calls']
+    worker=research.Research(a,j['id'],'research');worker.calls=99
     async def read(url):
         source_reader.take('metadata');source_reader.take('pages');return materials.source('paper','text',url,'web')
     monkeypatch.setattr(materials,'from_url',read)
     asyncio.run(worker.fetch('https://example.org'))
-    assert worker.calls==worker.cfg['max_calls'] and worker.stats['metadata_requests']==1
+    assert worker.calls==99 and worker.stats['metadata_requests']==1
 
 
-def test_raised_limits_retain_execution_counters(client):
+def test_legacy_limits_are_ignored_but_execution_counters_resume(client):
     a=new(client);prior=store.create_job(a['id'],dict(stage='research',revision=a['revision']))
     store.update_job(prior['id'],status='completed',research=dict(calls=12,pages=8,rounds=1,stats=dict(search_requests=7,metadata_requests=5),log=[dict(query='already searched')]))
     j=store.create_job(a['id'],dict(stage='research',revision=a['revision'],research_parent_id=prior['id'],research_limits=dict(max_calls=20,max_pages=40,max_rounds=5)))
     worker=research.Research(a,j['id'],'research')
     assert worker.calls==7 and worker.pages==8 and worker.rounds==1 and research.digest(research.search_plan.query('already searched')) in worker.seen_queries
-    assert worker.cfg['max_calls']==20
+    assert not any(k in worker.cfg for k in ('max_calls','max_pages','max_rounds'))

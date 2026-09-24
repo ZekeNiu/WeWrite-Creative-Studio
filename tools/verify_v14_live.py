@@ -31,7 +31,7 @@ async def main(include_image=False):
         a=store.create_article({'column':'公开指南','domain':'公开机构资料','topic':'WHO physical activity guidelines adults 150 300 minutes'},diagnostic=True)
         j=store.create_job(a['id'],{'stage':'research','revision':0,'chain':False})
         w=research.Research(a,j['id'],'sources');w.search_model=s
-        w.cfg.update(max_calls=2,max_pages=4,max_rounds=0,academic_enabled=False,tavily_enabled=False,browser_enabled=False,page_render_enabled=False,allow_fallback=False)
+        w.cfg.update(academic_enabled=False,tavily_enabled=False,browser_enabled=False,page_render_enabled=False,allow_fallback=False)
         print('Starting live search: '+label,flush=True)
         try:
             await w.discover([a['brief']['topic']])

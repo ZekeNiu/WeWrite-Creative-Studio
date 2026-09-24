@@ -89,26 +89,28 @@ async def test_tool_continuation_and_conflict(monkeypatch):
             calls=[dict(id='f',name='Finish',arguments='{}')]
         return dict(wire=[dict(role='assistant',content=None,tool_calls=[dict(id=c['id'],type='function',function=dict(name=c['name'],arguments=c['arguments'])) for c in calls])],calls=calls,text='',usage=dict(status='completed',estimated_cost=None))
     monkeypatch.setattr(agent_transport,'turn',turn)
+    store.update_job(s.job_id,native_tool_count=120)
     packet=await s.run()
     assert packet['result']=='新稿。' and len(turns)==2
     assert store.job(s.job_id)['execution_usage']['requests']==2
+    assert store.job(s.job_id)['native_tool_count']==122
     current=store.save_article(a['id'],a['revision'],lambda v:v.update(content='人工修改'),'human')
     with pytest.raises(store.Conflict):native_workflow.apply(a,'write',packet,{})
     assert store.get_article(a['id'])['content']==current['content']
 
 
 @pytest.mark.anyio
-async def test_no_tools_never_falls_back_and_budget_blocks_before_request(monkeypatch):
+async def test_no_tools_never_falls_back_and_legacy_limits_do_not_block_reservation(monkeypatch):
     a=article();s=session(a)
     monkeypatch.setattr(providers,'service_for',lambda *_:dict(model='test',protocol='chat'))
     async def text_only(*args):return dict(wire=[],calls=[],text='假成稿',usage=dict(estimated_cost=None))
     monkeypatch.setattr(agent_transport,'turn',text_only)
     with pytest.raises(ValueError,match='工具'):await s.run()
     assert store.get_article(a['id'])['content']=='原始正文。'
-    s.limits={'max_requests':1}
-    with pytest.raises(ValueError,match='总请求'):s.reserve(dict(model='test'),'x')
-    other=session(article());other.limits={'max_cost':20}
-    with pytest.raises(ValueError,match='单价'):other.reserve(dict(model='test'),'x')
+    s.reserve(dict(model='test'),'x')
+    other=session(article());other.reserve(dict(model='test'),'x')
+    assert store.job(s.job_id)['execution_usage']['requests']>=2
+    assert store.job(other.job_id)['execution_usage']['requests']==1
 
 
 @pytest.mark.parametrize('protocol',['chat','responses','anthropic'])

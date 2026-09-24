@@ -36,7 +36,7 @@ def apply(id,value):
         if value.action=='verify':
             instruction='只核实以下问题；可解释的局限保留边界，不追求不存在的研究：\n'+'\n'.join(lookup[i]['text'] for i in value.issue_ids)
             request=JobRequest(stage='research',revision=a['revision'],instruction=instruction,issue_ids=value.issue_ids,
-                action_id=value.action_id,research_limits=value.research_limits,chain=False,continuation_job_id=original['id'] if original else '')
+                action_id=value.action_id,chain=False,continuation_job_id=original['id'] if original else '')
             return dict(article=a,job=workflow.start(id,request))
         def change(v):
             decisions=v.setdefault('research_decisions',{})

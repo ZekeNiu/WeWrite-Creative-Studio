@@ -17,7 +17,7 @@ def free_fallback(error,cfg):
 
 def record_fallback(job_id,error):
     from . import store
-    message='联网服务暂未完成，正在尝试免费后备搜索；本任务不重发失败请求，不追加其他付费搜索。已有未知费用仍保留，后续分析计入原任务预算。'
+    message='联网服务暂未完成，正在尝试免费后备搜索；本任务不重发失败请求，不追加其他付费搜索。已有未知费用仍保留，后续分析继续记录用量。'
     store.update_job(job_id,free_search_only=True)
     store.event(job_id,'search_fallback',message=message,category=error.details.get('category'),service=error.details.get('service'))
     diagnostic=store.job(job_id).get('search_diagnostic')

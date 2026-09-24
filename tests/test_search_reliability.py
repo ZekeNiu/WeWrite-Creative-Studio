@@ -99,7 +99,7 @@ def test_truncated_search_preserves_real_failure_category(setup, monkeypatch):
     _, svc, _ = setup
     async def send(self, request, *args, **kwargs):
         body = json.loads(request.content)
-        assert body['max_tokens'] == 2000  # Runtime ignores the configured 48000 for search.
+        assert body['max_tokens'] == 48000
         return httpx.Response(200, json=dict(stop_reason='max_tokens', content=[],
             usage=dict(input_tokens=10, output_tokens=2000)), request=request)
     monkeypatch.setattr(httpx.AsyncClient, 'send', send)
@@ -163,17 +163,17 @@ def test_research_transient_error_saves_counts_and_blocks_paid_search_for_job(se
     assert seen==['native'] and j['execution_usage']['requests']==1
 
 
-def test_empty_browser_advances_and_each_attempt_respects_search_limit(setup,monkeypatch):
-    _,_,s=setup;s.disabled.update(['native','tavily']);s.search_config['max_calls']=2;seen=[]
+def test_empty_browser_advances_through_all_enabled_engines(setup,monkeypatch):
+    _,_,s=setup;s.disabled.update(['native','tavily']);seen=[]
     async def empty(query,engine):seen.append(engine);return []
     monkeypatch.setattr(browser_search,'search',empty)
-    with pytest.raises(ValueError,match='搜索次数上限'):asyncio.run(s.search('q'))
-    assert seen==['google','bing']
-    assert store.job(s.job_id)['native_search_count']==2
+    with pytest.raises(ValueError,match='联网渠道未完成'):asyncio.run(s.search('q'))
+    assert seen==['google','bing','baidu','duckduckgo']
+    assert store.job(s.job_id)['native_search_count']==4
 
 
 @pytest.mark.parametrize('protocol,reason',[('anthropic','max_tokens'),('responses','max_output_tokens'),('gemini','MAX_TOKENS')])
-def test_truncation_never_passes_even_with_sources(setup,monkeypatch,protocol,reason):
+def test_truncation_preserves_verified_tool_sources_as_unread_clues(setup,monkeypatch,protocol,reason):
     _,svc,_=setup;svc=dict(svc,protocol=protocol)
     payload={
       'anthropic':dict(stop_reason=reason,content=[dict(type='server_tool_use',name='web_search',id='one'),
@@ -184,11 +184,11 @@ def test_truncation_never_passes_even_with_sources(setup,monkeypatch,protocol,re
     }[protocol]
     async def send(self,request,*args,**kwargs):return httpx.Response(200,json=payload,request=request)
     monkeypatch.setattr(httpx.AsyncClient,'send',send)
-    with pytest.raises(ServiceFailure) as caught:asyncio.run(search_tools.native(svc,'q'))
-    assert caught.value.details['category']=='output_truncated'
-    assert caught.value.details['operation']=='search'
-    d=caught.value.details['search_diagnostic']
-    assert d['source_count']==1 and d['finish_reason']==reason and d['max_tokens']==2000
+    rows,meta=asyncio.run(search_tools.native(svc,'q'))
+    d=meta['search_diagnostic']
+    assert len(rows)==1 and rows[0]['verification_required'] and rows[0]['content']==''
+    assert d['source_count']==1 and d['finish_reason']==reason and d['max_tokens']==48000
+    assert d['partial'] and any('回复不完整' in warning for warning in d['warnings'])
 
 
 def test_streamed_search_stop_reason_is_preserved(setup,monkeypatch):
@@ -201,6 +201,20 @@ def test_streamed_search_stop_reason_is_preserved(setup,monkeypatch):
     monkeypatch.setattr(httpx.AsyncClient,'send',send)
     with pytest.raises(ServiceFailure) as caught:asyncio.run(search_tools.native(svc,'q'))
     assert caught.value.details['category']=='output_truncated' and caught.value.usage['output_tokens']==2000
+
+
+def test_truncated_reply_with_tool_error_does_not_keep_sources(setup,monkeypatch):
+    _,svc,_=setup
+    payload=dict(stop_reason='max_tokens',content=[
+        dict(type='server_tool_use',name='web_search',id='good'),
+        dict(type='web_search_tool_result',tool_use_id='good',content=[dict(type='web_search_result',url='https://example.org')]),
+        dict(type='server_tool_use',name='web_search',id='bad'),
+        dict(type='web_search_tool_result',tool_use_id='bad',content=dict(error_code='unavailable'))])
+    async def send(self,request,*args,**kwargs):return httpx.Response(200,json=payload,request=request)
+    monkeypatch.setattr(httpx.AsyncClient,'send',send)
+    with pytest.raises(ServiceFailure) as caught:asyncio.run(search_tools.native(svc,'q'))
+    assert caught.value.details['category']=='search_unavailable'
+    assert not caught.value.details['search_diagnostic']['partial']
 
 
 def test_unknown_tool_error_is_not_reflected_or_automatically_recovered(setup,monkeypatch):

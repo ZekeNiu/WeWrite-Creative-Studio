@@ -149,7 +149,7 @@ class Service(BaseModel):
     output_price: float | None = Field(None, ge=0)
     image_price: float | None = Field(None, ge=0)
     currency: str = 'CNY'
-    max_tokens: int = Field(8000, ge=256, le=64000)
+    max_tokens: int = Field(8000, ge=1)
     temperature: float | None = Field(None, ge=0, le=2)
     status: str = 'untested'
     image_status: str = 'untested'
@@ -180,9 +180,6 @@ class SearchConfig(BaseModel):
     pubmed_enabled: bool = True
     tavily_enabled: bool = False
     tavily_price: float | None = Field(None, ge=0)
-    max_calls: int = Field(8, ge=1, le=100)
-    max_pages: int = Field(16, ge=1, le=500)
-    max_rounds: int = Field(2, ge=0, le=20)
 
     @model_validator(mode='before')
     @classmethod
@@ -400,18 +397,11 @@ class CapabilityTest(BaseModel):
     protocol: Literal['inherit', 'responses', 'anthropic', 'gemini'] | None = None
 
 
-class ExecutionLimits(BaseModel):
-    max_requests: int = Field(32,ge=1,le=200)
-    max_tools: int = Field(120,ge=1,le=1000)
-    max_cost: float | None = Field(None,gt=0)
-
-
 class Settings(BaseModel):
     services: list[Service] = []
     default_service: str = ''
     routes: dict[str, Route] = {}
     search: SearchConfig = SearchConfig()
-    execution: ExecutionLimits = ExecutionLimits()
     model_connections: list['ModelConnection'] = Field(default_factory=list)
     default_auto: dict[str, bool] = {s: False for s in STAGES}
 
@@ -421,12 +411,6 @@ class ArticlePatch(BaseModel):
     revision: int
     stage: str = 'setup'
     changes: dict
-
-
-class ResearchLimits(BaseModel):
-    max_calls: int = Field(ge=1,le=100)
-    max_pages: int = Field(ge=1,le=500)
-    max_rounds: int = Field(ge=0,le=20)
 
 
 class JobRequest(BaseModel):
@@ -441,9 +425,7 @@ class JobRequest(BaseModel):
     resume_job_id: str = ''
     action_id: str = ''
     continuation_job_id: str = ''
-    research_limits: ResearchLimits | None = None
     research_parent_id: str = ''
-    execution_limits: ExecutionLimits | None = None
 
 
 ApplicationState = Literal['applied','partial','pending','not_needed']
@@ -455,7 +437,6 @@ class IssueAction(BaseModel):
     action: Literal['verify','waive','bound','bound_auto','exclude','undo','attach']
     action_id: str = Field(min_length=1,max_length=80)
     wording: str = Field(default='', max_length=3000)
-    research_limits: ResearchLimits | None = None
 
 
 SCHEMAS = {'topic': TopicsResult, 'sources': EvidenceResult, 'outline': OutlineResult,

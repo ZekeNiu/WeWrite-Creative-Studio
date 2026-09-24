@@ -9,7 +9,7 @@ from backend.models import Settings
 from fastapi.staticfiles import StaticFiles
 
 store.init()
-providers.save_settings(Settings.model_validate(dict(services=[dict(id='offline',name='离线流程验收',model='fixture',key='offline-fixture')],default_service='offline',search={'enabled':True,'max_rounds':0,'academic_enabled':False})))
+providers.save_settings(Settings.model_validate(dict(services=[dict(id='offline',name='离线流程验收',model='fixture',key='offline-fixture')],default_service='offline',search={'enabled':True,'academic_enabled':False})))
 for route in app.routes:
     if getattr(route,'name','')=='frontend': route.app=StaticFiles(directory=store.ROOT/'output/sidebar-dist',html=True)
 

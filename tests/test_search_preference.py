@@ -140,7 +140,7 @@ def test_existing_material_sufficient_skips_all_search(client,network,routes,mon
     assert not routes and not network
 
 
-def test_migration_is_idempotent_and_preserves_limits_and_render_choice(client):
+def test_migration_is_idempotent_and_drops_legacy_limits(client):
     before=providers.settings();raw=store.get_settings()
     raw['search'].update(preference='browser',browser_enabled=False,max_calls=12,max_pages=32,max_rounds=4)
     raw['search'].pop('page_render_enabled',None);store.set_settings(raw)
@@ -148,7 +148,7 @@ def test_migration_is_idempotent_and_preserves_limits_and_render_choice(client):
     assert store.get_settings()==first
     assert first['services']==raw['services'] and first['routes']==before['routes']
     assert first['search']['preference']=='native' and not first['search']['page_render_enabled']
-    assert [first['search'][k] for k in ('max_calls','max_pages','max_rounds')]==[12,32,4]
+    assert not any(k in first['search'] for k in ('max_calls','max_pages','max_rounds'))
 
 
 def test_page_render_independent_of_search_engines(client,network,monkeypatch):

@@ -5,7 +5,7 @@ import pytest
 from backend import store,models,providers,execution_budget as budget,capabilities,agent_transport
 
 
-def test_provider_failure_and_format_retry_share_limit(monkeypatch):
+def test_provider_failures_are_metered_without_legacy_request_cap(monkeypatch):
     a=store.create_article();job=store.create_job(a['id'],dict(stage='research',execution_limits={'max_requests':2}))
     original=httpx.AsyncClient;requests=[]
     def respond(req):requests.append(req);return httpx.Response(500,json={'error':'temporary'})
@@ -16,23 +16,32 @@ def test_provider_failure_and_format_retry_share_limit(monkeypatch):
         try:
             for _ in range(2):
                 with pytest.raises(ValueError):await providers.generate(s,'system','prompt')
-            with pytest.raises(budget.BudgetExceeded):await providers.generate(s,'system','prompt')
+            with pytest.raises(ValueError):await providers.generate(s,'system','prompt')
         finally:budget.ACTIVE.reset(token)
     asyncio.run(run())
-    assert len(requests)==2 and len(store.usage(a['id']))==2
-    assert store.job(job['id'])['execution_usage']['unknown']==2
+    assert len(requests)==3 and len(store.usage(a['id']))==3
+    assert store.job(job['id'])['execution_usage']['unknown']==3
 
 
-def test_known_cost_reserved_across_pending_requests():
+def test_known_and_unknown_costs_are_recorded_without_legacy_cost_cap():
     a=store.create_article();job=store.create_job(a['id'],dict(stage='write',execution_limits={'max_cost':1}))
     service=dict(model='m',input_price=1,output_price=1)
     first=budget.reserve(job['id'],service,fixed=.6)
-    with pytest.raises(budget.BudgetExceeded):budget.reserve(job['id'],service,fixed=.6)
-    budget.charge(first,dict(status='completed',estimated_cost=.1))
     second=budget.reserve(job['id'],service,fixed=.6)
+    budget.charge(first,dict(status='completed',estimated_cost=.1))
     budget.charge(second,dict(status='unknown',estimated_cost=None))
-    with pytest.raises(budget.BudgetExceeded):budget.reserve(job['id'],service,fixed=.01)
-    assert store.job(job['id'])['execution_usage']['requests']==2
+    third=budget.reserve(job['id'],service,fixed=.01)
+    budget.charge(third,dict(status='completed',estimated_cost=.01))
+    meter=store.job(job['id'])['execution_usage']
+    assert meter['requests']==3 and meter['known_cost']==pytest.approx(.11) and meter['unknown']==1
+
+
+def test_old_32_request_counter_does_not_block_next_request():
+    a=store.create_article();job=store.create_job(a['id'],dict(stage='write',execution_limits={'max_requests':1}))
+    store.update_job(job['id'],execution_usage=dict(requests=32,known_cost=0,unknown=0,pending=0))
+    record=budget.reserve(job['id'],dict(model='m',name='mock'))
+    budget.charge(record,dict(status='unknown',estimated_cost=None))
+    assert store.job(job['id'])['execution_usage']['requests']==33
 
 
 @pytest.mark.parametrize('wrong',[False,True])

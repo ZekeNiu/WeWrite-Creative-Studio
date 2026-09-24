@@ -101,10 +101,9 @@ def job_view(j):
 def retry_request(job,revision):
     original=job.get('request') or {};stage=job['stage']
     request=dict(stage=stage,revision=revision,chain=original.get('chain',False))
-    if original.get('execution_limits'):request['execution_limits']=original['execution_limits']
     if stage=='image' and job.get('image_id'):request.update(image_id=job['image_id'],chain=False)
     if original.get('stage')==stage:
-        fields={'topic':('instruction',),'sources':('instruction',),'research':('instruction','research_limits','research_parent_id','issue_ids'),
+        fields={'topic':('instruction',),'sources':('instruction',),'research':('instruction','research_parent_id','issue_ids'),
                 'outline':('instruction','section_id'),'write':('instruction',),'review':('instruction',),
                 'revise':('instruction','selected_text'),'image':('image_id',),'visual':('instruction',),
                 'edit':('instruction',),'layout_advice':('instruction',)}.get(stage,())

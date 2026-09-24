@@ -60,7 +60,7 @@ def prerequisites(stage,a):
 def start(article_id,request):
     a=store.get_article(article_id)
     for existing in store.jobs(article_id):
-        if existing['status'] in ('queued','running') and all(existing['request'].get(k)==request.model_dump().get(k) for k in ('stage','revision','instruction','selected_text','section_id','image_id','issue_ids','chain','resume_job_id','continuation_job_id','research_limits','research_parent_id')):
+        if existing['status'] in ('queued','running') and all(existing['request'].get(k)==request.model_dump().get(k) for k in ('stage','revision','instruction','selected_text','section_id','image_id','issue_ids','chain','resume_job_id','continuation_job_id','research_parent_id')):
             return existing
     if request.research_parent_id:
         parent=store.job(request.research_parent_id)

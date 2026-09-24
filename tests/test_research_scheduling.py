@@ -1,13 +1,13 @@
-"""Assess a bounded collection batch without skipping evidence or page limits."""
+"""Assess collection batches without cumulative request or page limits."""
 import asyncio
 import pytest
 from backend import research
 from tests.test_quality_discovery import worker
 
 
-@pytest.mark.parametrize('call_limit,expected_reads',[(6,3),(2,2)])
-def test_questions_share_one_assessment_before_another_search_turn(monkeypatch,call_limit,expected_reads):
-    w=worker();w.cfg['max_calls']=call_limit;events=[];complete=False
+@pytest.mark.parametrize('legacy_limit',[6,2])
+def test_questions_share_one_assessment_before_another_search_turn(monkeypatch,legacy_limit):
+    w=worker();w.cfg['max_calls']=legacy_limit;events=[];complete=False
     monkeypatch.setattr(research.search_plan,'channels',lambda *args:['native','tavily'])
     monkeypatch.setattr(w,'sufficient',lambda:complete)
     async def channel(name,query):
@@ -19,20 +19,20 @@ def test_questions_share_one_assessment_before_another_search_turn(monkeypatch,c
         events.append(('assess',w.pages));complete=True
     monkeypatch.setattr(w,'channel',channel);monkeypatch.setattr(w,'collect',collect);monkeypatch.setattr(w,'assess',assess)
     asyncio.run(w.discover(['one','two','three']))
-    assert [event for event in events if event[0]=='assess']==[('assess',expected_reads)]
-    assert w.calls==expected_reads and events[-1][0]=='assess'
+    assert [event for event in events if event[0]=='assess']==[('assess',3)]
+    assert w.calls==3 and events[-1][0]=='assess'
 
 
-@pytest.mark.parametrize('page_limit,expected_checks,remaining',[(5,[2,4,5],0),(3,[2,3],2)])
-def test_deferred_reads_assess_in_pairs_and_respect_page_limit(monkeypatch,page_limit,expected_checks,remaining):
-    w=worker();w.cfg['max_pages']=page_limit;checks=[]
+@pytest.mark.parametrize('legacy_limit',[5,3])
+def test_deferred_reads_assess_in_pairs_without_legacy_page_cap(monkeypatch,legacy_limit):
+    w=worker();w.cfg['max_pages']=legacy_limit;checks=[]
     w.deferred=[dict(title=str(i),url=f'https://example.org/{i}') for i in range(5)]
     async def collect(*args,**kwargs):w.pages+=1;return 1
     async def assess():checks.append(w.pages)
     monkeypatch.setattr(w,'collect',collect);monkeypatch.setattr(w,'assess',assess)
     monkeypatch.setattr(w,'sufficient',lambda:False)
     asyncio.run(w.drain_candidates())
-    assert checks==expected_checks and len(w.deferred)==remaining
+    assert checks==[2,4,5] and not w.deferred
 
 
 def test_cancel_during_collection_never_starts_assessment(monkeypatch):

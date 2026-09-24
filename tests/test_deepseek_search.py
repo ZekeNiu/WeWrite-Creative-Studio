@@ -53,6 +53,18 @@ def test_official_model_directory_real_request_path(monkeypatch):
     assert str(seen[0].url)=='https://api.deepseek.com/v1/models'
 
 
+def test_72000_token_setting_saves_and_reaches_search_interface(client,monkeypatch):
+    cfg=client.get('/api/settings').json()
+    cfg['services'][0].update(protocol='anthropic',max_tokens=72000,base_url='https://api.deepseek.com/anthropic')
+    cfg['search'].update(native_protocol='anthropic')
+    saved=client.put('/api/settings',headers=H,json=cfg)
+    assert saved.status_code==200,saved.text
+    assert saved.json()['services'][0]['max_tokens']==72000
+    seen=network(monkeypatch,response())
+    rows,_=asyncio.run(search_tools.native(providers.effective_service('search'),'q'))
+    assert rows and json.loads(seen[0].content)['max_tokens']==72000
+
+
 def test_duplicate_results_are_one_tool_call(monkeypatch):
     network(monkeypatch,response(repeats=2))
     rows,meta=asyncio.run(search_tools.native(service('https://relay.example'),'q'))
@@ -67,20 +79,17 @@ def test_official_multiple_searches_keep_sources_usage_and_diagnostic(monkeypatc
     rows,meta=asyncio.run(search_tools.native(dict(service(),_job_id=job['id']),'q'))
     assert len(seen)==1 and len(rows)==2 and meta['calls']==2
     d=meta['search_diagnostic']
-    assert d['limit_status']=='provider_managed' and d['requested_limit']==1 and d['warnings']
+    assert 'requested_limit' not in d and 'limit_status' not in d and d['warnings']
     assert store.job(job['id'])['search_diagnostic']==d
     assert d['usage']['input_tokens']==100 and 'fixture-secret' not in json.dumps(d)
 
 
-def test_other_service_still_stops_but_keeps_known_usage(monkeypatch):
+def test_other_service_accepts_multiple_real_results_and_keeps_usage(monkeypatch):
     network(monkeypatch,response(('one','two')))
-    with pytest.raises(ServiceFailure) as caught:
-        asyncio.run(search_tools.native(service('https://relay.example'),'q'))
-    exc=caught.value
-    assert exc.details['category']=='search_limit_exceeded'
-    assert exc.details['search_diagnostic']['tool_calls']==2
-    assert exc.usage['input_tokens']==100 and exc.usage['estimated_cost']>0
-    assert '中转站' not in str(exc) and '已停止使用该渠道' not in str(exc)
+    rows,meta=asyncio.run(search_tools.native(service('https://relay.example'),'q'))
+    assert len(rows)==2 and meta['search_diagnostic']['tool_calls']==2
+    assert meta['search_diagnostic']['usage']['input_tokens']==100
+    assert meta['search_diagnostic']['usage']['estimated_cost']>0
 
 
 def test_missing_sources_preserves_diagnostic_before_validation(monkeypatch):
@@ -118,7 +127,7 @@ def test_capability_accepts_internal_searches_without_changing_routes(client,mon
     r=client.post('/api/services/s/capability-tests',headers=H,json={'model':'deepseek-flash','kind':'search','protocol':'anthropic'})
     assert r.status_code==200,r.text
     value=r.json()
-    assert value['status']=='tested' and value['search_diagnostic']['tool_calls']==2 and value['test_version']=='2.3.4'
+    assert value['status']=='tested' and value['search_diagnostic']['tool_calls']==2 and value['test_version']=='2.3.5'
     assert len(seen)==1 and len(value['sources'])==2
     after=providers.settings()
     assert before['routes']==after['routes'] and before['search']==after['search'] and before['services']==after['services']
@@ -168,19 +177,17 @@ def test_streamed_duplicate_blocks_keep_counts_and_usage(monkeypatch):
     assert meta['usage']=={'input_tokens':100,'output_tokens':20}
 
 
-def test_task_uses_one_request_for_multiple_internal_searches(monkeypatch):
-    from backend.execution_budget import BudgetExceeded
+def test_task_records_each_request_without_legacy_cap(monkeypatch):
     from tests.test_native_runtime import session,article
     s=session(article());s.search_config.update(enabled=True,allow_fallback=False)
-    s.limits['max_requests']=1
     monkeypatch.setattr(providers,'effective_service',lambda *_:service())
     seen=network(monkeypatch,response(('one','two')))
     rows=asyncio.run(s.search('synthetic'))
     job=store.job(s.job_id)
     assert len(seen)==1 and len(rows)==2 and job['execution_usage']['requests']==1
     assert job['search_diagnostic']['tool_calls']==2
-    with pytest.raises(BudgetExceeded):asyncio.run(s.search('second'))
-    assert len(seen)==1
+    assert asyncio.run(s.search('second'))
+    assert len(seen)==2 and store.job(s.job_id)['execution_usage']['requests']==2
 
 
 def test_missing_prices_never_become_zero_cost(monkeypatch):

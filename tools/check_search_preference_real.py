@@ -14,7 +14,7 @@ async def main():
     a=store.create_article({'column':'运动健康','topic':'WHO physical activity adults 150 300 minutes original guideline'},diagnostic=True)
     j=store.create_job(a['id'],dict(stage='research',revision=0,chain=False,kind='preference_acceptance'))
     w=research.Research(a,j['id'],'sources');w.target=1;w.search_model=native
-    w.cfg.update(preference='native',allow_fallback=True,max_calls=min(8,w.cfg['max_calls']),max_pages=min(16,w.cfg['max_pages']))
+    w.cfg.update(preference='native',allow_fallback=True)
     store.update_job(j['id'],status='running');print('Live preferred-model check started: '+j['id'],flush=True)
     try:
         await w.discover([a['brief']['topic']])

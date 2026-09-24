@@ -67,8 +67,6 @@ async def run(job_id):
     job = store.job(job_id)
     a = store.get_article(job['article_id'])
     w = research.Research(a, job_id, 'sources')
-    w.cfg['max_calls'] = min(w.cfg['max_calls'], 8)
-    w.cfg['max_pages'] = min(w.cfg['max_pages'], 16)
     if job['request'].get('without_tavily'):
         w.cfg['tavily_enabled'] = False
     store.update_job(job_id, status='running')

@@ -34,10 +34,9 @@ export function effectiveService(cfg:Settings,stage:string){
 }
 export function StageService({cfg,stage,onSettings}:{cfg:Settings;stage:Stage;onSettings:(stage:string)=>void}){
  if(stage==='layout')return <p className="stage-service">排版预览随保存自动更新</p>;
- return <>{[stage==='sources'?'research':stage,'search'].map(key=>{
-  const {service,model,origin}=effectiveService(cfg,key),label=key==='search'?'联网搜索':key==='research'?'规划与整理':LABELS[key];
-  const analysis=key==='research'?effectiveService(cfg,'sources'):null;
-  return <div className="stage-service" key={key}><span className="service-name">{label}：{key==='search'&&!cfg.search.enabled?'已关闭':service?`${service.name} · ${model||'未填写模型'}`:'尚未配置模型服务'} </span><details className="service-origin"><summary>配置来源</summary><p>{origin}</p>{analysis&&<p>素材分析：{analysis.service?.name||'未配置'} · {analysis.model}</p>}</details><button className="text-button" onClick={()=>onSettings(key)}>调整{label}服务</button></div>;
+ return <>{(stage==='sources'?['sources','research','search']:[stage,'search']).map(key=>{
+  const {service,model,origin}=effectiveService(cfg,key),label=key==='search'?'联网搜索':key==='research'?'检索规划与整理':key==='sources'?'素材分析':LABELS[key];
+  return <div className="stage-service" key={key}><span className="service-name">{label}：{key==='search'&&!cfg.search.enabled?'已关闭':service?`${service.name} · ${model||'未填写模型'}`:'尚未配置模型服务'} </span><details className="service-origin"><summary>配置来源</summary><p>{origin}</p></details><button className="text-button" onClick={()=>onSettings(key)}>调整{label}服务</button></div>;
  })}</>;
 }
 export default function TaskStatus({job,step,busy,onRetry,onSettings,navigate,onCancel}:{job:Job;step:Stage;busy:boolean;onRetry:(j:Job)=>void;onSettings:(stage:string)=>void;navigate:(stage:Stage)=>void;onCancel:()=>void}){
@@ -60,7 +59,7 @@ export default function TaskStatus({job,step,busy,onRetry,onSettings,navigate,on
  {failed&&<><div className="row wrap">{job.stage==='bound'?<span>请回到对应建议重新选择处理方式。</span>:<button className="button secondary" disabled={busy||wait>0} onClick={()=>onRetry(job)}>{wait?`${wait} 秒后可重新运行`:`重新运行${LABELS[job.stage]}`}</button>}{job.stage!=='bound'&&<button className="text-button" disabled={busy} onClick={()=>onSettings(searchFailure?'search':job.stage==='edit'?'review':job.stage)}>调整{searchFailure?'联网搜索':LABELS[job.stage]}服务</button>}</div>
  <p className="muted">重新运行会创建新任务，可能再次计费；保留的文件不表示可从中断处续跑。</p>
  <details><summary>查看错误详情</summary>{job.failure?<><FailureDetails value={job.failure}/>{!job.failure.parameters&&<ResponseDetails value={job.response_diagnostic}/>}</>:<p>历史记录未保存具体原因。</p>}</details></>}
- {!!job.tool_corrections&&<p className="muted">已尝试 {job.tool_corrections} 次工具调用纠正，请求仍计入原上限。</p>}{job.partial&&!active&&<details><summary>查看已保留的生成结果</summary><pre className="partial-result">{job.partial}</pre></details>}
+ {!!job.tool_corrections&&<p className="muted">已尝试 {job.tool_corrections} 次工具调用纠正。</p>}{job.partial&&!active&&<details><summary>查看已保留的生成结果</summary><pre className="partial-result">{job.partial}</pre></details>}
  </section>}
  <SearchDetails value={job.search_diagnostic||job.failure?.search_diagnostic}/>
  </>;

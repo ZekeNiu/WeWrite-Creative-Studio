@@ -5,30 +5,14 @@ from . import store
 ACTIVE=ContextVar('paid_request_job',default=None)
 
 
-class BudgetExceeded(ValueError):
-    _metered=True  # No HTTP request was sent; callers must not log a charge.
-
-    def __init__(self,message):
-        super().__init__(message)
-        self.details=dict(category='budget_exceeded',request_sent=False,response_received=False)
-
-
-def reserve(job_id,service,payload='',output=None,extra=0,fixed=None,execution_id=None,limits_override=None):
-    from .models import Settings
+def reserve(job_id,service,payload='',output=None,extra=0,fixed=None,execution_id=None):
     with store.LOCK:
         job=store.job(job_id)
-        limits={**Settings.model_validate(store.get_settings() or {}).execution.model_dump(),**(job['request'].get('execution_limits') or {})}
-        if limits_override:limits.update(limits_override)
         meter=job.get('execution_usage',dict(requests=0,known_cost=0,unknown=0,pending=0))
         meter.setdefault('pending',0)
-        if meter['requests']>=limits['max_requests']:raise BudgetExceeded('已达到本次总请求上限；任务文件已保留')
         estimate=fixed
         if estimate is None and extra is not None and all(service.get(k) is not None for k in ('input_price','output_price')):
             estimate=(len(payload.encode('utf-8'))*service['input_price']+(output or service.get('max_tokens',8000))*service['output_price'])/1_000_000+extra
-        maximum=limits.get('max_cost')
-        if maximum is not None:
-            if service.get('currency','CNY')!='CNY' or estimate is None:raise BudgetExceeded('金额上限需要已知人民币单价；未发出请求')
-            if meter['unknown'] or meter['known_cost']+meter['pending']+estimate>maximum:raise BudgetExceeded('余额不足以覆盖下一请求，或已有未知费用；任务已保留')
         meter['requests']+=1;meter['pending']+=estimate or 0
         store.update_job(job_id,execution_usage=meter)
         return store.add_usage(job['article_id'],stage=job['stage'],job_id=job_id,execution_id=execution_id,

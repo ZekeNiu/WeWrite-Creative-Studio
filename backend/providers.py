@@ -42,7 +42,7 @@ CAPABILITY_VERSION='2.3.2'
 
 
 def capability_version(kind):
-    return '2.3.4' if kind=='search' else CAPABILITY_VERSION
+    return '2.3.5' if kind=='search' else CAPABILITY_VERSION
 
 
 def tool_choice(s):
@@ -55,7 +55,7 @@ def tool_choice(s):
 
 def test_parameters(s,kind):
     if kind=='image':return dict(size='1024x1024')
-    return dict(max_tokens=256 if kind=='text' else 2000 if kind=='search' else s.get('max_tokens',8000),
+    return dict(max_tokens=256 if kind=='text' else s.get('max_tokens',8000),
                 temperature=s.get('temperature') if kind!='search' else None,
                 **({'tool_choice':tool_choice(s)+' → auto'} if kind=='tools' else {}))
 

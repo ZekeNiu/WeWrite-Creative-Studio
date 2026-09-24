@@ -20,7 +20,7 @@ def progress(message):
 def take(kind):
     budget=READ_BUDGET.get()
     if budget is None: return
-    if budget[kind]>=budget['max_'+kind]: raise ValueError('已达到本次读取或文献信息查询上限')
+    if kind=='pages' and not budget.get('allow_pages',True):raise ValueError('此阶段不读取网页正文')
     budget[kind]+=1
 
 
@@ -199,7 +199,7 @@ async def read_work(url,hint=None):
                     if academic.same(row,identity) and not academic.distinct_versions(row,identity): copies.extend(row.get('fulltext_urls',[]))
             except ValueError:
                 pass
-            for address in list(dict.fromkeys(copies))[:3]:
+            for address in dict.fromkeys(copies):
                 if direct and direct.get('read_url')==address: continue
                 try:
                     progress('正在读取公开全文副本');take('pages')

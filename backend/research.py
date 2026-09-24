@@ -240,8 +240,6 @@ class Research:
     def __init__(self,a,job_id,stage):
         self.a=a;self.job_id=job_id;self.stage=stage;self.cfg=dict(providers.settings()['search'])
         job=store.job(job_id);prior=job.get('research',{})
-        self.cfg.update(a.get('research_limits') or {})
-        self.cfg.update(job.get('request',{}).get('research_limits') or {})
         resume=job.get('request',{}).get('research_parent_id') or job.get('request',{}).get('resume_job_id')
         if not prior and resume: prior=store.job(resume).get('research',{})
         self.calls=prior.get('stats',{}).get('search_requests',prior.get('calls',0));self.pages=prior.get('pages',0);self.rounds=prior.get('rounds',0)
@@ -291,7 +289,7 @@ class Research:
             'log':self.log,'blocked_urls':self.blocked,'sources':self.added,'notes':self.notes,'telemetry':self.telemetry,'strategy':self.strategy(),
             'stats':self.stats,'plan':self.plan,'coverage':self.coverage,'stop_reason':self.stop_reason,'stop_code':self.stop_code,'candidates':list(self.candidates.values()),
             'query_ledger':self.query_ledger,'deferred_candidates':self.deferred,'disabled_channels':sorted(self.disabled),'citation_expanded':sorted(self.citation_expanded),
-            'free_search_only':self.free_search_only,'limits':{k:self.cfg[k] for k in ('max_calls','max_pages','max_rounds')}})
+            'free_search_only':self.free_search_only})
         store.event(self.job_id,'research',message=message,calls=self.calls,pages=self.pages)
 
     def strategy(self):
@@ -314,8 +312,8 @@ class Research:
         return search_policy.web_order(self.cfg)
 
     async def channel(self,channel,query):
-        self.channel_status[channel]='unavailable' if channel in self.disabled else 'budget_exhausted'
-        if channel in self.disabled or self.calls>=self.cfg['max_calls'] or self.free_search_only and channel in ('native','tavily'): return []
+        self.channel_status[channel]='unavailable'
+        if channel in self.disabled or self.free_search_only and channel in ('native','tavily'): return []
         s=self.search_model
         if channel=='native':
             if not s or s['protocol']=='chat': return []
@@ -335,7 +333,7 @@ class Research:
         if channel not in self.attempted: self.attempted.append(channel)
         from . import execution_budget
         paid=channel in ('native','tavily')
-        record=execution_budget.reserve(self.job_id,s,query,2000,price) if channel=='native' else execution_budget.reserve(self.job_id,dict(model='tavily',name='tavily'),fixed=price) if paid else store.add_usage(self.a['id'],stage='search',job_id=self.job_id,model=channel,service=channel,reserved_cost=price,estimated_cost=None,currency='CNY',status='reserved')
+        record=execution_budget.reserve(self.job_id,s,query,s['max_tokens'],price) if channel=='native' else execution_budget.reserve(self.job_id,dict(model='tavily',name='tavily'),fixed=price) if paid else store.add_usage(self.a['id'],stage='search',job_id=self.job_id,model=channel,service=channel,reserved_cost=price,estimated_cost=None,currency='CNY',status='reserved')
         if paid:store.update_usage(record['id'],stage='search')
         self.calls+=1;self.stats['search_requests']+=1
         self.update('正在使用 '+CHANNEL_NAMES.get(channel,channel)+' 查找资料',channel=channel,query=query)
@@ -345,7 +343,7 @@ class Research:
         started=time.monotonic()
         try:
             if channel=='native':
-                rows,meta=await search_tools.native(dict(s,_job_id=self.job_id),query,1)
+                rows,meta=await search_tools.native(dict(s,_job_id=self.job_id),query)
                 self.stats['provider_queries']+=meta['calls']
                 self.update('供应商已执行内部子查询',channel=channel,provider_queries=meta.get('queries',[]),provider_query_count=meta['calls'])
                 if rows: store.capability(providers.fingerprint(s,'search'),dict(status='tested',sources=rows,queries=meta.get('queries',[]),protocol=s['protocol'],test_version=providers.capability_version('search'),search_diagnostic=meta.get('search_diagnostic'),message='实际任务已取得联网工具记录'))
@@ -371,7 +369,6 @@ class Research:
             charged(**(getattr(exc,'usage',None) or dict(status='unknown',estimated_cost=0 if not paid and price==0 else None,seconds=round(time.monotonic()-started,2))))
             from .service_errors import ServiceFailure
             if hasattr(exc,'details') and paid:exc.details['operation']='search'
-            if isinstance(exc,execution_budget.BudgetExceeded):raise
             if isinstance(exc,ServiceFailure):
                 if not search_policy.free_fallback(exc,self.cfg):raise
                 self.free_search_only=True
@@ -388,8 +385,7 @@ class Research:
 
     async def fetch(self,url):
         from .source_reader import READ_BUDGET,READ_PROGRESS
-        budget=dict(pages=0,metadata=0,max_pages=self.cfg['max_pages']-self.pages,max_metadata=12)
-        if budget['max_pages']<=0: raise ValueError('已达到页面读取上限')
+        budget=dict(pages=0,metadata=0)
         token=READ_BUDGET.set(budget)
         progress_token=READ_PROGRESS.set(lambda message:self.update(message))
         try: return await materials.from_url(url)
@@ -401,7 +397,6 @@ class Research:
             self.stats['metadata_requests']+=budget['metadata']
 
     async def fetch_dynamic(self,url):
-        if self.pages>=self.cfg['max_pages']: raise ValueError('已达到页面读取上限')
         self.pages+=1;self.stats['page_attempts']+=1
         return await browser_search.read(url)
 
@@ -425,7 +420,6 @@ class Research:
             self.stats['page_cache_hits']+=1
             src=dict(cached,id='S'+store.uid()[:10])
         else:
-            if self.pages>=self.cfg['max_pages']:self.read_status='budget_exhausted';return None
             self.update('正在读取：'+r.get('title',url))
             if r.get('academic') and r.get('provider')!='pubmed_fulltext':
                 src=materials.source(r['title'],r.get('content',''),url,'search');src['status']='abstract_only' if src['text'] else 'metadata_only'
@@ -434,8 +428,7 @@ class Research:
                     if 'arxiv.org/html/' in u: return 1
                     if '.pdf' in u.lower() or '/pdf/' in u or '/download/' in u: return 2
                     return 3
-                for fullurl in sorted(dict.fromkeys(r.get('fulltext_urls',[])+[url]),key=priority)[:3]:
-                    if self.pages>=self.cfg['max_pages']: break
+                for fullurl in sorted(dict.fromkeys(r.get('fulltext_urls',[])+[url]),key=priority):
                     if not await browser_search.public_url(fullurl): continue
                     pagekey='page:v4:'+digest(canonical(fullurl));full=store.cache_get(pagekey)
                     if full: self.stats['page_cache_hits']+=1
@@ -689,7 +682,7 @@ class Research:
                                 and all(x['complete_read'] for x in r['answer_scope']['source_lists']) for r in checked_rows)
         unbound_issue=research_contract.sufficient(self.coverage) and bool(self.open_targets())
         if repair_round<1 and (rejected_core or unmatched_core or incomplete_read_list or unbound_issue or repair_targets(self.a,self.coverage)):
-            # Local correction keeps the same materials, search and read limits.
+            # Local correction keeps the same materials and search/read history.
             self.update('正在根据独立核查结果修正关键表述',repair_round=repair_round+1)
             self.notes_key=None
             # A faulty audit quotation can be corrected without changing the
@@ -752,13 +745,6 @@ class Research:
             collected=False
             for item,channels,entry in tasks:
                 if turn>=len(channels):continue
-                if self.calls>=self.cfg['max_calls'] or self.pages>=self.cfg['max_pages']:
-                    for _,_,pending in tasks:
-                        if pending['status'] not in ('covered','exhausted'):pending['status']='budget_exhausted'
-                    self.read_limit=None
-                    if collected:await self.assess()
-                    await self.drain_candidates()
-                    return
                 channel=channels[turn];group=channel if channel in ('native','tavily') else 'browser' if channel in WEB_GROUPS['browser'] else None
                 if group and self.unavailable(group):
                     reason=self.unavailable(group)
@@ -797,7 +783,7 @@ class Research:
         if rows and not selected:
             from . import discovery_identity
             from .source_reader import READ_BUDGET
-            budget=dict(metadata=0,max_metadata=max(0,self.cfg['max_calls']*12-self.stats['metadata_requests']),pages=0,max_pages=0)
+            budget=dict(metadata=0,pages=0,allow_pages=False)
             token=READ_BUDGET.set(budget)
             try:
                 self.update('正在解析搜索链接并核对文献身份',channel=channel,candidate_count=len(rows))
@@ -853,10 +839,10 @@ class Research:
         return readable
 
     async def drain_candidates(self):
-        # Read deferred selections even when search calls are exhausted; page budget is separate.
-        while self.deferred and self.pages<self.cfg['max_pages'] and not self.sufficient():
+        # Read deferred selections after the current search turn.
+        while self.deferred and not self.sufficient():
             for _ in range(2):
-                if not self.deferred or self.pages>=self.cfg['max_pages']:break
+                if not self.deferred:break
                 row=self.deferred.pop(0)
                 self.query_readable=set()
                 await self.collect([row],row.get('query',''),row.get('provider',''),selected=True)
@@ -869,12 +855,11 @@ class Research:
         parents=[s for s in self.a['sources'] if s.get('selected') and (doi(s) or s.get('openalex_id')) and s.get('citation_depth',0)<2 and s['id'] not in self.citation_expanded]
         parents.sort(key=lambda s:-sum(2 if e.get('core_claim') else 1 for e in self.notes.get('evidence',[]) if e['source_id']==s['id'] and e.get('quality')!='insufficient'))
         collected=False
-        for src in parents[:2]:
-            if self.calls>=self.cfg['max_calls'] or self.pages>=self.cfg['max_pages'] or self.sufficient():break
+        for src in parents:
+            if self.sufficient():break
             self.citation_expanded.add(src['id'])
             self.update('围绕未解决问题追踪参考文献与后续研究',source_id=src['id'])
             async def request(channel,url,params):
-                if self.calls>=self.cfg['max_calls']:raise ValueError('检索预算已用尽')
                 self.calls+=1;self.stats['metadata_requests']+=1;self.stats['search_requests']+=1
                 self.update('查询文献关系',channel=channel,query=str(params or url),purpose='citation_graph')
                 return await academic.request(channel,url,params)
@@ -908,8 +893,7 @@ class Research:
         self.a['research_contract']['requires_primary']=self.a['research_contract'].get('requires_primary',False) or self.academic_needed
         research_contract.anchor_requirements(self.a,plan.get('required_evidence',[]))
         # Explicit identifiers are metadata lookups, before broader topical discovery.
-        for target in self.a['research_contract'].get('source_targets',[])[:8]:
-            if self.pages>=self.cfg['max_pages']:break
+        for target in self.a['research_contract'].get('source_targets',[]):
             if any(research_contract.target_matches(s,target) and s.get('status')=='retrieved' for s in self.a['sources']):continue
             self.stats['metadata_requests']+=1
             self.update('正在精确定位用户指定文献',query=target['value'],channel='crossref' if target['kind']=='doi' else 'arxiv')
@@ -932,13 +916,12 @@ class Research:
             if untried:
                 await self.discover(untried)
                 if before==self.progress_key(): self.stop_code='no_progress';self.stop_reason='本轮未新增有效材料或解决问题；请补充指定原文或调整问题范围。'
-        for round_index in range(self.cfg['max_rounds']+1):
+        while True:
             await self.assess()
             if not self.sufficient():await self.trace_citations()
             if self.sufficient() or self.stop_reason: break
-            if self.rounds>=self.cfg['max_rounds'] or self.calls>=self.cfg['max_calls'] or self.pages>=self.cfg['max_pages']: break
             queries=[q for q in self.notes['followup_queries'] if digest(search_plan.query(q)) not in self.seen_queries]
-            if not queries and self.open_targets() and self.rounds<self.cfg['max_rounds']:
+            if not queries and self.open_targets():
                 targeted=await structured(self.a,self.stage,'仅针对这些尚未处理的核心证据缺口生成定向查询，不补查一般局限：'+json.dumps([x['text'] for x in self.open_targets()],ensure_ascii=False),ResearchPlan,self.job_id)
                 queries=[q for q in targeted['queries'] if digest(search_plan.query(q)) not in self.seen_queries]
             if not queries:
@@ -958,12 +941,6 @@ class Research:
                 src['summary']=evidence_state.span_summary(src['evidence_spans'])
         if self.policy_issue and not self.sufficient(): self.stop_code='channel_unavailable';self.stop_reason=self.policy_issue
         pending=not self.sufficient()
-        if pending and (self.calls>=self.cfg['max_calls'] or self.pages>=self.cfg['max_pages']):
-            self.stop_code='budget_exhausted'
-            self.stop_reason=f"达到本轮上限：搜索 {self.calls}/{self.cfg['max_calls']} 次，读取 {self.pages}/{self.cfg['max_pages']} 页。可调整上限继续，或带限定进入大纲。"
-        elif pending and self.rounds>=self.cfg['max_rounds']:
-            self.stop_code='round_limit'
-            self.stop_reason=f"已补查 {self.rounds}/{self.cfg['max_rounds']} 轮，可调整上限继续或保留当前建议。"
         if not pending:self.stop_code='covered';self.stop_reason='核心问题已覆盖，保留反证和适用边界。'
         self.update('核心依据尚未完整核实，可保留问题并继续创作' if pending else '核心问题已有依据，已保留反证和适用边界')
         return pending
@@ -990,7 +967,7 @@ async def gather(a,job_id,stage,query=''):
     pending=await worker.run(query)
     result={'input_key':key,'policy_version':source_context.POLICY_VERSION,'analysis_signature':signature,'coverage':worker.coverage,'coverage_sufficient':research_contract.sufficient(worker.coverage),'timestamp':time.time(),'stage':stage,'pending':pending,'task_pending':pending,'requested_issue_ids':worker.requested,'stale':False,'summary':worker.notes.get('summary',''),
             'gaps':worker.notes.get('gaps',[]),'conflicts':worker.notes.get('conflicts',[]),'evidence':worker.notes.get('evidence',[]),
-            'issues':worker.issues(),'next_queries':worker.notes.get('followup_queries',[]),'stop_reason':worker.stop_reason,'stop_code':worker.stop_code,'exhausted':pending and (bool(worker.stop_reason) or worker.calls>=worker.cfg['max_calls'] or worker.pages>=worker.cfg['max_pages'] or worker.rounds>=worker.cfg['max_rounds']),'stats':worker.stats,'plan':worker.plan,'candidates':list(worker.candidates.values()),'query_ledger':worker.query_ledger,'material_key':flow_state.signature(worker.a),'outline_key':digest(a['outline']),
+            'issues':worker.issues(),'next_queries':worker.notes.get('followup_queries',[]),'stop_reason':worker.stop_reason,'stop_code':worker.stop_code,'exhausted':pending and bool(worker.stop_reason),'stats':worker.stats,'plan':worker.plan,'candidates':list(worker.candidates.values()),'query_ledger':worker.query_ledger,'material_key':flow_state.signature(worker.a),'outline_key':digest(a['outline']),
             'calls':worker.calls,'pages':worker.pages,'rounds':worker.rounds,'log':worker.log,'blocked_urls':list(dict.fromkeys(worker.blocked)), 'job_id':job_id,'strategy':worker.strategy()}
     def change(v):
         # Preserve later expression edits and newly uploaded materials; fail safely if a used input changed.
@@ -1015,7 +992,6 @@ async def gather(a,job_id,stage,query=''):
         for row in result['coverage']:row['source_ids']=list(dict.fromkeys(source_aliases.get(s,s) for s in row['source_ids']))
         result['unassessed_source_ids']=[x['id'] for x in v['sources'] if x.get('selected') and x['id'] not in {s['id'] for s in worker.a['sources']}]
         result['stale']=False
-        result['limits']={k:worker.cfg[k] for k in ('max_calls','max_pages','max_rounds')}
         aliases=dict(v.get('research',{}).get('issue_aliases',{}))
         for issue in result['issues']:
             for iid in issue.get('merged_ids',[]):aliases[iid]=issue['id']

@@ -16,7 +16,7 @@ from PIL import Image
 from pydantic import ValidationError
 from . import store,providers,security,materials,rendering,workflow,prompts,search_tools,browser_search,search_check,bibliography,outputs,capabilities
 from . import flow_state,issue_actions,source_imports,account_memory
-from .models import IssueAction,Settings,Brief,Layout,VisualSettings,ArticlePatch,JobRequest,STAGES,OutlineResult,ImagePlan,CapabilityTest,ResearchLimits
+from .models import IssueAction,Settings,Brief,Layout,VisualSettings,ArticlePatch,JobRequest,STAGES,OutlineResult,ImagePlan,CapabilityTest
 
 APP_VERSION=json.loads((store.ROOT/'package.json').read_text('utf-8'))['version']
 
@@ -249,7 +249,7 @@ def patch(id:str,payload:ArticlePatch):
     from .models import InputDrafts
     stage=payload.stage
     if stage not in ['setup',*STAGES,'preferences']: raise ValueError('未知编辑环节')
-    allowed={'title','brief','auto','outline','content','layout','visual','image_plans','images','sources','current_stage','research_limits','history_fields','input_drafts'}
+    allowed={'title','brief','auto','outline','content','layout','visual','image_plans','images','sources','current_stage','history_fields','input_drafts'}
     if set(payload.changes)-allowed: raise ValueError('包含不可修改的字段')
     c=payload.changes.copy()
     if 'input_drafts' in c:
@@ -259,7 +259,6 @@ def patch(id:str,payload:ArticlePatch):
         c['history_fields']=account_memory.HistoryFields.model_validate(c['history_fields']).model_dump()
         if c['history_fields']['published_at']:account_memory.timestamp(c['history_fields']['published_at'])
         if c['history_fields']['status']=='published' and not c['history_fields']['published_at']:raise ValueError('已发表文章需填写发布时间')
-    if c.get('research_limits') is not None:c['research_limits']=ResearchLimits.model_validate(c['research_limits']).model_dump()
     if 'brief' in c: c['brief']=Brief.model_validate(c['brief']).model_dump()
     if 'layout' in c:
         c['layout']=Layout.model_validate(c['layout']).model_dump()

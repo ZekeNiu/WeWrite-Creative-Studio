@@ -47,7 +47,7 @@ def test_retry_uses_failed_stage_and_only_relevant_parameters():
     request=retry_request(job,8)
     assert request['stage']=='outline' and request['revision']==8 and request['chain']
     assert not request.get('instruction') and not request.get('selected_text') and not request.get('image_id')
-    assert request['execution_limits']['max_requests']==10
+    assert 'execution_limits' not in request
 
 
 def test_library_reports_actual_words_and_latest_task():

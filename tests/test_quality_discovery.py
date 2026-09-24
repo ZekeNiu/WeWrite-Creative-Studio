@@ -8,7 +8,7 @@ def worker():
     a=store.create_article({'topic':'Several scientific questions','column':'运动科学'})
     j=store.create_job(a['id'],dict(stage='research'))
     w=research.Research(a,j['id'],'sources')
-    w.cfg.update(max_calls=6,max_pages=32,academic_enabled=True,pubmed_enabled=True,arxiv_enabled=False)
+    w.cfg.update(academic_enabled=True,pubmed_enabled=True,arxiv_enabled=False)
     w.unavailable=lambda group:''
     return w
 
@@ -254,7 +254,6 @@ def test_parallel_identity_lookups_are_bounded_and_never_drop_failed_candidates(
 def test_questions_get_turns_before_one_query_exhausts_engines(monkeypatch):
     w=worker();seen=[]
     async def channel(name,query):
-        if w.calls>=w.cfg['max_calls']:return []
         w.calls+=1;seen.append((name,query));return []
     monkeypatch.setattr(w,'channel',channel)
     asyncio.run(w.discover(['question one','question two','question three']))
@@ -263,7 +262,7 @@ def test_questions_get_turns_before_one_query_exhausts_engines(monkeypatch):
 
 
 def test_nonempty_irrelevant_openalex_does_not_suppress_crossref(monkeypatch):
-    w=worker();w.cfg['max_calls']=12;seen=[]
+    w=worker();seen=[]
     async def channel(name,query):
         w.calls+=1;seen.append(name)
         return [dict(url='https://example.org/unrelated',title='Unrelated')] if name=='openalex' else []
@@ -303,8 +302,8 @@ def test_cross_language_reader_keeps_long_tail_limitations():
     assert any('Training injuries were excluded' in x['text'] for x in pieces)
 
 
-def test_deferred_candidates_are_read_after_search_budget(monkeypatch):
-    w=worker();w.calls=w.cfg['max_calls'];read=[]
+def test_deferred_candidates_are_read_after_previous_searches(monkeypatch):
+    w=worker();w.calls=99;read=[]
     w.deferred=[dict(url='https://example.org/core',title='Core',provider='test',query='q')]
     async def fetch(row):
         read.append(row['url']);w.pages+=1

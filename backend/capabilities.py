@@ -91,8 +91,8 @@ async def test(sid,request):
         else:
             query='查找世界卫生组织身体活动指南的官方网页'
             s['_job_id']=job['id']
-            record=budget.reserve(job['id'],s,query,2000,s.get('search_price'))
-            rows,meta=await search_tools.native(s,query,1)
+            record=budget.reserve(job['id'],s,query,s['max_tokens'],s.get('search_price'))
+            rows,meta=await search_tools.native(s,query)
             usage=budget.search_usage(s,meta)
             budget.charge(record,usage);charged=True
             if not any([await public_network.public_url(r['url']) for r in rows]):
@@ -126,7 +126,7 @@ async def test(sid,request):
 async def test_tools(service):
     import json
     from . import agent_transport,execution_budget
-    job=store.create_job('connection-tools',dict(stage='tools',execution_limits={'max_requests':2}))
+    job=store.create_job('connection-tools',dict(stage='tools'))
     s=dict(service,_job_id=job['id'])
     spec=dict(name='connection_probe',description='读取测试随机值',parameters=dict(type='object',properties={},required=[],additionalProperties=False))
     system='先调用 connection_probe，然后逐字返回工具提供的随机值，不添加其他内容。'

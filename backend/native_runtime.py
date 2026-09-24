@@ -56,8 +56,7 @@ class Session:
         self.article=copy.deepcopy(article);self.job_id=job_id;self.stage=stage;self.request=request
         self.id=store.uid();self.home=(store.DATA/'native'/self.id).resolve();self.home.mkdir(parents=True)
         self.state={};self.used=None;self.finished=False;self.result=None;self.reads=[];self.sources=copy.deepcopy(article['sources'])
-        self.limits={**providers.settings().get('execution',{}),**(request.get('execution_limits') or {})}
-        self.search_config={**providers.settings()['search'],**(article.get('research_limits') or {}),**(request.get('research_limits') or {})}
+        self.search_config=providers.settings()['search']
         self.disabled=set();self.free_search_only=store.job(job_id).get('free_search_only',False);self.search_error=None;self.command_count=0;self.evaluations=[];self.rewrite_versions={}
 
     def path(self,name,write=False):
@@ -230,7 +229,7 @@ class Session:
 
     def reserve(self,service,payload,output=None,extra=0):
         from .execution_budget import reserve
-        return reserve(self.job_id,service,payload,output,extra,execution_id=self.id,limits_override=self.limits)
+        return reserve(self.job_id,service,payload,output,extra,execution_id=self.id)
 
     def charge(self,record,usage):
         from .execution_budget import charge
@@ -239,14 +238,11 @@ class Session:
     def take_read(self,kind):
         with store.LOCK:
             key='native_'+kind+'_count';count=store.job(self.job_id).get(key,0)
-            maximum=self.search_config['max_calls' if kind=='search' else 'max_pages']
-            if count>=maximum:raise ValueError('本次任务已达到搜索次数上限' if kind=='search' else '本次任务已达到原文读取次数上限')
             store.update_job(self.job_id,**{key:count+1})
 
     async def search(self,query,channel='auto'):
         from . import search_tools,academic,browser_search
         from .service_errors import ServiceFailure
-        from .execution_budget import BudgetExceeded
         if not self.search_config['enabled']:raise ValueError('联网搜索已关闭，继续使用当前材料')
         if channel!='auto':
             if not self.search_config['academic_enabled'] or channel=='pubmed' and not self.search_config['pubmed_enabled'] or channel=='arxiv' and not self.search_config['arxiv_enabled']:raise ValueError('此学术渠道未启用')
@@ -269,21 +265,21 @@ class Session:
                     service=dict(providers.effective_service('search'),_job_id=self.job_id)
                     if service['protocol']=='chat':raise ValueError('此协议未接入原生搜索')
                     self.take_read('search')
-                    record=self.reserve(service,query,2000,service.get('search_price'))
-                    rows,meta=await search_tools.native(service,query,1)
+                    record=self.reserve(service,query,service['max_tokens'],service.get('search_price'))
+                    rows,meta=await search_tools.native(service,query)
                     from .execution_budget import search_usage
                     self.charge(record,search_usage(service,meta))
                 else:
                     from .execution_budget import reserve
                     self.take_read('search');price=self.search_config.get('tavily_price')
-                    record=reserve(self.job_id,dict(model='tavily',name='tavily'),fixed=price,execution_id=self.id,limits_override=self.limits)
+                    record=reserve(self.job_id,dict(model='tavily',name='tavily'),fixed=price,execution_id=self.id)
                     rows=await providers.search(query)
                     self.charge(record,dict(status='completed',estimated_cost=price))
                 if rows:return rows
             except BaseException as exc:
                 if record:self.charge(record,getattr(exc,'usage',None) or dict(status='unknown',estimated_cost=None))
                 if hasattr(exc,'details'):exc.details['operation']='search'
-                if isinstance(exc,(BudgetExceeded,asyncio.CancelledError)) or not isinstance(exc,Exception):raise
+                if isinstance(exc,asyncio.CancelledError) or not isinstance(exc,Exception):raise
                 if isinstance(exc,ServiceFailure):
                     if not search_policy.free_fallback(exc,self.search_config):raise
                     self.free_search_only=True;self.search_error=exc
@@ -379,7 +375,6 @@ class Session:
         service=dict(service,_job_id=self.job_id)
         corrections=0
         from .service_errors import service_identity,ServiceFailure
-        from .execution_budget import BudgetExceeded
         store.update_job(self.job_id,service=service_identity(service))
         try:
             while not self.finished:
@@ -401,20 +396,19 @@ class Session:
                             '已纠正一次，模型仍未返回工具调用；当前接口未完成本环节，任务文件已保留',info,response['usage'])
                     corrections+=1
                     store.update_job(self.job_id,tool_corrections=corrections,activity='模型未返回工具调用，正在纠正一次')
-                    store.event(self.job_id,'tool_correction',message='模型未返回工具调用，保留上下文纠正一次；计入原请求上限')
-                    messages.append(dict(role='user',content='上一轮没有返回工具调用，本环节尚未完成。请继续调用实际工具执行任务；产物完成后调用 Finish。不要只回复说明或空内容。这是本任务唯一一次纠正，仍遵守原请求和工具上限。'))
+                    store.event(self.job_id,'tool_correction',message='模型未返回工具调用，保留上下文纠正一次；请求用量已记录')
+                    messages.append(dict(role='user',content='上一轮没有返回工具调用，本环节尚未完成。请继续调用实际工具执行任务；产物完成后调用 Finish。不要只回复说明或空内容。这是本任务唯一一次纠正，仍遵守原请求。'))
                     continue
                 results=[]
                 for call in response['calls']:
                     if self.finished:break
                     self.command_count=store.job(self.job_id).get('native_tool_count',0)+1
-                    if self.command_count>self.limits.get('max_tools',120):raise ValueError('已达到本次工具操作上限，任务已保留')
                     store.update_job(self.job_id,native_tool_count=self.command_count)
                     args=json.loads(call['arguments']) if isinstance(call['arguments'],str) else call['arguments']
                     store.event(self.job_id,'native_tool',tool=call['name'],arguments=args,execution_id=self.id)
                     store.update_job(self.job_id,activity={'Read':'读取创作资料','List':'查看可用资料','Find':'定位资料','Write':'保存生成内容','Edit':'更新生成内容','WebSearch':'检索资料','WebFetch':'读取网页','WeWrite':'执行创作工具','Finish':'校验并保存结果'}.get(call['name'],'处理创作资料'),last_progress_at=store.now())
                     try:value=await self.execute(call['name'],args)
-                    except (ServiceFailure,BudgetExceeded):raise
+                    except ServiceFailure:raise
                     except (ValueError,KeyError,OSError,TypeError) as exc:value=dict(error=str(exc)[:1800])
                     results.append((call['id'],json.dumps(value,ensure_ascii=False)))
                     store.update_job(self.job_id,native=dict(id=self.id,run_id=self.state['run_id'],upstream_revision=(native_skills.ROOT/'UPSTREAM_REVISION').read_text().strip(),reads=self.reads))

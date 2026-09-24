@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState} from 'react';
-import {Search,Upload,Link as LinkIcon,Plus,SlidersHorizontal,Square} from 'lucide-react';
+import {Search,Upload,Link as LinkIcon,Plus,Square} from 'lucide-react';
 import {api,errorText} from './api';
 import {Modal,Busy,Tag,Field} from './ui';
 import type {Article,Job} from './types';
@@ -8,7 +8,6 @@ import type {IssueFocus} from './StageContext';
 import MaterialList,{readView,remember} from './MaterialList';
 import ResearchDetails from './ResearchDetails';
 import ReferenceDetails from './ReferenceDetails';
-import SourceLimits from './SourceLimits';
 
 export default function Sources({a,save,act,update,run,busy,onJob,job,focusRequest,onFocusHandled,onContext,prepare,navigate}:Common&{job:Job|null;focusRequest?:IssueFocus;onFocusHandled?:()=>void;onContext?:(id:string,explicit?:boolean)=>void}){
  const viewKey='materials-tab:'+a.id;
@@ -16,7 +15,6 @@ export default function Sources({a,save,act,update,run,busy,onJob,job,focusReque
  const [focus,setFocus]=useState<{token:number;id?:string}>({token:0}),[summaryOpen,setSummaryOpen]=useState(false);
  const [attachmentIds,setAttachmentIds]=useState<string[]>([]),[mode,setMode]=useState(''),[url,setUrl]=useState(''),[title,setTitle]=useState(''),[text,setText]=useState('');
  const [error,setError]=useState(''),[localBusy,setLocalBusy]=useState(false),[receipt,setReceipt]=useState<any>(null),[inspect,setInspect]=useState<string|null>(null);
- const limits=a.research_limits;const [limitsOpen,setLimitsOpen]=useState(false);
  const file=useRef<HTMLInputElement>(null),retry=useRef<(()=>Promise<void>)|null>(null),handled=useRef(''),mounted=useRef(true),cancelRequested=useRef(false);
  const currentImport=job?.stage==='source_import'&&job.article_id===a.id?job:null;
  const importing=!!currentImport&&['queued','running'].includes(currentImport.status);
@@ -46,12 +44,12 @@ export default function Sources({a,save,act,update,run,busy,onJob,job,focusReque
  }
  async function close(){cancelRequested.current=true;if(importing){await perform(async()=>{const next=await api<Job>('/jobs/'+currentImport!.id+'/cancel','POST');onJob(next);if(next.status==='completed')update(await api('/articles/'+a.id))})}setMode('');setAttachmentIds([]);setError('')}
  const openMode=(next:string,ids:string[]=[])=>{setAttachmentIds(ids);setError('');setReceipt(null);setMode(next)};
- async function verifyNew(){await run('research',{issue_ids:receipt?.issue_ids||[],research_limits:limits,chain:false});setReceipt(null)}
- const primary=()=>{locate();void run('research',{research_limits:limits,chain:false})};
+ async function verifyNew(){await run('research',{issue_ids:receipt?.issue_ids||[],chain:false});setReceipt(null)}
+ const primary=()=>{locate();void run('research',{chain:false})};
  const primaryLabel='查找并整理资料';
  const summary=a.research?.summary||a.evidence.summary;
  return <>
-  <section className="material-status" aria-label="资料状态" role="status"><div className="row between"><strong>{importing?currentImport!.message:state?.message||'先检查已有材料，再按需查找'}</strong><button className="text-button" onClick={()=>setLimitsOpen(true)}><SlidersHorizontal size={14}/>检索设置</button></div>
+  <section className="material-status" aria-label="资料状态" role="status"><div className="row between"><strong>{importing?currentImport!.message:state?.message||'先检查已有材料，再按需查找'}</strong></div>
    {importing?<div className="row between"><Busy text={importing?'正在导入资料':'正在处理本次任务'}/><button className="text-button" onClick={()=>void perform(async()=>onJob(await api('/jobs/'+job!.id+'/cancel','POST')))}><Square size={12}/>停止</button></div>:null}
    {!importing&&(state?.delta||state?.stop_reason)&&<details className="material-history"><summary>最近核实记录</summary>{state?.delta&&<p className="muted">上次核实：新增 {state.delta.added_sources} 条素材 · 解决 {state.delta.resolved} 项建议 · 剩余 {state.delta.remaining} 项高优先级建议</p>}
    {!executing&&state?.stop_reason&&<p className="muted">{state.stop_reason}</p>}</details>}
@@ -77,7 +75,6 @@ export default function Sources({a,save,act,update,run,busy,onJob,job,focusReque
     <div className="modal-footer"><span className="muted">仅用于本篇文章</span><button className="button primary" disabled={busy||localBusy||(mode==='url'?!url.trim():!text.trim())} onClick={()=>mode==='url'?void begin('url'):void perform(async()=>{const current=await prepare();const next=await api<Article>('/articles/'+a.id+'/sources/text','POST',{revision:current.revision,title,text,issue_ids:attachmentIds});if(!mounted.current)return;update(next);setReceipt({sources:[{source_id:'text',title:title||'文字素材',operation:'added',scope:'file'}],issue_ids:attachmentIds});if(attachmentIds.length)locate(attachmentIds[0]);setMode('');setAttachmentIds([]);setText('')})}>{localBusy?<Busy text="正在保存"/>:'添加素材'}</button></div>
    </>}{error&&<p className="notice amber" role="alert">{error}</p>}
   </Modal>}
-  {limitsOpen&&<SourceLimits a={a} initial={limits} busy={busy} onClose={()=>setLimitsOpen(false)} onApply={async(value,go)=>{await prepare();const current=await save({research_limits:value},'preferences');if(go){await run('research',{research_limits:value,research_parent_id:current.research?.job_id||'',issue_ids:state?.required.map(i=>i.id)||[],chain:false});locate()}}}/>}
   {inspect&&a.sources.find(s=>s.id===inspect)&&<ReferenceDetails key={inspect} source={a.sources.find(s=>s.id===inspect)!} onClose={()=>setInspect(null)} onSave={s=>save(current=>({sources:current.sources.map(x=>x.id===s.id?{...x,bibliography:s.bibliography}:x)}),'sources')} onIdentify={()=>{const id=inspect;setInspect(null);return begin('identify',undefined,id)}} onLookup={async doi=>{const current=await prepare();update(await api(`/articles/${a.id}/sources/${inspect}/metadata`,'POST',{revision:current.revision,doi}))}}/>}
  </>;
 }
