@@ -109,6 +109,10 @@ async def main():
       current=page.locator('.stage-nav[aria-current="step"]')
       assert await current.evaluate('(e)=>{const b=e.getBoundingClientRect();return b.left>=0&&b.right<=innerWidth}'),'Current stage is not visible'
       assert all(await page.locator('.stage-body .button:visible,.workspace-title .icon-button:visible').evaluate_all('(els)=>els.map(e=>e.getBoundingClientRect().height>=44)')),'Touch target too small'
+     if label in ('写作','审核修改'):
+      await expect(page.locator('.prose-editor')).to_be_visible()
+     if width==390 and await page.locator('.workspace-title .primary').count():
+      assert (await page.locator('.workspace-title .primary').bounding_box())['height']<=48,'Primary action wraps inside a word'
      if label=='写作':
       assert (await page.locator('.editorial-actions').bounding_box())['height']<=(160 if width==390 else 80)
      if label=='排版导出':
@@ -128,11 +132,11 @@ async def main():
      await page.get_by_text('更多',exact=True).click();await shot('mobile-menu')
      await page.locator('.mobile-menu').get_by_role('button',name='账号与学习',exact=True).click()
     else:await page.locator('.desktop-extras').get_by_role('button',name='账号与学习',exact=True).click()
-    await expect(page.locator('dialog[open]')).to_be_visible();await fits();await shot(f'account-{width}');await page.keyboard.press('Escape')
+    await expect(page.get_by_label('账号受众',exact=True)).to_be_visible();await fits();await shot(f'account-{width}');await page.keyboard.press('Escape')
     if width==390:
      await page.get_by_text('更多',exact=True).click();await page.locator('.mobile-menu').get_by_role('button',name='扩展',exact=True).click()
     else:await page.locator('.desktop-extras').get_by_role('button',name='扩展',exact=True).click()
-    await expect(page.locator('dialog[open]')).to_be_visible();await fits();await shot(f'extensions-{width}');await page.keyboard.press('Escape')
+    await expect(page.get_by_role('button',name='生成独立平台稿',exact=True)).to_be_visible();await fits();await shot(f'extensions-{width}');await page.keyboard.press('Escape')
     if width<1200:
      await page.get_by_role('button',name='展开侧栏',exact=True).click()
      await expect(page.get_by_role('button',name='关闭侧栏',exact=True)).to_be_focused();await shot(f'drawer-{width}')
