@@ -1,12 +1,23 @@
 import {useEffect,useState} from 'react';
-import {type Job,type Stage,type Settings,STAGES,LABELS} from './types';
+import {type Article,type Job,type Stage,type Settings,STAGES,LABELS} from './types';
 import {Busy} from './ui';
-import NativeTrace from './NativeTrace';
 
 export const JOB_STATUS:Record<string,string>={queued:'等待执行',running:'正在运行',failed:'运行失败',conflict:'结果待核对',interrupted:'运行已中断',cancelled:'已停止',needs_input:'待你确认',completed:'运行完成'};
 export function stageOf(stage:string):Stage|undefined{
  const key=({research:'sources',source_import:'sources',bound:'sources',revise:'write',edit:'review',image:'visual',layout_advice:'layout'} as Record<string,string>)[stage]||stage;
  return STAGES.includes(key as Stage)?key as Stage:undefined;
+}
+export function taskAttention(a:Article,job:Pick<Job,'stage'|'status'>|null|undefined){
+ if(!job)return '';
+ if(['queued','running','failed','conflict','interrupted'].includes(job.status))return JOB_STATUS[job.status];
+ if(job.status!=='needs_input')return '';
+ const stage=stageOf(job.stage);
+ let pending=!!stage&&a.stages[stage]==='needs_input';
+ if(stage==='topic')pending=!a.brief.topic;
+ if(stage==='sources')pending=pending||!!a.research?.pending;
+ if(job.stage==='revise')pending=pending||!!a.suggestions?.length;
+ if(job.stage==='edit')pending=pending||!!a.editorial_candidates?.some(c=>c.status==='pending');
+ return pending?'待你确认':'';
 }
 export function effectiveService(cfg:Settings,stage:string){
  const key=stage==='edit'?'review':stage;
@@ -19,7 +30,7 @@ export function effectiveService(cfg:Settings,stage:string){
 export function StageService({cfg,stage,onSettings}:{cfg:Settings;stage:Stage;onSettings:(stage:string)=>void}){
  if(stage==='layout')return <p className="stage-service">排版预览随保存自动更新</p>;
  const {service,model,origin}=effectiveService(cfg,stage==='sources'?'research':stage);
- return <div className="stage-service"><span>{service?`${service.name} · ${model||'未填写模型'}`:'尚未配置模型服务'} <small>（{origin}）</small></span><button className="text-button" onClick={()=>onSettings(stage==='sources'?'research':stage)}>调整{stage==='sources'?'检索':LABELS[stage]}服务</button></div>;
+ return <div className="stage-service"><span className="service-name">{service?`${service.name} · ${model||'未填写模型'}`:'尚未配置模型服务'} </span><details className="service-origin"><summary>配置来源</summary><p>{origin}</p></details><button className="text-button" onClick={()=>onSettings(stage==='sources'?'research':stage)}>调整{stage==='sources'?'检索':LABELS[stage]}服务</button></div>;
 }
 export default function TaskStatus({job,step,busy,onRetry,onSettings,navigate,onCancel}:{job:Job;step:Stage;busy:boolean;onRetry:(j:Job)=>void;onSettings:(stage:string)=>void;navigate:(stage:Stage)=>void;onCancel:()=>void}){
  const [now,setNow]=useState(Date.now());
@@ -32,7 +43,7 @@ export default function TaskStatus({job,step,busy,onRetry,onSettings,navigate,on
  const service=job.failure?.service||job.service;
  if(target!==step)return active||failed?<div className="task-brief" role="status"><span>{LABELS[job.stage]}：{JOB_STATUS[job.status]}</span><button className="text-button" onClick={()=>navigate(target)}>查看{LABELS[job.stage]}任务</button></div>:null;
  return <>
- {(active||failed||job.status==='cancelled')&&<section className={'task-status '+(failed?'notice amber':'notice')} aria-label="当前任务状态" role="status">
+ {(active||failed||job.status==='cancelled')&&<section className={'task-status notice '+(failed?(job.status==='conflict'?'amber':'error'):'')} aria-label="当前任务状态" role="status">
  <div className="row between wrap"><strong>{LABELS[job.stage]} · {JOB_STATUS[job.status]}</strong>{active&&<button className="button secondary" onClick={onCancel}>停止</button>}</div>
  <p>{active?<Busy text={job.activity||job.message}/>:job.message}</p>
  {service&&<p className="muted">实际调用：{service.name} · {service.model}</p>}
@@ -42,6 +53,5 @@ export default function TaskStatus({job,step,busy,onRetry,onSettings,navigate,on
  <details><summary>查看错误详情</summary>{job.failure?<dl className="failure-details"><dt>错误类别</dt><dd>{({timeout:'等待响应超时',connection:'连接中断',quota:'余额或额度不足',rate_limit:'请求限流',rate_limit_or_quota:'限制原因未明确',authentication:'凭证错误',permission:'权限不足',invalid_request:'请求不被接受',not_found:'模型或接口不存在',service_error:'模型服务错误',validation:'输入或结果需要调整',unknown:'未分类错误'} as Record<string,string>)[job.failure.category]||'其他错误'}</dd><dt>HTTP 状态</dt><dd>{job.failure.http_status??'未收到响应'}</dd><dt>供应商错误码</dt><dd>{job.failure.provider_code||job.failure.provider_type||'未提供'}</dd><dt>请求编号</dt><dd>{job.failure.request_id||'未提供'}</dd></dl>:<p>历史记录未保存具体原因。</p>}</details></>}
  {job.partial&&!active&&<details><summary>查看已保留的生成结果</summary><pre className="partial-result">{job.partial}</pre></details>}
  </section>}
- {job.native&&<NativeTrace key={job.id} job={job}/>}
  </>;
 }

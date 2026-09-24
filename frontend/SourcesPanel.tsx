@@ -52,8 +52,9 @@ export default function Sources({a,save,act,update,run,busy,onJob,job,focusReque
  const summary=a.research?.summary||a.evidence.summary;
  return <>
   <section className="material-status" aria-label="资料状态" role="status"><div className="row between"><strong>{importing?currentImport!.message:state?.message||'先检查已有材料，再按需查找'}</strong><button className="text-button" onClick={()=>setLimitsOpen(true)}><SlidersHorizontal size={14}/>检索设置</button></div>
-   {importing?<div className="row between"><Busy text={importing?'正在导入资料':'正在处理本次任务'}/><button className="text-button" onClick={()=>void perform(async()=>onJob(await api('/jobs/'+job!.id+'/cancel','POST')))}><Square size={12}/>停止</button></div>:state?.delta&&<p className="muted">上次核实：新增 {state.delta.added_sources} 条素材 · 解决 {state.delta.resolved} 项建议 · 剩余 {state.delta.remaining} 项高优先级建议</p>}
-   {!executing&&state?.stop_reason&&<p className="muted">{state.stop_reason}</p>}
+   {importing?<div className="row between"><Busy text={importing?'正在导入资料':'正在处理本次任务'}/><button className="text-button" onClick={()=>void perform(async()=>onJob(await api('/jobs/'+job!.id+'/cancel','POST')))}><Square size={12}/>停止</button></div>:null}
+   {!importing&&(state?.delta||state?.stop_reason)&&<details className="material-history"><summary>最近核实记录</summary>{state?.delta&&<p className="muted">上次核实：新增 {state.delta.added_sources} 条素材 · 解决 {state.delta.resolved} 项建议 · 剩余 {state.delta.remaining} 项高优先级建议</p>}
+   {!executing&&state?.stop_reason&&<p className="muted">{state.stop_reason}</p>}</details>}
    <p className="muted">已采用 {a.sources.filter(s=>s.selected).length} / {a.sources.length} 条素材{state?.pending?.length?` · ${state.pending.length} 项建议待处理，继续创作时保留限定`:''}</p>
   </section>
   {!executing&&job?.stage==='bound'&&job.result?.applications&&<div className="source-receipt" role="status"><strong>{changedApplications?'本次处理已有撤销或更新，请以当前问题状态为准':job.message}</strong>{!changedApplications&&<p>已保存 {job.result.applications.length} 项决定 · 正文／大纲修改 {job.result.changed||0} 处 · 仍有 {job.result.remaining||0} 项需处理</p>}<button className="text-button" onClick={()=>locate(job.result.applications[0]?.issue_id)}>查看本次改动</button></div>}
