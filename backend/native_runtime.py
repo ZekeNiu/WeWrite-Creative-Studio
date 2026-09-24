@@ -255,7 +255,7 @@ class Session:
         if 'native' not in self.disabled:
             record=None
             try:
-                service=providers.effective_service('search')
+                service=dict(providers.effective_service('search'),_job_id=self.job_id)
                 if service['protocol']=='chat':raise ValueError('此协议未接入原生搜索')
                 record=self.reserve(service,query,2000,service.get('search_price'))
                 rows,meta=await search_tools.native(service,query,1)

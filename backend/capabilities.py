@@ -11,7 +11,7 @@ SEARCH_UNCONFIGURED='尚未发送搜索请求：请配置模型原生联网接�
 
 
 def metadata(s,kind):
-    return dict(model=s['model'],protocol=s['protocol'],test_version=providers.CAPABILITY_VERSION,
+    return dict(model=s['model'],protocol=s['protocol'],test_version=providers.capability_version(kind),
         parameters=providers.test_parameters(s,kind),service=service_identity(s))
 
 
@@ -90,12 +90,15 @@ async def test(sid,request):
             result=dict(message='收到实际图片，生图连接测试通过',width=img.width,height=img.height,image_url='/api/connection-tests/'+filename)
         else:
             query='查找世界卫生组织身体活动指南的官方网页'
+            s['_job_id']=job['id']
             record=budget.reserve(job['id'],s,query,2000,s.get('search_price'))
             rows,meta=await search_tools.native(s,query,1)
             usage=budget.search_usage(s,meta)
             budget.charge(record,usage);charged=True
-            if not any([await public_network.public_url(r['url']) for r in rows]):raise SearchEvidenceMissing('接口已响应，但搜索未返回公开来源')
-            result=dict(message=f'取得真实搜索工具记录及 {len(rows)} 个来源',sources=rows,usage=meta,queries=meta.get('queries',[]))
+            if not any([await public_network.public_url(r['url']) for r in rows]):
+                exc=SearchEvidenceMissing('接口已响应，但搜索未返回公开来源',usage)
+                exc.details['search_diagnostic']=meta.get('search_diagnostic');raise exc
+            result=dict(message=f'联网已通过：取得真实搜索工具记录及 {len(rows)} 个来源',sources=rows,usage=meta,queries=meta.get('queries',[]),search_diagnostic=meta.get('search_diagnostic'))
         if record and not charged:budget.charge(record,usage);charged=True
         result.update(status='tested',request_sent=True,response_received=True,**metadata(s,kind))
         store.capability(key,result)
@@ -114,6 +117,7 @@ async def test(sid,request):
         if s['secret']:message=message.replace(s['secret'],'[已隐藏]')
         details=getattr(exc,'details',None) or dict(category='validation',request_sent=bool(record) or kind=='tools')
         store.capability(key,dict(status='failed',message=message,failure=details,
+            **({'search_diagnostic':details['search_diagnostic']} if details.get('search_diagnostic') else {}),
             **{k:details[k] for k in ('request_sent','response_received') if k in details},**metadata(s,kind)))
         if hasattr(exc,'details'):raise
         raise ServiceFailure(message,**details) from None

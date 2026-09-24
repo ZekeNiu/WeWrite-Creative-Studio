@@ -1,7 +1,7 @@
 import {useEffect,useState} from 'react';
 import {type Article,type Job,type Stage,type Settings,STAGES,LABELS} from './types';
 import {Busy} from './ui';
-import {FailureDetails,ResponseDetails} from './ServiceDetails';
+import {FailureDetails,ResponseDetails,SearchDetails} from './ServiceDetails';
 
 export const JOB_STATUS:Record<string,string>={queued:'等待执行',running:'正在运行',failed:'运行失败',conflict:'结果待核对',interrupted:'运行已中断',cancelled:'已停止',needs_input:'待你确认',completed:'运行完成'};
 export function stageOf(stage:string):Stage|undefined{
@@ -54,5 +54,6 @@ export default function TaskStatus({job,step,busy,onRetry,onSettings,navigate,on
  <details><summary>查看错误详情</summary>{job.failure?<><FailureDetails value={job.failure}/>{!job.failure.parameters&&<ResponseDetails value={job.response_diagnostic}/>}</>:<p>历史记录未保存具体原因。</p>}</details></>}
  {!!job.tool_corrections&&<p className="muted">已尝试 {job.tool_corrections} 次工具调用纠正，请求仍计入原上限。</p>}{job.partial&&!active&&<details><summary>查看已保留的生成结果</summary><pre className="partial-result">{job.partial}</pre></details>}
  </section>}
+ <SearchDetails value={job.search_diagnostic||job.failure?.search_diagnostic}/>
  </>;
 }

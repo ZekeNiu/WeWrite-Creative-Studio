@@ -41,6 +41,10 @@ def settings():
 CAPABILITY_VERSION='2.3.2'
 
 
+def capability_version(kind):
+    return '2.3.3' if kind=='search' else CAPABILITY_VERSION
+
+
 def test_parameters(s,kind):
     if kind=='image':return dict(size='1024x1024')
     return dict(max_tokens=256 if kind=='text' else 2000 if kind=='search' else s.get('max_tokens',8000),
@@ -49,7 +53,7 @@ def test_parameters(s,kind):
 
 
 def fingerprint(s,kind):
-    return hashlib.sha256(json.dumps([CAPABILITY_VERSION,kind,s['base_url'],s['protocol'],s['model'],s.get('secret',''),
+    return hashlib.sha256(json.dumps([capability_version(kind),kind,s['base_url'],s['protocol'],s['model'],s.get('secret',''),
         test_parameters(s,kind),s.get('max_tokens',8000),s.get('temperature')],sort_keys=True).encode()).hexdigest()
 
 
@@ -127,10 +131,18 @@ def service_for(stage, override=None):
     return s
 
 
+def deepseek_official(base):
+    url=urlsplit(base)
+    return url.scheme=='https' and url.hostname=='api.deepseek.com' and url.port in (None,443) and not url.username and not url.password
+
+
 def endpoint(base, path):
     base=base.rstrip('/')
     for suffix in ('/chat/completions','/responses','/messages','/images/generations','/models'):
         if base.endswith(suffix): base=base[:-len(suffix)]; break
+    url=urlsplit(base)
+    if deepseek_official(base) and url.path in ('','/v1','/anthropic','/anthropic/v1') and path in ('models','messages','chat/completions','responses'):
+        return url.scheme+'://'+url.netloc+('/anthropic/v1/' if path=='messages' else '/v1/')+path
     return base+('/' if base.endswith('/v1') else '/v1/')+path
 
 

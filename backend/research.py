@@ -343,10 +343,10 @@ class Research:
         started=time.monotonic()
         try:
             if channel=='native':
-                rows,meta=await search_tools.native(s,query,1)
+                rows,meta=await search_tools.native(dict(s,_job_id=self.job_id),query,1)
                 self.stats['provider_queries']+=meta['calls']
                 self.update('供应商已执行内部子查询',channel=channel,provider_queries=meta.get('queries',[]),provider_query_count=meta['calls'])
-                if rows: store.capability(providers.fingerprint(s,'search'),dict(status='tested',sources=rows,queries=meta.get('queries',[]),protocol=s['protocol'],message='实际任务已取得联网工具记录'))
+                if rows: store.capability(providers.fingerprint(s,'search'),dict(status='tested',sources=rows,queries=meta.get('queries',[]),protocol=s['protocol'],test_version=providers.capability_version('search'),search_diagnostic=meta.get('search_diagnostic'),message='实际任务已取得联网工具记录'))
                 usage=meta.get('usage',{})
                 price=price*meta['calls'] if price is not None else None
                 inp=usage.get('input_tokens',usage.get('prompt_tokens'));out=usage.get('output_tokens',usage.get('completion_tokens'))

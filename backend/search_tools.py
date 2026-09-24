@@ -1,17 +1,87 @@
 """Real search tool adapters. A prose answer alone is never a successful search."""
 import asyncio
+import hashlib
 import json
 import re
 import time
-from urllib.parse import quote
+from urllib.parse import quote,urlsplit
 import xml.etree.ElementTree as ET
 import httpx
 from . import providers, materials
-from .service_errors import bind,http_failure,connection_failure,SearchEvidenceMissing,ServiceFailure
+from .service_errors import bind,http_failure,connection_failure,SearchEvidenceMissing,ServiceFailure,service_identity
+
+
+def record_search(s,diagnostic):
+    if s.get('_job_id'):
+        from . import store
+        store.update_job(s['_job_id'],search_diagnostic=diagnostic)
+        store.event(s['_job_id'],'search_response',**diagnostic)
+
+
+def safe_usage(value):
+    value=value if isinstance(value,dict) else {}
+    def number(name,alias):
+        n=value.get(name,value.get(alias))
+        return n if isinstance(n,int) and not isinstance(n,bool) and n>=0 else None
+    return dict(input_tokens=number('input_tokens','prompt_tokens'),output_tokens=number('output_tokens','completion_tokens'))
+
+
+def search_result(s,rows,meta,limit,http_status,blocks,tool_calls):
+    """Persist safe counts/usage before evidence and limit validation."""
+    from .execution_budget import search_usage
+    valid=[]
+    for row in rows:
+        try:
+            url=urlsplit(row['url'])
+            if url.scheme in ('http','https') and url.hostname and not url.username and not url.password:valid.append(row)
+        except (ValueError,TypeError):continue
+    rows=list({r['url']:r for r in valid}.values())
+    managed=s['protocol']=='gemini' or (s['protocol']=='anthropic' and providers.deepseek_official(s['base_url']))
+    warnings=[]
+    if managed and s['protocol']=='anthropic':
+        warnings.append('DeepSeek 官方内部检索次数由服务端决定，无法提前严格限制；工作台按实际发出的 API 请求执行预算，内部检索可能产生额外费用。')
+    usage=search_usage(s,meta)
+    diagnostic=dict(request_count=1,tool_calls=tool_calls,result_blocks=blocks,source_count=len(rows),
+        tool_id_fingerprints=meta.get('tool_id_fingerprints',[]),
+        provider_queries=meta['calls'] if s['protocol']=='gemini' else None,requested_limit=limit,
+        limit_status='provider_managed' if managed else 'exceeded' if meta['calls']>limit else 'within_limit',warnings=warnings,
+        request_sent=True,response_received=True,http_status=http_status,service=service_identity(s),usage=usage)
+    meta['search_diagnostic']=diagnostic
+    record_search(s,diagnostic)
+    if not meta['calls'] or not rows:
+        exc=SearchEvidenceMissing('接口已响应，但未取得真实搜索工具记录及有效来源；当前服务的联网接入未验证',usage)
+    elif not managed and meta['calls']>limit:
+        exc=bind(ServiceFailure(f'{s.get("name") or "当前服务"} 返回 {meta["calls"]} 次搜索工具调用，超过本次上限 {limit}；已保留诊断，本次调用未通过次数限制校验',category='search_limit_exceeded',request_sent=True,response_received=True,http_status=http_status),s)
+        exc.usage=usage
+    else:return rows,meta
+    exc.details.update(http_status=http_status,search_diagnostic=diagnostic)
+    raise exc
 
 
 async def native(s,query,limit=1):
-    if s['protocol']=='gemini': return await gemini(s,query,limit)
+    trace=dict(request_sent=False,response_received=False)
+    try:return await _native(s,query,limit,trace)
+    except BaseException as exc:
+        if isinstance(exc,(TypeError,KeyError,AttributeError)):
+            exc=bind(ServiceFailure('搜索接口响应结构异常；本次未通过联网验证',category='malformed_response',
+                **{k:v for k,v in trace.items() if k!='usage'}),s)
+        if not getattr(exc,'usage',None) and trace.get('usage'):
+            from .execution_budget import search_usage
+            exc.usage=search_usage(s,dict(calls=0,usage=safe_usage(trace['usage'])))
+            if s.get('search_price')!=0:exc.usage['estimated_cost']=None
+        details=getattr(exc,'details',{})
+        if 'search_diagnostic' not in details:
+            diagnostic=dict(request_count=int(trace['request_sent']),tool_calls=None,result_blocks=None,source_count=None,requested_limit=limit,
+                limit_status='unknown',warnings=[],service=service_identity(s),
+                request_sent=details.get('request_sent',trace['request_sent']),response_received=details.get('response_received',trace['response_received']),
+                http_status=details.get('http_status',trace.get('http_status')),usage=getattr(exc,'usage',None))
+            record_search(s,diagnostic)
+            if hasattr(exc,'details'):exc.details['search_diagnostic']=diagnostic
+        raise exc
+
+
+async def _native(s,query,limit,trace):
+    if s['protocol']=='gemini': return await gemini(s,query,limit,trace)
     if s['protocol']=='responses':
         path='responses'
         body={'model':s['model'],'input':'联网检索以下问题，优先原始来源，返回出处：'+query,
@@ -26,7 +96,9 @@ async def native(s,query,limit=1):
     started=time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(100,connect=15)) as client:
+            trace['request_sent']=True
             async with client.stream('POST',providers.endpoint(s['base_url'],path),headers=providers.headers(s),json=body) as response:
+                trace.update(response_received=True,http_status=response.status_code)
                 if response.status_code>=400: raise bind(http_failure(response.status_code,(await response.aread()).decode('utf-8',errors='replace'),response.headers),s)
                 if 'text/event-stream' in response.headers.get('content-type',''):
                     result={}; blocks=[]; completed=False
@@ -35,9 +107,11 @@ async def native(s,query,limit=1):
                         event=json.loads(frame)
                         if event.get('error') or event.get('type') in ('error','response.failed'): raise bind(http_failure(response.status_code,json.dumps(event.get('response') or event),response.headers),s)
                         if event.get('type') in ('response.completed','response.done'): result=event.get('response',{});completed=True
-                        if event.get('type')=='message_start': result=event.get('message',{})
+                        if event.get('type')=='message_start':
+                            result=event.get('message',{});trace['usage']=result.get('usage') or {}
                         if event.get('type')=='content_block_start': blocks.append(event.get('content_block',{}))
-                        if event.get('type')=='message_delta': result.setdefault('usage',{}).update(event.get('usage',{}))
+                        if event.get('type')=='message_delta':
+                            result.setdefault('usage',{}).update(event.get('usage',{}));trace['usage']=result['usage']
                         if event.get('type')=='message_stop': completed=True
                     if not completed: raise bind(ServiceFailure('搜索流中断，未收到完成信号；本任务不自动重复该付费请求',category='malformed_response',request_sent=True,response_received=True,http_status=response.status_code),s)
                     if blocks: result['content']=blocks
@@ -47,53 +121,58 @@ async def native(s,query,limit=1):
     except httpx.HTTPError as exc: raise bind(connection_failure(exc),s) from None
     except json.JSONDecodeError:raise bind(ServiceFailure('搜索接口响应不是有效 JSON；当前接入未验证',category='malformed_response',request_sent=True,response_received=True,http_status=response.status_code),s) from None
     if not isinstance(result,dict):raise bind(ServiceFailure('搜索接口响应结构异常；当前接入未验证',category='malformed_response',request_sent=True,response_received=True,http_status=200),s)
-    rows=[]; calls=0
+    trace['usage']=safe_usage(result.get('usage'))
+    rows=[]; used=set(); blocks=0
     if s['protocol']=='responses':
-        for item in result.get('output',[]):
+        for index,item in enumerate(result.get('output',[])):
             if item.get('type')=='web_search_call' and item.get('status')=='completed':
-                calls+=1
+                # Missing IDs count separately, never silently undercount a legacy response.
+                used.add(item.get('id') or ('missing',index));blocks+=1
                 for source in item.get('action',{}).get('sources',[]):
                     if source.get('url'): rows.append({'url':source['url'],'title':source.get('title') or source['url'],'content':'','provider':'native'})
         # Citations count only when an actual completed tool call is present.
-        if calls:
+        if used:
             for item in result.get('output',[]):
                 for content in item.get('content',[]):
                     for c in content.get('annotations',[]):
                         if c.get('type')=='url_citation' and c.get('url'):
                             rows.append({'url':c['url'],'title':c.get('title') or c['url'],'content':'','provider':'native'})
     else:
-        used={b.get('id') for b in result.get('content',[]) if b.get('type')=='server_tool_use' and b.get('name')=='web_search'}
+        used={b['id'] for b in result.get('content',[]) if b.get('type')=='server_tool_use' and b.get('name')=='web_search' and isinstance(b.get('id'),str) and b['id']}
         for b in result.get('content',[]):
-            if b.get('type')!='web_search_tool_result' or b.get('tool_use_id') not in used: continue
+            if b.get('type')!='web_search_tool_result':continue
+            blocks+=1
+            if b.get('tool_use_id') not in used: continue
             if not isinstance(b.get('content'),list): continue
-            calls+=1
             for c in b['content']:
                 if c.get('type')=='web_search_result' and c.get('url'):
                     rows.append({'url':c['url'],'title':c.get('title') or c['url'],'content':'','provider':'native','published_date':c.get('page_age','')})
-    if not calls or not rows:
-        from .execution_budget import search_usage
-        raise SearchEvidenceMissing('接口已响应，但未取得真实搜索工具记录及来源；当前服务的联网接入未验证',search_usage(s,dict(calls=calls,usage=result.get('usage') or {})))
-    if calls>limit: raise ValueError('中转站未遵守搜索工具次数上限，请核对账单；已停止使用该渠道')
-    rows=list({r['url']:r for r in rows}.values())
-    return rows,{'calls':calls,'seconds':round(time.monotonic()-started,2),'usage':result.get('usage',{})}
+    meta=dict(calls=len(used),seconds=round(time.monotonic()-started,2),usage=trace['usage'])
+    # Fingerprints allow comparing repeated IDs without storing arbitrary provider text.
+    meta['tool_id_fingerprints']=sorted(hashlib.sha256(str(x).encode()).hexdigest()[:16] for x in used)
+    return search_result(s,rows,meta,limit,response.status_code,blocks,len(used))
 
 
-async def gemini(s,query,limit=1):
+async def gemini(s,query,limit=1,trace=None):
+    trace=trace if trace is not None else {}
     # Use only the configured gateway. A relay credential must never be sent elsewhere.
     base=re.sub(r'/(?:v1|v1beta)/?$', '', s['base_url'].rstrip('/'))
     url=base+'/v1beta/models/'+quote(s['model'].removeprefix('models/'),safe='')+':generateContent'
     started=time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(100,connect=15)) as client:
+            trace['request_sent']=True
             r=await client.post(url,headers={'x-goog-api-key':s['secret'],'Authorization':'Bearer '+s['secret']},
                 json={'contents':[{'role':'user','parts':[{'text':'请使用 Google Search 检索并给出来源：'+query}]}],
                       'tools':[{'google_search':{}}], 'generationConfig':{'maxOutputTokens':2000}})
+            trace.update(response_received=True,http_status=r.status_code)
             if r.status_code>=400: raise bind(http_failure(r.status_code,r.text,r.headers),s)
             data=r.json()
             if isinstance(data,dict) and data.get('error'):raise bind(http_failure(r.status_code,json.dumps(data),r.headers),s)
     except httpx.HTTPError as exc:raise bind(connection_failure(exc),s) from None
     except json.JSONDecodeError:raise bind(ServiceFailure('Gemini 联网接口响应格式异常；当前接入方式未验证',category='malformed_response',request_sent=True,response_received=True,http_status=r.status_code),s) from None
     if not isinstance(data,dict):raise bind(ServiceFailure('Gemini 搜索接口响应结构异常；当前接入未验证',category='malformed_response',request_sent=True,response_received=True,http_status=r.status_code),s)
+    trace['usage']=safe_usage({'input_tokens':data.get('usageMetadata',{}).get('promptTokenCount'), 'output_tokens':data.get('usageMetadata',{}).get('candidatesTokenCount')})
     rows=[];queries=[]
     for c in data.get('candidates',[]):
         ground=c.get('groundingMetadata',{})
@@ -103,13 +182,9 @@ async def gemini(s,query,limit=1):
             if web.get('uri'):
                 excerpts=[x.get('segment',{}).get('text','') for x in ground.get('groundingSupports',[]) if index in x.get('groundingChunkIndices',[])]
                 rows.append(dict(url=web['uri'],title=web.get('title') or web['uri'],content=' '.join(excerpts),provider='native',snippet_kind='grounded_summary',status='excerpt_only'))
-    if not queries or not rows:
-        from .execution_budget import search_usage
-        usage={'input_tokens':data.get('usageMetadata',{}).get('promptTokenCount'),'output_tokens':data.get('usageMetadata',{}).get('candidatesTokenCount')}
-        raise SearchEvidenceMissing('接口已响应，但未取得真实搜索工具记录及来源；当前 Gemini 联网接入未验证',search_usage(s,dict(calls=len(set(queries)),usage=usage)))
     # Gemini can expand a request into several queries; record actual queries separately.
-    return list({r['url']:r for r in rows}.values()),dict(calls=len(set(queries)),queries=queries,seconds=round(time.monotonic()-started,2),
-        usage={'input_tokens':data.get('usageMetadata',{}).get('promptTokenCount'), 'output_tokens':data.get('usageMetadata',{}).get('candidatesTokenCount')})
+    return search_result(s,rows,dict(calls=len(set(queries)),queries=queries,seconds=round(time.monotonic()-started,2),
+        usage=trace['usage']),limit,r.status_code,len(rows),None)
 
 
 _ncbi_last=0.0
