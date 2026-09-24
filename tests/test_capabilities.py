@@ -67,3 +67,16 @@ def test_capability_error_retains_http_details_and_routes(client,monkeypatch):
     assert saved['failure']['provider_code']=='unsupported_tool' and saved['response_received']
     after=providers.settings()
     assert after['routes']==before['routes'] and after['search']==before['search']
+
+
+def test_optional_research_propagates_paid_service_failure(client,monkeypatch):
+    import asyncio
+    import pytest
+    from backend import store,research
+    from backend.service_errors import http_failure,ServiceFailure
+    a=store.create_article({'topic':'模拟研究'});j=store.create_job(a['id'],{'stage':'research'})
+    w=research.Research(a,j['id'],'sources');seen=[]
+    async def unavailable(*args):seen.append('native');raise http_failure(503)
+    monkeypatch.setattr(capabilities.search_tools,'native',unavailable)
+    with pytest.raises(ServiceFailure):asyncio.run(w.channel('native','synthetic question'))
+    assert seen==['native'] and store.job(j['id'])['execution_usage']['requests']==1

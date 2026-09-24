@@ -366,7 +366,9 @@ class Research:
             charged(status='unknown',estimated_cost=None);raise
         except Exception as exc:
             # Unknown paid requests are not replayed. Free indexes may retry on another query.
-            charged(status='unknown',estimated_cost=0 if price==0 else None,seconds=round(time.monotonic()-started,2))
+            charged(**(getattr(exc,'usage',None) or dict(status='unknown',estimated_cost=0 if price==0 else None,seconds=round(time.monotonic()-started,2))))
+            from .service_errors import ServiceFailure
+            if isinstance(exc,(ServiceFailure,execution_budget.BudgetExceeded)):raise
             self.channel_failures[channel]=self.channel_failures.get(channel,0)+1
             if channel in ('native','tavily') or self.channel_failures[channel]>=2:self.disabled.add(channel)
             detail=str(exc).lower()
