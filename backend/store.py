@@ -94,7 +94,7 @@ def get_article(id,include_trash=False):
 
 def list_articles(state='active', page=None, page_size=20, query=''):
     fields=('title','revision','updated','brief','current_stage','stages','trashed_at')
-    select='id,'+','.join(f"json_extract(data,'$.{k}') AS {k}" for k in fields)
+    select='id,'+','.join(f"json_extract(data,'$.{k}') AS {k}" for k in fields)+",json_extract(data,'$.content') AS word_content"
     where="coalesce(json_extract(data,'$.diagnostic'),0)=0 AND (json_extract(data,'$.trashed_at') IS NOT NULL)=?"
     params=[state=='trash']
     if query.strip():
@@ -105,8 +105,13 @@ def list_articles(state='active', page=None, page_size=20, query=''):
         sql='SELECT '+select+' FROM articles WHERE '+where+" ORDER BY json_extract(data,'$.updated') DESC,id DESC"
         if page is not None: sql+=' LIMIT ? OFFSET ?';params += [page_size,(page-1)*page_size]
         rows=[dict(r) for r in db.execute(sql,params)]
+        for row in rows:
+            latest=db.execute('SELECT data FROM jobs WHERE article_id=? ORDER BY rowid DESC LIMIT 1',(row['id'],)).fetchone()
+            if latest:
+                j=json.loads(latest[0]);row['latest_job']={k:j.get(k) for k in ('id','stage','status','message')}
     for row in rows:
         for key in ('brief','stages'):row[key]=json.loads(row[key])
+        row['word_count']=len(''.join((row.pop('word_content') or '').split()))
     return rows if page is None else dict(items=rows,total=total,page=page,page_size=page_size)
 
 

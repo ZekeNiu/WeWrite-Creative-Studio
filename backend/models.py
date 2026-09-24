@@ -31,6 +31,13 @@ class Layout(BaseModel):
     author: str = ''
 
 
+class InputDrafts(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    topic: str = Field('',max_length=2000)
+    topic_feedback: str = Field('',max_length=20000)
+    source_query: str = Field('',max_length=20000)
+
+
 class VisualSettings(BaseModel):
     enabled: bool = False
     count: int = Field(2, ge=1, le=6)

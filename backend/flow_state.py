@@ -79,6 +79,9 @@ def present(a):
 
 
 def job_view(j):
+    j=dict(j)
+    if j.get('stage') in (*STAGES,'research','revise','image','layout_advice','edit'):
+        j['retry_request']=retry_request(j,0)
     if j.get('stage')=='review' and j.get('status')=='needs_input' and j.get('current_step')=='generation':
         from . import store
         a=store.get_article(j['article_id']);review=a.get('review') or {}
@@ -93,3 +96,17 @@ def job_view(j):
         j=dict(j,status='needs_input',legacy_pause=True,
                message='资料核对暂停，尚未完成'+LABELS.get(j.get('stage'),'当前环节'))
     return j
+
+
+def retry_request(job,revision):
+    original=job.get('request') or {};stage=job['stage']
+    request=dict(stage=stage,revision=revision,chain=original.get('chain',False))
+    if original.get('execution_limits'):request['execution_limits']=original['execution_limits']
+    if stage=='image' and job.get('image_id'):request.update(image_id=job['image_id'],chain=False)
+    if original.get('stage')==stage:
+        fields={'topic':('instruction',),'sources':('instruction',),'research':('instruction','research_limits','research_parent_id','issue_ids'),
+                'outline':('instruction','section_id'),'write':('instruction',),'review':('instruction',),
+                'revise':('instruction','selected_text'),'image':('image_id',),'visual':('instruction',),
+                'edit':('instruction',),'layout_advice':('instruction',)}.get(stage,())
+        request.update({k:original[k] for k in fields if original.get(k) is not None})
+    return request

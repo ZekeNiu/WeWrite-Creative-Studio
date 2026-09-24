@@ -364,14 +364,18 @@ class Session:
         messages=[dict(role='user',content=json.dumps(dict(task=OUTPUTS[self.stage],home='.',run_id=self.state['run_id'],run_dir=self.directory.relative_to(self.home).as_posix(),
             request='request.json',style='style.yaml',account='account-reference.yaml',editor_notes='editor-notes.yaml',artifacts=self.state['artifacts']),ensure_ascii=False))]
         service=providers.service_for('research' if self.stage in ('learn','stats') else 'write' if self.stage=='rewrite' else 'review' if self.stage=='edit' else self.stage)
+        from .service_errors import service_identity,ServiceFailure
+        store.update_job(self.job_id,service=service_identity(service))
         try:
             while not self.finished:
                 account_memory.guard(self.used)
                 record=self.reserve(service,system+json.dumps(messages,ensure_ascii=False)+json.dumps(TOOLS,ensure_ascii=False))
+                store.update_job(self.job_id,activity='等待模型响应',request_started_at=store.now())
                 try:response=await agent_transport.turn(service,system,messages,TOOLS)
                 except BaseException:
                     self.charge(record,dict(status='unknown',estimated_cost=None));raise
                 self.charge(record,response['usage']);messages.extend(response['wire'])
+                store.update_job(self.job_id,last_progress_at=store.now(),activity='处理模型结果')
                 if response['text']:store.update_job(self.job_id,partial=response['text'])
                 if not response['calls']:raise ValueError('模型未调用完成工具；请确认所选模型支持工具调用。产物已保留，不会退回简化写作')
                 results=[]
@@ -382,7 +386,9 @@ class Session:
                     store.update_job(self.job_id,native_tool_count=self.command_count)
                     args=json.loads(call['arguments']) if isinstance(call['arguments'],str) else call['arguments']
                     store.event(self.job_id,'native_tool',tool=call['name'],arguments=args,execution_id=self.id)
+                    store.update_job(self.job_id,activity={'Read':'读取创作资料','List':'查看可用资料','Find':'定位资料','Write':'保存生成内容','Edit':'更新生成内容','WebSearch':'检索资料','WebFetch':'读取网页','WeWrite':'执行创作工具','Finish':'校验并保存结果'}.get(call['name'],'处理创作资料'),last_progress_at=store.now())
                     try:value=await self.execute(call['name'],args)
+                    except ServiceFailure:raise
                     except (ValueError,KeyError,OSError,TypeError) as exc:value=dict(error=str(exc)[:1800])
                     results.append((call['id'],json.dumps(value,ensure_ascii=False)))
                     store.update_job(self.job_id,native=dict(id=self.id,run_id=self.state['run_id'],upstream_revision=(native_skills.ROOT/'UPSTREAM_REVISION').read_text().strip(),reads=self.reads))

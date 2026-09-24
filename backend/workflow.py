@@ -193,9 +193,11 @@ def apply_review_fixes(a):
 
 async def generate_image(a,job_id,plan):
     from .execution_budget import reserve,charge
+    from .service_errors import service_identity
+    store.update_job(job_id,stage='image',image_id=plan['id'],activity='准备生成图片',last_progress_at=store.now())
     s=providers.service_for('image'); price=s.get('image_price')
     reservation=reserve(job_id,dict(s,input_price=None,output_price=None),fixed=price)
-    store.update_job(job_id,message='正在生成图片；连接中断时不会自动重复请求')
+    store.update_job(job_id,service=service_identity(s),activity='等待图片服务返回',message='正在生成图片；连接中断时不会自动重复请求')
     try:
         blob=await providers.image_generate(s,plan['prompt'],a['visual']['size'])
         image=Image.open(io.BytesIO(blob)); image.load()
@@ -206,7 +208,7 @@ async def generate_image(a,job_id,plan):
         charge(reservation,dict(status='unknown',estimated_cost=None))
         raise
     charge(reservation,dict(status='completed',estimated_cost=price))
-    item=dict(plan,filename=filename,selected=True,created=store.now(),id=store.uid())
+    item=dict(plan,plan_id=plan['id'],filename=filename,selected=True,created=store.now(),id=store.uid())
     store.update_job(job_id,result={'image':item})
     try:
         return store.save_article(a['id'],a['revision'],lambda v:v['images'].append(item),'生成图片',invalidate='visual')
@@ -225,7 +227,7 @@ async def run(job_id):
         store.update_job(job_id,status='running')
         while True:
             prerequisites(stage,a)
-            store.update_job(job_id,stage=stage,target_stage=j['request']['stage'],message='正在'+LABELS.get(stage,{'revise':'修改选段','image':'生成图片','layout_advice':'分析阅读与结构'}.get(stage,stage)),partial='',result=None)
+            store.update_job(job_id,stage=stage,target_stage=j['request']['stage'],message='正在'+LABELS.get(stage,{'revise':'修改选段','image':'生成图片','layout_advice':'分析阅读与结构'}.get(stage,stage)),partial='',result=None,failure=None,last_progress_at=store.now())
             store.event(job_id,'stage',stage=stage)
             # Draft review owns its independent factual audit. Re-running the
             # research pipeline here repeats notes and coverage checks before
@@ -262,6 +264,7 @@ async def run(job_id):
                 if not plan: raise ValueError('请先生成或添加配图方案')
                 a=await generate_image(a,job_id,plan)
             else:raise ValueError('未知执行环节')
+            store.update_job(job_id,stage=stage)
             store.event(job_id,'saved',revision=a['revision'])
             if stage not in STAGES or not req['chain'] or not a['auto'][stage] or a['stages'][stage]=='needs_input': break
             idx=STAGES.index(stage)+1
@@ -279,7 +282,9 @@ async def run(job_id):
         store.update_job(job_id,status='conflict',ended=store.now(),message=str(exc)+note)
     except Exception as exc:
         message=str(exc) if isinstance(exc,(ValueError,KeyError)) else '此环节未完成，内容已保留。请检查配置或重试。'
-        store.update_job(job_id,status='failed',ended=store.now(),message=message)
+        details=getattr(exc,'details',None) or dict(category='validation' if isinstance(exc,(ValueError,KeyError)) else 'unknown')
+        store.update_job(job_id,status='failed',ended=store.now(),message=message,
+                         failure=dict(details,stage=store.job(job_id)['stage'],at=store.now()))
     finally:
         ACTIVE.reset(budget_token)
         store.event(job_id,'finished',status=store.job(job_id)['status']); TASKS.pop(job_id,None)

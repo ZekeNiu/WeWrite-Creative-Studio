@@ -1,5 +1,7 @@
 export const STAGES=['topic','sources','outline','write','review','visual','layout'] as const;
 export type Stage=typeof STAGES[number];
+export interface Article {input_drafts?:{topic?:string;topic_feedback?:string;source_query?:string};word_count?:number;latest_job?:Pick<Job,'id'|'stage'|'status'|'message'>}
+export interface Job {service?:{id:string;name:string;model:string;protocol:string};activity?:string;request_started_at?:string;last_progress_at?:string;retry_request?:Record<string,unknown>;failure?:{category:string;http_status?:number;provider_code?:string;provider_type?:string;request_id?:string;retry_after_seconds?:number;retry_at?:string;stage:string;at:string;service?:Job['service']}|null}
 export interface Article {extensions?:{job_id:string;action:string;result:any;created:string}[]}
 export interface Job {external_receipt?:unknown}
 export interface Article {argument_synthesis?:{thesis:string;chain:{id:string;judgement:string;reasoning:string;boundary:string;source_ids:string[]}[];strongest_counterargument:string;conflicts:string[];boundaries:string[];reader_value:string;unresolved:string[]};editorial_candidates?:{id:string;status:string;checked?:boolean;created:string;content:string;explanation:string;changes:string[];review:any;diff:{kind:string;before:string;after:string}[]}[];draft_versions?:{id:string;kind:string;created:string;content:string;review_state?:string}[]}

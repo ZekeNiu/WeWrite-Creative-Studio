@@ -98,6 +98,12 @@ app.state.fixture_id=a['id']
 def fixture():return dict(id=app.state.fixture_id)
 app.routes.insert(0,app.routes.pop())
 
+if os.environ.get('QA_DIST'):
+    from starlette.routing import Mount
+    from starlette.staticfiles import StaticFiles
+    app.routes[:]=[route for route in app.routes if not (isinstance(route,Mount) and route.name=='frontend')]
+    app.mount('/',StaticFiles(directory=os.environ['QA_DIST'],html=True),name='frontend')
+
 if __name__=='__main__':
     import uvicorn
     uvicorn.run(app,host='127.0.0.1',port=int(os.environ.get('QA_PORT','8977')),access_log=False)

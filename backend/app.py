@@ -246,11 +246,15 @@ def article(id:str): return store.get_article(id)
 
 @app.patch('/api/articles/{id}')
 def patch(id:str,payload:ArticlePatch):
+    from .models import InputDrafts
     stage=payload.stage
     if stage not in ['setup',*STAGES,'preferences']: raise ValueError('未知编辑环节')
-    allowed={'title','brief','auto','outline','content','layout','visual','image_plans','images','sources','current_stage','research_limits','history_fields'}
+    allowed={'title','brief','auto','outline','content','layout','visual','image_plans','images','sources','current_stage','research_limits','history_fields','input_drafts'}
     if set(payload.changes)-allowed: raise ValueError('包含不可修改的字段')
     c=payload.changes.copy()
+    if 'input_drafts' in c:
+        if stage!='preferences':raise ValueError('输入草稿必须作为偏好保存，不改变创作结果')
+        c['input_drafts']=InputDrafts.model_validate(c['input_drafts']).model_dump(exclude_unset=True)
     if 'history_fields' in c:
         c['history_fields']=account_memory.HistoryFields.model_validate(c['history_fields']).model_dump()
         if c['history_fields']['published_at']:account_memory.timestamp(c['history_fields']['published_at'])

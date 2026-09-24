@@ -7,6 +7,7 @@ from urllib.parse import quote
 import xml.etree.ElementTree as ET
 import httpx
 from . import providers, materials
+from .service_errors import bind,http_failure,connection_failure
 
 
 async def native(s,query,limit=1):
@@ -26,13 +27,13 @@ async def native(s,query,limit=1):
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(100,connect=15)) as client:
             async with client.stream('POST',providers.endpoint(s['base_url'],path),headers=providers.headers(s),json=body) as response:
-                if response.status_code>=400: raise ValueError(providers.http_error(response.status_code))
+                if response.status_code>=400: raise bind(http_failure(response.status_code,(await response.aread()).decode('utf-8',errors='replace'),response.headers),s)
                 if 'text/event-stream' in response.headers.get('content-type',''):
                     result={}; blocks=[]; completed=False
                     async for frame in providers.frames(response):
                         if frame=='[DONE]': continue
                         event=json.loads(frame)
-                        if event.get('error') or event.get('type') in ('error','response.failed'): raise ValueError('搜索工具返回错误')
+                        if event.get('error') or event.get('type') in ('error','response.failed'): raise bind(http_failure(response.status_code,json.dumps(event.get('response') or event),response.headers),s)
                         if event.get('type') in ('response.completed','response.done'): result=event.get('response',{});completed=True
                         if event.get('type')=='message_start': result=event.get('message',{})
                         if event.get('type')=='content_block_start': blocks.append(event.get('content_block',{}))
@@ -40,9 +41,10 @@ async def native(s,query,limit=1):
                         if event.get('type')=='message_stop': completed=True
                     if not completed: raise ValueError('搜索流中断，未收到完成信号；本任务不自动重复该付费请求')
                     if blocks: result['content']=blocks
-                else: result=json.loads(await response.aread())
-    except httpx.TimeoutException: raise ValueError('原生搜索超时，可能已计费；本任务不重复请求该服务') from None
-    except httpx.HTTPError: raise ValueError('原生搜索连接失败，正在尝试其他渠道') from None
+                else:
+                    result=json.loads(await response.aread())
+                    if result.get('error'):raise bind(http_failure(response.status_code,json.dumps(result),response.headers),s)
+    except httpx.HTTPError as exc: raise bind(connection_failure(exc),s) from None
     rows=[]; calls=0
     if s['protocol']=='responses':
         for item in result.get('output',[]):
@@ -82,12 +84,11 @@ async def gemini(s,query,limit=1):
             r=await client.post(url,headers={'x-goog-api-key':s['secret'],'Authorization':'Bearer '+s['secret']},
                 json={'contents':[{'role':'user','parts':[{'text':'请使用 Google Search 检索并给出来源：'+query}]}],
                       'tools':[{'google_search':{}}], 'generationConfig':{'maxOutputTokens':2000}})
-            if r.status_code>=400: raise ValueError(providers.http_error(r.status_code))
+            if r.status_code>=400: raise bind(http_failure(r.status_code,r.text,r.headers),s)
             data=r.json()
-    except httpx.TimeoutException: raise ValueError('Gemini 联网测试超时，可能已计费，不自动重复提交') from None
-    except (httpx.HTTPError,ValueError) as exc:
-        if isinstance(exc,ValueError) and not isinstance(exc,json.JSONDecodeError): raise
-        raise ValueError('Gemini 联网接口连接或响应格式异常；当前接入方式未验证') from None
+            if data.get('error'):raise bind(http_failure(r.status_code,json.dumps(data),r.headers),s)
+    except httpx.HTTPError as exc:raise bind(connection_failure(exc),s) from None
+    except json.JSONDecodeError:raise ValueError('Gemini 联网接口响应格式异常；当前接入方式未验证') from None
     rows=[];queries=[]
     for c in data.get('candidates',[]):
         ground=c.get('groundingMetadata',{})

@@ -12,10 +12,11 @@ export function useSidebarState(articleId:string|undefined,step:Stage){
  useEffect(()=>{const mq=matchMedia('(max-width: 1199px)');const changed=()=>setNarrow(mq.matches);mq.addEventListener('change',changed);return()=>mq.removeEventListener('change',changed)},[]);
  const key='context-sidebar:'+articleId+':'+step;
  const view=useMemo(()=>{const saved=views.current[key]||readView<View>(key,{tab:'context',open:true,drawerOpen:false});return {...saved,tab:saved.tab==='brief'?'brief' as const:'context' as const}},[key,version]);
- function change(patch:{tab?:View['tab'];open?:boolean}){
-  const next={...view};if(patch.tab)next.tab=patch.tab;
+ function change(patch:{tab?:View['tab'];open?:boolean},target:Stage=step){
+  const targetKey='context-sidebar:'+articleId+':'+target;
+  const next={...(target===step?view:views.current[targetKey]||readView<View>(targetKey,{tab:'context',open:true,drawerOpen:false}))};if(patch.tab)next.tab=patch.tab;
   if(patch.open!==undefined)next[narrow?'drawerOpen':'open']=patch.open;
-  views.current[key]=next;remember(key,next);setVersion(v=>v+1);
+  views.current[targetKey]=next;remember(targetKey,next);setVersion(v=>v+1);
  }
  return {side:step!=='layout'&&(narrow?view.drawerOpen:view.open),tab:view.tab,narrow,change};
 }

@@ -46,7 +46,7 @@ export default function AccountPanel({article,onClose,refreshArticle}:{article:A
  </div>;
  const picker=<Select label="关联文章" value={chosen} onChange={setChosen}><option value="">请选择文章</option>{chosen&&!history.items.some(x=>x.article_id===chosen)&&<option value={chosen}>{article?.title||'已选择文章'}</option>}{history.items.filter(x=>x.status!=='trash').map(x=><option key={x.article_id} value={x.article_id}>{x.title} · {x.column}</option>)}</Select>;
  return <Modal title="账号与学习" wide onClose={()=>void act(async()=>{await flushFields();await refreshArticle();onClose()})}><div className="account-panel">
-  <p className="muted">单公众号；偏好默认只用于原栏目，本篇要求优先。这里的参考不会作为事实依据。</p>
+  <p className="muted">账号定位与已有偏好编辑后自动保存；范文导入和效果记录需点击对应按钮提交。单公众号；偏好默认只用于原栏目，本篇要求优先。这里的参考不会作为事实依据。</p>
   <nav className="account-tabs" aria-label="账号管理">{[['profile','账号定位'],['history','历史索引'],['rules','人工改稿学习'],['examples','范文'],['metrics','效果记录'],['uses','本篇使用记录']].map(([key,label])=><button className={'button '+(tab===key?'secondary':'ghost')} key={key} onClick={()=>act(async()=>{await flushFields();setTab(key)})}>{label}</button>)}</nav>
   {error&&<p className="notice amber" role="alert">{error}<button className="text-button" onClick={()=>act(reload)}>刷新账号记录</button></p>}
   {!account?<Busy/>:<>

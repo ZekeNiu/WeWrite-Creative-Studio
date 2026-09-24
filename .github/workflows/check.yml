@@ -1,7 +1,7 @@
 name: Windows acceptance
 on:
   push:
-    branches: [main, 'codex/quality-*']
+    branches: [main, 'codex/*']
   pull_request:
 permissions:
   contents: read
@@ -40,6 +40,8 @@ jobs:
             if (-not $ready) { throw 'QA server did not start' }
             python tools/check_reliability_ui.py
             if ($LASTEXITCODE -ne 0) { throw 'Browser acceptance failed' }
+            python tools/check_ui_reliability_v230.py
+            if ($LASTEXITCODE -ne 0) { throw 'UI reliability acceptance failed' }
           } finally {
             if (-not $qa.HasExited) { Stop-Process -Id $qa.Id }
           }

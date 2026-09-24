@@ -15,8 +15,9 @@ async def check(page,base,out):
     assert response.ok
     await page.goto(base+'/#'+a['id'])
     await page.get_by_role('button',name='扩展',exact=True).click()
-    dialog=page.get_by_role('dialog',name='上游扩展',exact=True)
+    dialog=page.get_by_role('dialog',name='创作扩展',exact=True)
     await dialog.get_by_role('button',name='自定义人格',exact=True).click()
+    await dialog.get_by_text('高级：人格编号',exact=True).click()
     await dialog.get_by_label('自定义人格编号',exact=True).fill('user-fixture')
     await dialog.get_by_label('人格显示名称',exact=True).fill('验收读书人')
     await dialog.get_by_label('人格与语感',exact=True).fill('从具体问题展开，保留自然的声音。')
@@ -24,6 +25,7 @@ async def check(page,base,out):
     await expect(dialog.get_by_role('button',name='编辑人格',exact=True)).to_be_visible()
     await dialog.get_by_role('button',name='学习排版',exact=True).click()
     await dialog.get_by_label('公众号排版参考链接',exact=True).fill('https://mp.weixin.qq.com/s/fixture-theme')
+    await dialog.get_by_text('高级：主题编号',exact=True).click()
     await dialog.get_by_label('新主题编号',exact=True).fill('user-fixture-theme')
     await dialog.get_by_label('新主题显示名称',exact=True).fill('验收学习主题')
     await dialog.get_by_role('button',name='学习并保存主题',exact=True).click()

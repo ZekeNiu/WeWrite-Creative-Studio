@@ -80,3 +80,36 @@
 .account-panel code{white-space:normal;overflow-wrap:anywhere}
 .account-footer{border-top:1px solid var(--line);padding-top:16px;margin-top:20px}
 @media(max-width:700px){.account-panel{padding:0 14px 18px}.header-actions{flex-wrap:wrap}.account-tabs .button{padding:8px}.account-footer small{width:100%}}
+
+/* v2.3: readable controls and truthful task states, preserving the layout editor. */
+:root{--muted:#647568}
+.button,.workspace-title .button,.source-actions .button{font-size:14px}
+.field>span,.context-body .field>span,.context-body summary,.workspace-title p,.topic-input p,.topic-input input,.topic-input .button,.stage-options .save-state,.source-actions>.muted,.editor-tip,.usage-table td small,.topic-card .muted,.service-card details .muted,.small-text{font-size:12px}
+.field input,.field textarea,.field select,.context-body input,.context-body textarea,.context-body select,.route-row input,.route-row select{font-size:14px}
+.workspace-title p,.save-state,.topic-input p,.editor-tip{color:var(--muted)}
+button:focus-visible,summary:focus-visible,select:focus-visible{outline:2px solid var(--green);outline-offset:3px}
+.stage-service,.task-brief{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:0 0 18px;font-size:12px;color:var(--muted)}
+.stage-service>span{min-width:0;overflow-wrap:anywhere}.stage-service small{font-size:12px}
+.task-status{margin-bottom:18px;overflow-wrap:anywhere}.task-status p{line-height:1.7;margin:10px 0}.task-status details{margin-top:12px}.task-status .row{gap:12px}
+.failure-details{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px;font-size:12px}.failure-details dd{margin:0;overflow-wrap:anywhere}
+.topic-input .row>.field{flex:1;min-width:0;margin-bottom:0}.topic-input .row{align-items:flex-end}.topic-adoption{margin:-16px 0 22px;line-height:1.7}
+.source-search>.field{flex:1;min-width:160px;margin:0}.source-search>.field>span{display:none}.source-search>.field input{border:0;padding:8px;width:100%}
+.desktop-extras{display:flex;gap:10px}.mobile-extras{display:none}.header-actions{gap:12px;flex-wrap:nowrap}.header-center{min-width:0}
+.returning-home .home-top{min-height:0;padding-bottom:24px}.returning-home .home-illustration,.returning-home .home-intro .eyebrow,.returning-home .home-intro>p,.returning-home .home-process{display:none}.returning-home .home-intro h1{font-size:24px;margin:0 0 18px;line-height:1.5}.returning-home .home-intro h1 br{display:none}.returning-home{padding-top:28px}
+.article-card-bottom small{display:block;font-size:12px;margin-top:6px}.library-failure{color:#95602b}.article-open p{font-size:12px}
+.outline-card>.row:first-child{flex-wrap:wrap;gap:9px}.outline-card>.row:first-child>.grow{flex:1 1 180px}.outline-card.collapsed>.field{display:none}.outline-card .text-button{font-size:12px}.outline-card.collapsed{padding-bottom:12px}
+.route-highlight{background:var(--soft);border-radius:8px;padding:12px;outline:1px solid #b9cdbd}.route-row{scroll-margin:18px}.settings-content .section-intro p{font-size:12px}
+.handled-review{margin-top:20px}.handled-review>summary{padding:12px 0;color:var(--muted)}.editorial-panel{margin:0 0 18px}.editorial-panel>p{margin:10px 0;font-size:12px}.editorial-panel .row{gap:12px}.editor-tip{flex-wrap:wrap;line-height:1.7}.editor-toolbar{gap:8px}
+.account-tabs{display:flex;gap:8px;flex-wrap:wrap}.account-panel .check{display:inline-flex;align-items:center;gap:8px;margin:10px 18px 18px 0}.account-panel .check input{width:18px;height:18px}.image-meta>p{margin-bottom:12px}
+@media(max-width:1199px){.topic-input .row>.field{flex-basis:100%}.header-actions .button{padding:9px 10px}.header-actions{gap:8px}.app-header .local-badge{display:none}}
+@media(max-width:760px){
+ .app-header{height:60px;padding:0 12px;gap:8px}.brand{font-size:17px}.brand-sub{font-size:10px}.header-actions{gap:6px;flex-wrap:nowrap}.desktop-extras{display:none}.mobile-extras{display:block;position:relative}.mobile-extras>summary{padding:10px 12px;list-style:none;border:1px solid var(--line);border-radius:6px;font-size:13px}.mobile-extras[open]{background:var(--paper)}.mobile-extras>button{display:block;position:absolute;right:0;width:145px;padding:12px;background:var(--paper);border:1px solid var(--line);font-size:14px;text-align:left;box-shadow:0 8px 20px #1f392211}.mobile-extras>button:nth-of-type(1){top:42px}.mobile-extras>button:nth-of-type(2){top:86px}.mobile-extras>button:nth-of-type(3){top:130px}.mobile-extras>button:nth-of-type(4){top:174px}.header-settings{min-height:40px}
+ .workspace{display:block}.flow-sidebar{position:static;width:100%;height:auto;padding:10px 12px;border-right:0;border-bottom:1px solid var(--line)}.flow-sidebar .back-link{display:none}.flow-sidebar nav{display:flex;overflow-x:auto;gap:5px;padding:3px}.stage-nav{flex:0 0 auto;width:auto;gap:6px;padding:9px;margin:0}.stage-nav>.grow{display:block}.stage-nav strong{font-size:13px}.stage-nav small{font-size:11px}.stage-icon{width:17px}.stage-nav.not-ready{opacity:.85}
+ .article-main,.article-main.has-side{padding:20px 14px 0}.workspace-title{gap:10px}.workspace-title-actions{flex-direction:column;max-width:48%}.workspace-title-actions .button{white-space:normal}.workspace-title p{font-size:12px}.stage-options{flex-wrap:wrap}.stage-service{line-height:1.6}.stage-footer{gap:8px}.stage-footer .button{font-size:12px;white-space:normal}.topic-input{padding:16px}.topic-input h2{font-size:20px}.empty{padding:26px 16px}.source-search>.field{flex-basis:65%}.source-search .primary{width:100%}.context-drawer{width:min(340px,calc(100vw - 24px))}.editor-toolbar .row{flex-wrap:wrap}.editor-toolbar .icon-button{width:32px;height:32px}.editor-toolbar{top:60px}.editorial-panel .button{width:100%}.settings-tabs{overflow-x:auto}.settings-tabs button{font-size:12px}.route-row{grid-template-columns:65px minmax(0,1fr)}.settings-content{max-height:55vh}.modal-footer{gap:12px}.modal-head h2{font-size:18px}.preview-label{width:100%}.layout-workspace{gap:18px}.phone-frame{width:375px;max-width:100%}.flow-sidebar .sidebar-bottom{display:none}
+}
+
+.stage-nav .nav-task{font-size:11px;color:var(--muted)}.stage-nav .nav-task.warning{color:#8f521f}
+
+.text-button,.context-body p,.context-body small,.context-nav>button,.stage-nav small,.stage-nav .nav-task,.field>small,.stage-footer>span,.task-status .muted{font-size:12px}
+
+.mobile-extras{margin:0;padding:0;border:0}.mobile-extras>summary{margin:0}.tag{font-size:12px}.toggle-label{font-size:12px}

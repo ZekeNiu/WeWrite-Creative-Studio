@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 import httpx
 from . import store, security
 from .models import Settings, Service
+from .service_errors import bind,http_failure,connection_failure
 
 
 def settings():
@@ -124,19 +125,8 @@ def headers(s):
 
 
 def http_error(status,detail=''):
-    # Gateways may report billing failures as 403. Identify the structured cause
-    # without reflecting arbitrary upstream text (which can contain credentials).
-    try: data=json.loads(detail)
-    except (ValueError,TypeError):data=None
-    error=data.get('error',data) if isinstance(data,dict) else None
-    if isinstance(error,dict):
-        code=str(error.get('code','')).lower()
-        kind=str(error.get('type','')).lower()
-        message=str(error.get('message','')).strip().lower()
-        if code=='insufficient_balance' or (kind=='billing_error' and message in ('insufficient balance','insufficient account balance')):
-            return '模型服务账户余额不足，请在当前服务商处充值后重试'
-    return {400:'模型不接受当前请求，请检查接口协议、模型名称和高级参数',401:'API Key 无效或已过期，请检查服务配置',403:'服务拒绝访问，请检查 Key 的分组或模型权限',
-            404:'模型或接口地址不存在，请检查协议、地址和模型名称',429:'请求过于频繁或额度不足，请稍后重试'}.get(status,f'上游服务返回 HTTP {status}，请检查服务状态后重试')
+    from .service_errors import http_failure
+    return str(http_failure(status,detail))
 
 
 async def frames(response):
@@ -187,13 +177,13 @@ async def _generate(s, system, prompt, emit=None):
         async with httpx.AsyncClient(timeout=httpx.Timeout(240,connect=20)) as client:
             async with client.stream('POST',endpoint(s['base_url'],path),headers=headers(s),json=body) as response:
                 if response.status_code>=400:
-                    detail=(await response_body(response)).decode('utf-8',errors='replace').lower()
-                    if response.status_code in (400,422) and body.get('response_format') and re.search(r'response_format|json_schema|json schema|structured.output',detail) and re.search(r'unsupported|not supported|not support|does not support|unrecognized|unknown parameter|不支持|未知参数',detail):
+                    detail=(await response_body(response)).decode('utf-8',errors='replace')
+                    if response.status_code in (400,422) and body.get('response_format') and re.search(r'response_format|json_schema|json schema|structured.output',detail.lower()) and re.search(r'unsupported|not supported|not support|does not support|unrecognized|unknown parameter|不支持|未知参数',detail.lower()):
                         raise StructuredOutputUnsupported('当前接口明确不支持结构化输出参数')
-                    raise ValueError(http_error(response.status_code,detail))
+                    raise bind(http_failure(response.status_code,detail,response.headers),s)
                 if 'text/event-stream' not in response.headers.get('content-type',''):
                     raw=await response_body(response); d=json.loads(raw)
-                    if d.get('error'): raise ValueError('模型返回错误，请检查模型权限和额度')
+                    if d.get('error'): raise bind(http_failure(response.status_code,json.dumps(d),response.headers),s)
                     text=extract_json_text(d,protocol); usage=d.get('usage',{})
                     completed=True
                     if protocol=='chat' and common['stream'] is False:
@@ -208,7 +198,7 @@ async def _generate(s, system, prompt, emit=None):
                         try: d=json.loads(frame)
                         except json.JSONDecodeError: raise ValueError('模型流格式无效，已保留此前返回内容') from None
                         if d.get('error') or d.get('type') in ('error','response.failed'):
-                            raise ValueError('模型流返回错误，已保留此前内容')
+                            raise bind(http_failure(response.status_code,json.dumps(d.get('response') or d),response.headers),s)
                         delta=''
                         if protocol=='chat':
                             for choice in d.get('choices',[]):
@@ -229,10 +219,8 @@ async def _generate(s, system, prompt, emit=None):
                         if delta:
                             text+=delta
                             if emit: await emit(delta)
-    except httpx.TimeoutException:
-        raise ValueError('模型响应超时；已保留内容，本次可能计费，请手动重试') from None
-    except httpx.HTTPError:
-        raise ValueError('无法连接模型服务或连接中断，请检查网络与调用地址') from None
+    except httpx.HTTPError as exc:
+        raise bind(connection_failure(exc),s) from None
     if not completed: raise ValueError('模型连接提前结束，未收到完成信号；部分结果已保留')
     if truncated: raise ValueError('模型输出达到长度上限；请提高最大输出长度后重试，部分结果已保留')
     if not text.strip(): raise ValueError('模型未返回可用正文，请检查该模型和协议是否匹配')
@@ -260,15 +248,17 @@ async def image_generate(s, prompt, size, emit=None):
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(300,connect=20)) as client:
             async with client.stream('POST',endpoint(s['base_url'],'images/generations'),headers=headers(s),json=body) as r:
-                if r.status_code>=400: raise ValueError(http_error(r.status_code))
+                if r.status_code>=400: raise bind(http_failure(r.status_code,(await r.aread()).decode('utf-8',errors='replace'),r.headers),s)
                 if 'text/event-stream' in r.headers.get('content-type',''):
                     async for frame in frames(r):
                         if frame=='[DONE]': continue
                         d=json.loads(frame)
-                        if d.get('error') or d.get('type') in ('error','image_generation.failed'): raise ValueError('图片服务返回失败，本次可能计费')
+                        if d.get('error') or d.get('type') in ('error','image_generation.failed'): raise bind(http_failure(r.status_code,json.dumps(d),r.headers),s)
                         if d.get('type')=='image_generation.completed' or (d.get('data') and not d.get('type')): final=d
                         elif emit: await emit('图片正在生成…')
-                else: final=json.loads(await r.aread())
+                else:
+                    final=json.loads(await r.aread())
+                    if final.get('error'):raise bind(http_failure(r.status_code,json.dumps(final),r.headers),s)
             if not final: raise ValueError('图片流未返回最终图片，不会把中间预览当作成功')
             item=(final.get('data') or [final])[0]
             if item.get('b64_json'): return base64.b64decode(item['b64_json'],validate=True)
@@ -277,12 +267,12 @@ async def image_generate(s, prompt, size, emit=None):
                 blob,_=await fetch_bytes(item['url'],max_bytes=30*1024*1024)
                 return blob
             raise ValueError('图片接口没有返回可保存的图片')
-    except httpx.TimeoutException: raise ValueError('图片生成超时，结果未知，不自动重试') from None
-    except httpx.HTTPError: raise ValueError('图片连接失败，结果未知，不自动重试') from None
+    except httpx.HTTPError as exc: raise bind(connection_failure(exc),s) from None
 
 
 async def search(query, days=None):
     cfg=settings()['search']; secret=security.key('tavily')
+    identity=dict(id='tavily',name='Tavily 检索',model='tavily',protocol='search',secret=secret)
     if not secret: raise ValueError('尚未配置搜索服务，可在设置中填写 Tavily Key，或直接导入材料')
     try:
         async with httpx.AsyncClient(timeout=60) as client:
@@ -291,6 +281,6 @@ async def search(query, days=None):
                 'query':query,'max_results':8,'search_depth':'basic','include_raw_content':True,'include_answer':False,
                 **({'start_date':(datetime.now(timezone.utc)-timedelta(days=days)).date().isoformat()} if days else {})}
             r=await client.post(cfg['base_url'].rstrip('/')+'/search',headers={'Authorization':'Bearer '+secret},json=body)
-            if r.status_code>=400: raise ValueError('搜索服务：'+http_error(r.status_code))
+            if r.status_code>=400: raise bind(http_failure(r.status_code,r.text,r.headers),identity)
             return r.json().get('results',[])
-    except httpx.HTTPError: raise ValueError('搜索连接失败，请检查网络；已有素材已保留') from None
+    except httpx.HTTPError as exc: raise bind(connection_failure(exc),identity) from None

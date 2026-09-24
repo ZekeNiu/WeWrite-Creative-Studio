@@ -28,6 +28,7 @@ def adopt(a, title, topic_id=''):
     current.pop('direction_change',None)
     a['creative_intent']=current
     a['title']=plan['title'];a['brief']['topic']=plan['title']
+    a.setdefault('input_drafts',{})['topic']=plan['title']
     a['stages']['topic']='done';a['current_stage']='sources'
 
 

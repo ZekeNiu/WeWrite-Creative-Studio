@@ -2,7 +2,7 @@ import {useEffect,useRef,useState,useId,type ReactNode} from 'react';
 import {X,LoaderCircle,ChevronDown} from 'lucide-react';
 import {registerField,notifyFields} from './fieldChanges';
 
-export function Field({label,value,onCommit,placeholder='',multiline=false,type='text',min,max,hint}:{label:string;value:string|number;onCommit:(s:string)=>void|Promise<unknown>;placeholder?:string;multiline?:boolean;type?:string;min?:number;max?:number;hint?:string}){
+export function Field({label,value,onCommit,placeholder='',multiline=false,type='text',min,max,hint,autoSave=false}:{label:string;value:string|number;onCommit:(s:string)=>void|Promise<unknown>;placeholder?:string;multiline?:boolean;type?:string;min?:number;max?:number;hint?:string;autoSave?:boolean}){
  const [local,setLocal]=useState(String(value??'')),[error,setError]=useState('');
  const draft=useRef(local),dirty=useRef(false),focused=useRef(false),pending=useRef<Promise<void>|null>(null);
  const commitRef=useRef(onCommit);commitRef.current=onCommit;
@@ -15,8 +15,10 @@ export function Field({label,value,onCommit,placeholder='',multiline=false,type=
   pending.current=task;try{await task}finally{if(pending.current===task)pending.current=null}
  }
  const flushRef=useRef(commit);flushRef.current=commit;
+ const timer=useRef<ReturnType<typeof setTimeout>|null>(null);
+ useEffect(()=>()=>{if(timer.current)clearTimeout(timer.current)},[]);
  useEffect(()=>registerField(()=>flushRef.current(),()=>dirty.current),[]);
- const props={'aria-label':label,'aria-invalid':!!error,value:local,placeholder,onFocus:()=>{focused.current=true},onBlur:()=>{focused.current=false;void commit().catch(()=>{})},onChange:(e:React.ChangeEvent<HTMLInputElement|HTMLTextAreaElement>)=>{draft.current=e.target.value;dirty.current=true;setLocal(e.target.value);notifyFields()}};
+ const props={'aria-label':label,'aria-invalid':!!error,value:local,placeholder,onFocus:()=>{focused.current=true},onBlur:()=>{focused.current=false;void commit().catch(()=>{})},onChange:(e:React.ChangeEvent<HTMLInputElement|HTMLTextAreaElement>)=>{draft.current=e.target.value;dirty.current=true;setLocal(e.target.value);notifyFields();if(autoSave){if(timer.current)clearTimeout(timer.current);timer.current=setTimeout(()=>void flushRef.current().catch(()=>{}),500)}}};
  return <label className="field"><span>{label}</span>{multiline?<textarea {...props} rows={3}/>:<input {...props} type={type} min={min} max={max}/>} {hint&&<small>{hint}</small>}{error&&<small role="alert">{error}<button type="button" className="text-button" onClick={()=>void commit().catch(()=>{})}>重试保存</button></small>}</label>
 }
 export function Toggle({checked,onChange,label,small=false}:{checked:boolean;onChange:(v:boolean)=>void|Promise<unknown>;label:string;small?:boolean}){

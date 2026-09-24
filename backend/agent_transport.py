@@ -7,6 +7,7 @@ import json
 import time
 import httpx
 from . import providers
+from .service_errors import http_failure,connection_failure,bind
 
 
 def request_body(service, system, messages, tools):
@@ -68,10 +69,12 @@ async def turn(service, system, messages, tools):
         async with httpx.AsyncClient(timeout=httpx.Timeout(240, connect=20)) as client:
             response = await client.post(providers.endpoint(service['base_url'], path), headers=providers.headers(service), json=body)
             if response.status_code >= 400:
-                raise ValueError(providers.http_error(response.status_code, response.text))
+                raise bind(http_failure(response.status_code,response.text,response.headers),service)
             data = response.json()
-    except httpx.HTTPError:
-        raise ValueError('模型工具连接中断或超时；本次可能计费，已保留任务，不自动重试') from None
+    except httpx.HTTPError as exc:
+        raise bind(connection_failure(exc),service) from None
+    if data.get('error'):
+        raise bind(http_failure(response.status_code,json.dumps(data),response.headers),service)
     usage = data.get('usage', {})
     inp, out = usage.get('input_tokens', usage.get('prompt_tokens')), usage.get('output_tokens', usage.get('completion_tokens'))
     cost = None
