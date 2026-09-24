@@ -7,7 +7,7 @@ export default function SearchPreferences({cfg,onChange}:{cfg:Settings;onChange:
  return <section className="service-card"><h3>自动查找与核对资料</h3><p className="muted">先使用已有材料，再由联网模型查找缺失的依据；资料足够就继续创作。</p>
  <Toggle checked={s.enabled} onChange={v=>onChange({enabled:v})} label="创作时自动检索与核对来源"/>
  <Select label="联网模型" value={JSON.stringify([s.native_service_id||cfg.default_service,s.native_model||selected?.model||''])} onChange={v=>{const [service_id,model]=JSON.parse(v);const card=cards.find(c=>c.service_id===service_id&&c.model===model);onChange({native_service_id:service_id,native_model:model,native_protocol:card?.search_protocol||'inherit'})}}><option value="">请选择已配置模型</option>{cards.map(c=><option key={JSON.stringify([c.service_id,c.model])} value={JSON.stringify([c.service_id,c.model])}>{c.name} · {c.model||'未填写模型'}</option>)}</Select>
- <p className="small-text muted">在“能力测试”的对应模型卡片中配置联网接入。测试不会自动切换这里的模型。</p>
+ <p className="small-text muted">在“能力测试”的对应模型卡片中配置模型原生联网接口。测试不会自动切换这里的模型。</p>
  <Toggle checked={s.allow_fallback!==false} onChange={v=>onChange({allow_fallback:v})} label="模型失败或证据不足时，允许使用后备搜索"/>
  <details><summary>高级设置：后备渠道、论文补查与限额</summary>
  <Toggle checked={s.browser_enabled} onChange={v=>onChange({browser_enabled:v})} label="启用备用网页搜索"/>

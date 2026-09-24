@@ -12,6 +12,14 @@ class ServiceFailure(ValueError):
         self.details=details
 
 
+class SearchEvidenceMissing(ValueError):
+    """A valid search response without verified sources may use configured fallback."""
+    def __init__(self,message,usage=None):
+        super().__init__(message)
+        self.details=dict(category='search_evidence_missing',request_sent=True,response_received=True,http_status=200)
+        self.usage=usage
+
+
 def identifier(value):
     value=str(value or '')
     return value if re.fullmatch(r'[\w.:-]{1,100}',value,re.ASCII) and not value.lower().startswith(('sk-','bearer','api_key','api-key')) else ''
@@ -38,7 +46,7 @@ def http_failure(status,detail='',headers=None):
     elif codes & {'rate_limit_exceeded','rate_limit_error','too_many_requests','requests_limit_exceeded'}:
         category,text='rate_limit','模型服务请求限流，请等待限制解除后重新运行'
     headers={k.lower():v for k,v in (headers or {}).items()}
-    details=dict(category=category,http_status=status,provider_code=code,provider_type=kind,
+    details=dict(category=category,http_status=status,request_sent=True,response_received=True,provider_code=code,provider_type=kind,
         request_id=identifier(headers.get('x-request-id') or headers.get('request-id') or headers.get('x-amzn-requestid')))
     retry=headers.get('retry-after')
     if retry and category in ('rate_limit','rate_limit_or_quota','service_error'):
@@ -55,7 +63,7 @@ def connection_failure(exc):
     import httpx
     timeout=isinstance(exc,httpx.TimeoutException)
     return ServiceFailure('模型工具等待响应超时；本次费用可能未知，已保留任务，请核对服务状态后重新运行' if timeout else
-        '模型服务连接中断；本次费用可能未知，已保留任务，请检查连接后重新运行',category='timeout' if timeout else 'connection')
+        '模型服务连接中断；本次费用可能未知，已保留任务，请检查连接后重新运行',category='timeout' if timeout else 'connection',request_sent=True,response_received=False)
 
 
 def service_identity(service):

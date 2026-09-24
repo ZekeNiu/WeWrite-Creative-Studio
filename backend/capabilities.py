@@ -4,6 +4,15 @@ from PIL import Image
 from . import store,providers,security,search_tools,outputs
 from . import public_network
 from .models import ROUTES
+from .service_errors import ServiceFailure,SearchEvidenceMissing,service_identity
+
+
+SEARCH_UNCONFIGURED='尚未发送搜索请求：请配置模型原生联网接口；仍可配合工作台已配置的搜索服务使用。'
+
+
+def metadata(s,kind):
+    return dict(model=s['model'],protocol=s['protocol'],test_version=providers.CAPABILITY_VERSION,
+        parameters=providers.test_parameters(s,kind),service=service_identity(s))
 
 
 def search_protocol(cfg,sid,model):
@@ -49,7 +58,7 @@ def cards(cfg):
             try:
                 s=resolve(cfg,card['service_id'],card['model'],kind)
                 value=store.capability(providers.fingerprint(s,kind))
-                if kind=='search' and s['protocol']=='chat': value=dict(status='unused',message='请选择此模型的联网接入方式')
+                if kind=='search' and s['protocol']=='chat': value=dict(status='unused',message=SEARCH_UNCONFIGURED,request_sent=False,**metadata(s,kind))
             except ValueError as exc: value=dict(status='unconfigured',message=str(exc))
             card['capabilities'][kind]=value
     return list(rows.values())
@@ -61,7 +70,7 @@ async def test(sid,request):
     s=resolve(cfg,sid,request.model,kind,request.protocol)
     key=providers.fingerprint(s,kind)
     if kind=='search' and s['protocol']=='chat':
-        return dict(status='unused',message='当前文本接口未接入联网工具，请选择独立联网接入方式')
+        return dict(status='unused',message=SEARCH_UNCONFIGURED,request_sent=False,**metadata(s,kind))
     job=store.create_job('connection-'+kind,dict(stage=kind)) if kind!='tools' else None
     record=None;charged=False
     try:
@@ -70,7 +79,7 @@ async def test(sid,request):
             record=budget.reserve(job['id'],s,'你是连接测试助手。请只回复：连接成功')
             text,usage=await providers.generate(s,'你是连接测试助手。','请只回复：连接成功')
             if not text.strip():raise ValueError('接口未返回有效文本')
-            result=dict(message='文本调用成功',reply=text[:100],usage=usage)
+            result=dict(message='小样本文本连接已通过（输出上限 256 Token）；不代表完整创作流程已通过',reply=text[:100],usage=usage)
         elif kind=='tools':result=await test_tools(s)
         elif kind=='image':
             record=budget.reserve(job['id'],dict(s,input_price=None,output_price=None),fixed=s.get('image_price'))
@@ -85,10 +94,10 @@ async def test(sid,request):
             rows,meta=await search_tools.native(s,query,1)
             usage=budget.search_usage(s,meta)
             budget.charge(record,usage);charged=True
-            if not any([await public_network.public_url(r['url']) for r in rows]):raise ValueError('搜索未返回公开来源')
+            if not any([await public_network.public_url(r['url']) for r in rows]):raise SearchEvidenceMissing('接口已响应，但搜索未返回公开来源')
             result=dict(message=f'取得真实搜索工具记录及 {len(rows)} 个来源',sources=rows,usage=meta,queries=meta.get('queries',[]))
         if record and not charged:budget.charge(record,usage);charged=True
-        result.update(status='tested',model=s['model'],protocol=s['protocol'])
+        result.update(status='tested',request_sent=True,response_received=True,**metadata(s,kind))
         store.capability(key,result)
         if kind in ('text','image'):
             raw=store.get_settings()
@@ -98,36 +107,42 @@ async def test(sid,request):
         if job:store.update_job(job['id'],status='completed',ended=store.now())
         return dict(result,at=store.capability(key)['at'])
     except BaseException as exc:
-        if record and not charged:budget.charge(record,dict(status='unknown',estimated_cost=None))
+        if record and not charged:budget.charge(record,getattr(exc,'usage',None) or dict(status='unknown',estimated_cost=None))
         if job:store.update_job(job['id'],status='failed',ended=store.now())
         if not isinstance(exc,Exception):raise
         message=str(exc) if isinstance(exc,ValueError) else '连接或结果解析失败，请检查服务配置'
         if s['secret']:message=message.replace(s['secret'],'[已隐藏]')
-        store.capability(key,dict(status='failed',message=message,model=s['model'],protocol=s['protocol']))
-        raise ValueError(message) from None
+        details=getattr(exc,'details',None) or dict(category='validation',request_sent=bool(record) or kind=='tools')
+        store.capability(key,dict(status='failed',message=message,failure=details,
+            **{k:details[k] for k in ('request_sent','response_received') if k in details},**metadata(s,kind)))
+        if hasattr(exc,'details'):raise
+        raise ServiceFailure(message,**details) from None
 
 
 async def test_tools(service):
     import json
     from . import agent_transport,execution_budget
-    s=dict(service,max_tokens=512)
     job=store.create_job('connection-tools',dict(stage='tools',execution_limits={'max_requests':2}))
+    s=dict(service,_job_id=job['id'])
     spec=dict(name='connection_probe',description='读取测试随机值',parameters=dict(type='object',properties={},required=[],additionalProperties=False))
     system='先调用 connection_probe，然后逐字返回工具提供的随机值，不添加其他内容。'
     messages=[dict(role='user',content='开始工具往返测试')]
     marker=store.uid()
     try:
         for index in range(2):
+            s['_tool_choice']='required' if index==0 else 'auto'
             record=execution_budget.reserve(job['id'],s,system+json.dumps(messages))
             try:r=await agent_transport.turn(s,system,messages,[spec])
-            except BaseException:
-                execution_budget.charge(record,dict(status='unknown',estimated_cost=None));raise
+            except BaseException as exc:
+                execution_budget.charge(record,getattr(exc,'usage',None) or dict(status='unknown',estimated_cost=None));raise
             execution_budget.charge(record,r['usage']);messages.extend(r['wire'])
             if index==0:
-                if len(r['calls'])!=1 or r['calls'][0]['name']!='connection_probe':raise ValueError('未收到真实工具调用；文本连接成功不能代表工具能力')
+                if len(r['calls'])!=1 or r['calls'][0]['name']!='connection_probe':
+                    raise agent_transport.response_error(s,'missing_tool_call' if r['text'] else 'empty_response',
+                        '接口已响应，但未返回要求的工具调用；当前接入的工具能力未验证',r.get('diagnostic',{}),r['usage'])
                 agent_transport.append_results(s['protocol'],messages,[(r['calls'][0]['id'],marker)])
             elif r['calls'] or r['text'].strip()!=marker:raise ValueError('模型未正确使用工具返回值，多轮调用未验证')
         store.update_job(job['id'],status='completed',ended=store.now())
-        return dict(message='工具调用和结果回传已通过（2 次文本请求）')
+        return dict(message='基础工具往返已通过（实际服务参数，2 次请求）；完整选题仍需实际运行',diagnostic=store.job(job['id']).get('response_diagnostic'))
     except BaseException:
         store.update_job(job['id'],status='failed',ended=store.now());raise

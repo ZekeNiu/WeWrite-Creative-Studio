@@ -8,6 +8,10 @@ ACTIVE=ContextVar('paid_request_job',default=None)
 class BudgetExceeded(ValueError):
     _metered=True  # No HTTP request was sent; callers must not log a charge.
 
+    def __init__(self,message):
+        super().__init__(message)
+        self.details=dict(category='budget_exceeded',request_sent=False,response_received=False)
+
 
 def reserve(job_id,service,payload='',output=None,extra=0,fixed=None,execution_id=None,limits_override=None):
     from .models import Settings

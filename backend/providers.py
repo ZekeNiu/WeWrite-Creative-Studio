@@ -30,11 +30,27 @@ def settings():
             value['route_capabilities'][kind]={'status':'unconfigured'}
     from .capabilities import cards
     value['model_capabilities']=cards(value)
+    for s in value['services']:
+        card=next((c for c in value['model_capabilities'] if c['service_id']==s['id'] and c['model']==s['model']),None)
+        if card:
+            s['status']=card['capabilities']['text']['status']
+            s['image_status']=card['capabilities']['image']['status']
     return value
 
 
+CAPABILITY_VERSION='2.3.2'
+
+
+def test_parameters(s,kind):
+    if kind=='image':return dict(size='1024x1024')
+    return dict(max_tokens=256 if kind=='text' else 2000 if kind=='search' else s.get('max_tokens',8000),
+                temperature=s.get('temperature') if kind!='search' else None,
+                **({'tool_choice':'required → auto'} if kind=='tools' else {}))
+
+
 def fingerprint(s,kind):
-    return hashlib.sha256(json.dumps([kind,s['base_url'],s['protocol'],s['model'],s.get('secret','')]).encode()).hexdigest()
+    return hashlib.sha256(json.dumps([CAPABILITY_VERSION,kind,s['base_url'],s['protocol'],s['model'],s.get('secret',''),
+        test_parameters(s,kind),s.get('max_tokens',8000),s.get('temperature')],sort_keys=True).encode()).hexdigest()
 
 
 def effective_service(kind,cfg=None):
@@ -61,7 +77,7 @@ def save_settings(value: Settings):
         if not s.id or s.id in ('tavily','openalex') or s.id.startswith('wewrite:') or s.id in ids: raise ValueError('服务编号重复或无效')
         ids.add(s.id); s.base_url=security.validate_base(s.base_url)
         old_s=previous.get(s.id,{})
-        changed=any(getattr(s,k)!=old_s.get(k) for k in ('base_url','protocol','model')) or s.key is not None
+        changed=any(getattr(s,k)!=old_s.get(k) for k in ('base_url','protocol','model','max_tokens','temperature')) or s.key is not None
         s.status='untested' if changed else old_s.get('status','untested')
         s.image_status='untested' if changed else old_s.get('image_status','untested')
     value.search.base_url=security.validate_base(value.search.base_url)

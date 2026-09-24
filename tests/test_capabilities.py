@@ -41,3 +41,29 @@ def test_search_profile_separate_from_text_and_failures_persist(client,monkeypat
     cfg=Settings.model_validate(after);cfg.services[0].key='changed-fixture-secret'
     changed=providers.save_settings(cfg)
     assert next(c for c in changed['model_capabilities'] if c['model']=='text')['capabilities']['search']['status']=='untested'
+
+
+def test_unconfigured_chat_search_does_not_send_request_and_explains(client,monkeypatch):
+    cfg=Settings.model_validate(providers.settings());cfg.services[0].protocol='chat'
+    cfg.model_connections=[dict(service_id='s',model='text',search_protocol='inherit')]
+    providers.save_settings(Settings.model_validate(cfg.model_dump()))
+    async def forbidden(*args):raise AssertionError('Must not send a search request')
+    monkeypatch.setattr(capabilities.search_tools,'native',forbidden)
+    r=client.post('/api/services/s/capability-tests',headers=H,json={'model':'text','kind':'search'})
+    assert r.status_code==200
+    assert r.json()['request_sent'] is False and '尚未发送' in r.json()['message']
+
+
+def test_capability_error_retains_http_details_and_routes(client,monkeypatch):
+    from backend.service_errors import http_failure,bind
+    before=providers.settings()
+    async def rejected(s,*args):raise bind(http_failure(400,'{"error":{"code":"unsupported_tool"}}'),s)
+    monkeypatch.setattr(capabilities.search_tools,'native',rejected)
+    r=client.post('/api/services/s/capability-tests',headers=H,json={'model':'deepseek-flash','kind':'search','protocol':'anthropic'})
+    assert r.status_code==400 and r.json()['failure']['http_status']==400
+    from backend import store
+    service=capabilities.resolve(before,'s','deepseek-flash','search','anthropic')
+    saved=store.capability(providers.fingerprint(service,'search'))
+    assert saved['failure']['provider_code']=='unsupported_tool' and saved['response_received']
+    after=providers.settings()
+    assert after['routes']==before['routes'] and after['search']==before['search']

@@ -245,6 +245,8 @@ class Session:
 
     async def search(self,query,channel='auto'):
         from . import search_tools,academic,browser_search
+        from .service_errors import ServiceFailure
+        from .execution_budget import BudgetExceeded
         if not self.search_config['enabled']:raise ValueError('联网搜索已关闭，继续使用当前材料')
         self.take_read('search')
         if channel!='auto':
@@ -262,11 +264,11 @@ class Session:
                 if inp is not None and out is not None and price is not None and all(service.get(k) is not None for k in ('input_price','output_price')):cost=(inp*service['input_price']+out*service['output_price'])/1_000_000+price*meta['calls']
                 self.charge(record,dict(status='completed',input_tokens=inp,output_tokens=out,estimated_cost=cost))
                 return rows
-            except BaseException:
-                if record:self.charge(record,dict(status='unknown',estimated_cost=None))
+            except BaseException as exc:
+                if record:self.charge(record,getattr(exc,'usage',None) or dict(status='unknown',estimated_cost=None))
+                if isinstance(exc,(ServiceFailure,BudgetExceeded,asyncio.CancelledError)) or not isinstance(exc,Exception):raise
                 self.disabled.add('native')
                 if not self.search_config['allow_fallback']:raise
-                if isinstance(sys.exception(),asyncio.CancelledError):raise
         if self.search_config.get('browser_enabled'):
             try:return await browser_search.search(query,'bing')
             except ValueError:pass
@@ -364,7 +366,10 @@ class Session:
         messages=[dict(role='user',content=json.dumps(dict(task=OUTPUTS[self.stage],home='.',run_id=self.state['run_id'],run_dir=self.directory.relative_to(self.home).as_posix(),
             request='request.json',style='style.yaml',account='account-reference.yaml',editor_notes='editor-notes.yaml',artifacts=self.state['artifacts']),ensure_ascii=False))]
         service=providers.service_for('research' if self.stage in ('learn','stats') else 'write' if self.stage=='rewrite' else 'review' if self.stage=='edit' else self.stage)
+        service=dict(service,_job_id=self.job_id)
+        corrections=0
         from .service_errors import service_identity,ServiceFailure
+        from .execution_budget import BudgetExceeded
         store.update_job(self.job_id,service=service_identity(service))
         try:
             while not self.finished:
@@ -372,12 +377,23 @@ class Session:
                 record=self.reserve(service,system+json.dumps(messages,ensure_ascii=False)+json.dumps(TOOLS,ensure_ascii=False))
                 store.update_job(self.job_id,activity='等待模型响应',request_started_at=store.now())
                 try:response=await agent_transport.turn(service,system,messages,TOOLS)
-                except BaseException:
-                    self.charge(record,dict(status='unknown',estimated_cost=None));raise
+                except BaseException as exc:
+                    self.charge(record,getattr(exc,'usage',None) or dict(status='unknown',estimated_cost=None));raise
                 self.charge(record,response['usage']);messages.extend(response['wire'])
                 store.update_job(self.job_id,last_progress_at=store.now(),activity='处理模型结果')
                 if response['text']:store.update_job(self.job_id,partial=response['text'])
-                if not response['calls']:raise ValueError('模型未调用完成工具；请确认所选模型支持工具调用。产物已保留，不会退回简化写作')
+                # Persist even the terminal empty/text-only response before judging it.
+                (self.home/'conversation.json').write_text(json.dumps(messages,ensure_ascii=False),encoding='utf-8')
+                if not response['calls']:
+                    if corrections:
+                        info=response.get('diagnostic',{})
+                        raise agent_transport.response_error(service,'missing_tool_call' if response['text'] else 'empty_response',
+                            '已纠正一次，模型仍未返回工具调用；当前接口未完成本环节，任务文件已保留',info,response['usage'])
+                    corrections+=1
+                    store.update_job(self.job_id,tool_corrections=corrections,activity='模型未返回工具调用，正在纠正一次')
+                    store.event(self.job_id,'tool_correction',message='模型未返回工具调用，保留上下文纠正一次；计入原请求上限')
+                    messages.append(dict(role='user',content='上一轮没有返回工具调用，本环节尚未完成。请继续调用实际工具执行任务；产物完成后调用 Finish。不要只回复说明或空内容。这是本任务唯一一次纠正，仍遵守原请求和工具上限。'))
+                    continue
                 results=[]
                 for call in response['calls']:
                     if self.finished:break
@@ -388,7 +404,7 @@ class Session:
                     store.event(self.job_id,'native_tool',tool=call['name'],arguments=args,execution_id=self.id)
                     store.update_job(self.job_id,activity={'Read':'读取创作资料','List':'查看可用资料','Find':'定位资料','Write':'保存生成内容','Edit':'更新生成内容','WebSearch':'检索资料','WebFetch':'读取网页','WeWrite':'执行创作工具','Finish':'校验并保存结果'}.get(call['name'],'处理创作资料'),last_progress_at=store.now())
                     try:value=await self.execute(call['name'],args)
-                    except ServiceFailure:raise
+                    except (ServiceFailure,BudgetExceeded):raise
                     except (ValueError,KeyError,OSError,TypeError) as exc:value=dict(error=str(exc)[:1800])
                     results.append((call['id'],json.dumps(value,ensure_ascii=False)))
                     store.update_job(self.job_id,native=dict(id=self.id,run_id=self.state['run_id'],upstream_revision=(native_skills.ROOT/'UPSTREAM_REVISION').read_text().strip(),reads=self.reads))

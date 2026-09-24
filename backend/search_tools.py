@@ -7,7 +7,7 @@ from urllib.parse import quote
 import xml.etree.ElementTree as ET
 import httpx
 from . import providers, materials
-from .service_errors import bind,http_failure,connection_failure
+from .service_errors import bind,http_failure,connection_failure,SearchEvidenceMissing,ServiceFailure
 
 
 async def native(s,query,limit=1):
@@ -39,12 +39,14 @@ async def native(s,query,limit=1):
                         if event.get('type')=='content_block_start': blocks.append(event.get('content_block',{}))
                         if event.get('type')=='message_delta': result.setdefault('usage',{}).update(event.get('usage',{}))
                         if event.get('type')=='message_stop': completed=True
-                    if not completed: raise ValueError('搜索流中断，未收到完成信号；本任务不自动重复该付费请求')
+                    if not completed: raise bind(ServiceFailure('搜索流中断，未收到完成信号；本任务不自动重复该付费请求',category='malformed_response',request_sent=True,response_received=True,http_status=response.status_code),s)
                     if blocks: result['content']=blocks
                 else:
                     result=json.loads(await response.aread())
-                    if result.get('error'):raise bind(http_failure(response.status_code,json.dumps(result),response.headers),s)
+                    if isinstance(result,dict) and result.get('error'):raise bind(http_failure(response.status_code,json.dumps(result),response.headers),s)
     except httpx.HTTPError as exc: raise bind(connection_failure(exc),s) from None
+    except json.JSONDecodeError:raise bind(ServiceFailure('搜索接口响应不是有效 JSON；当前接入未验证',category='malformed_response',request_sent=True,response_received=True,http_status=response.status_code),s) from None
+    if not isinstance(result,dict):raise bind(ServiceFailure('搜索接口响应结构异常；当前接入未验证',category='malformed_response',request_sent=True,response_received=True,http_status=200),s)
     rows=[]; calls=0
     if s['protocol']=='responses':
         for item in result.get('output',[]):
@@ -68,7 +70,9 @@ async def native(s,query,limit=1):
             for c in b['content']:
                 if c.get('type')=='web_search_result' and c.get('url'):
                     rows.append({'url':c['url'],'title':c.get('title') or c['url'],'content':'','provider':'native','published_date':c.get('page_age','')})
-    if not calls or not rows: raise ValueError('未取得真实搜索工具记录和来源，不能确认此模型支持联网搜索')
+    if not calls or not rows:
+        from .execution_budget import search_usage
+        raise SearchEvidenceMissing('接口已响应，但未取得真实搜索工具记录及来源；当前服务的联网接入未验证',search_usage(s,dict(calls=calls,usage=result.get('usage') or {})))
     if calls>limit: raise ValueError('中转站未遵守搜索工具次数上限，请核对账单；已停止使用该渠道')
     rows=list({r['url']:r for r in rows}.values())
     return rows,{'calls':calls,'seconds':round(time.monotonic()-started,2),'usage':result.get('usage',{})}
@@ -86,9 +90,10 @@ async def gemini(s,query,limit=1):
                       'tools':[{'google_search':{}}], 'generationConfig':{'maxOutputTokens':2000}})
             if r.status_code>=400: raise bind(http_failure(r.status_code,r.text,r.headers),s)
             data=r.json()
-            if data.get('error'):raise bind(http_failure(r.status_code,json.dumps(data),r.headers),s)
+            if isinstance(data,dict) and data.get('error'):raise bind(http_failure(r.status_code,json.dumps(data),r.headers),s)
     except httpx.HTTPError as exc:raise bind(connection_failure(exc),s) from None
-    except json.JSONDecodeError:raise ValueError('Gemini 联网接口响应格式异常；当前接入方式未验证') from None
+    except json.JSONDecodeError:raise bind(ServiceFailure('Gemini 联网接口响应格式异常；当前接入方式未验证',category='malformed_response',request_sent=True,response_received=True,http_status=r.status_code),s) from None
+    if not isinstance(data,dict):raise bind(ServiceFailure('Gemini 搜索接口响应结构异常；当前接入未验证',category='malformed_response',request_sent=True,response_received=True,http_status=r.status_code),s)
     rows=[];queries=[]
     for c in data.get('candidates',[]):
         ground=c.get('groundingMetadata',{})
@@ -98,7 +103,10 @@ async def gemini(s,query,limit=1):
             if web.get('uri'):
                 excerpts=[x.get('segment',{}).get('text','') for x in ground.get('groundingSupports',[]) if index in x.get('groundingChunkIndices',[])]
                 rows.append(dict(url=web['uri'],title=web.get('title') or web['uri'],content=' '.join(excerpts),provider='native',snippet_kind='grounded_summary',status='excerpt_only'))
-    if not queries or not rows: raise ValueError('未取得真实搜索工具记录和来源；当前 Gemini 接入方式未验证')
+    if not queries or not rows:
+        from .execution_budget import search_usage
+        usage={'input_tokens':data.get('usageMetadata',{}).get('promptTokenCount'),'output_tokens':data.get('usageMetadata',{}).get('candidatesTokenCount')}
+        raise SearchEvidenceMissing('接口已响应，但未取得真实搜索工具记录及来源；当前 Gemini 联网接入未验证',search_usage(s,dict(calls=len(set(queries)),usage=usage)))
     # Gemini can expand a request into several queries; record actual queries separately.
     return list({r['url']:r for r in rows}.values()),dict(calls=len(set(queries)),queries=queries,seconds=round(time.monotonic()-started,2),
         usage={'input_tokens':data.get('usageMetadata',{}).get('promptTokenCount'), 'output_tokens':data.get('usageMetadata',{}).get('candidatesTokenCount')})

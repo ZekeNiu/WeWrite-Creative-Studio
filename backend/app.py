@@ -79,7 +79,7 @@ async def local_only(request: Request,call_next):
 
 
 @app.exception_handler(ValueError)
-async def value_error(request,exc): return JSONResponse({'detail':str(exc)},400)
+async def value_error(request,exc): return JSONResponse({'detail':str(exc),**({'failure':exc.details} if hasattr(exc,'details') else {})},400)
 
 
 @app.exception_handler(KeyError)

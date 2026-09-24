@@ -8,7 +8,7 @@
 
 每次执行有独立 `data/native/<execution_id>`、`WEWRITE_HOME` 和上游 run_id。加载完整主技能、当前模块、必读参考和所选人格，记录文件哈希；模型可以使用 Read、Find、List 补读其他参考及完整材料，通过 Write、Edit、受控 WeWrite 命令保存实际产物。WebFetch 复用现有原文读取器，不将搜索摘要当全文。
 
-三种现有文本协议均支持多轮工具对话。Responses 保留全部返回项目及推理内容；Messages 保留工具及签名块，Chat 保留 tool_calls 和对应结果。连接测试分别检验文本与两轮工具往返，不将文本成功当成 Agent 成功。协议实现参考 [OpenAI 的推理与工具上下文说明](https://developers.openai.com/api/docs/guides/reasoning)。没有工具调用时明确失败，保留产物，不退回旧写作提示。
+三种现有文本协议均支持多轮工具对话。Responses 保留全部返回项目及推理内容；Messages 保留工具及签名块，Chat 保留 tool_calls 和对应结果。连接测试分别检验文本与两轮工具往返，不将文本成功当成 Agent 成功。协议实现参考 [OpenAI 的推理与工具上下文说明](https://developers.openai.com/api/docs/guides/reasoning)。创作请求明确要求调用工具。完整响应缺少工具调用时，每个任务最多一次保留上下文的纠正，计入原请求上限；再次缺失则分类失败并保留产物。拒答、截断、格式异常和网络／HTTP 错误不纠正，不退回旧写作提示。工具探测第一轮要求调用，第二轮允许返回实际工具结果，使用配置中的输出上限和温度。
 
 ## 界面与上游的关系
 

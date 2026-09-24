@@ -1,6 +1,7 @@
 import {useEffect,useState} from 'react';
 import {type Article,type Job,type Stage,type Settings,STAGES,LABELS} from './types';
 import {Busy} from './ui';
+import {FailureDetails,ResponseDetails} from './ServiceDetails';
 
 export const JOB_STATUS:Record<string,string>={queued:'等待执行',running:'正在运行',failed:'运行失败',conflict:'结果待核对',interrupted:'运行已中断',cancelled:'已停止',needs_input:'待你确认',completed:'运行完成'};
 export function stageOf(stage:string):Stage|undefined{
@@ -50,8 +51,8 @@ export default function TaskStatus({job,step,busy,onRetry,onSettings,navigate,on
  <p className="muted">{active?`已用 ${seconds} 秒 · `:''}已请求 {job.execution_usage?.requests??0} 次{active&&job.last_progress_at?` · ${idle} 秒前有进展`:''}{job.execution_usage?.unknown?` · ${job.execution_usage.unknown} 次费用未知`:''}</p>
  {failed&&<><div className="row wrap">{job.stage==='bound'?<span>请回到对应建议重新选择处理方式。</span>:<button className="button secondary" disabled={busy||wait>0} onClick={()=>onRetry(job)}>{wait?`${wait} 秒后可重新运行`:`重新运行${LABELS[job.stage]}`}</button>}{job.stage!=='bound'&&<button className="text-button" disabled={busy} onClick={()=>onSettings(job.stage==='edit'?'review':job.stage)}>调整{LABELS[job.stage]}服务</button>}</div>
  <p className="muted">重新运行会创建新任务，可能再次计费；保留的文件不表示可从中断处续跑。</p>
- <details><summary>查看错误详情</summary>{job.failure?<dl className="failure-details"><dt>错误类别</dt><dd>{({timeout:'等待响应超时',connection:'连接中断',quota:'余额或额度不足',rate_limit:'请求限流',rate_limit_or_quota:'限制原因未明确',authentication:'凭证错误',permission:'权限不足',invalid_request:'请求不被接受',not_found:'模型或接口不存在',service_error:'模型服务错误',validation:'输入或结果需要调整',unknown:'未分类错误'} as Record<string,string>)[job.failure.category]||'其他错误'}</dd><dt>HTTP 状态</dt><dd>{job.failure.http_status??'未收到响应'}</dd><dt>供应商错误码</dt><dd>{job.failure.provider_code||job.failure.provider_type||'未提供'}</dd><dt>请求编号</dt><dd>{job.failure.request_id||'未提供'}</dd></dl>:<p>历史记录未保存具体原因。</p>}</details></>}
- {job.partial&&!active&&<details><summary>查看已保留的生成结果</summary><pre className="partial-result">{job.partial}</pre></details>}
+ <details><summary>查看错误详情</summary>{job.failure?<><FailureDetails value={job.failure}/>{!job.failure.parameters&&<ResponseDetails value={job.response_diagnostic}/>}</>:<p>历史记录未保存具体原因。</p>}</details></>}
+ {!!job.tool_corrections&&<p className="muted">已尝试 {job.tool_corrections} 次工具调用纠正，请求仍计入原上限。</p>}{job.partial&&!active&&<details><summary>查看已保留的生成结果</summary><pre className="partial-result">{job.partial}</pre></details>}
  </section>}
  </>;
 }
