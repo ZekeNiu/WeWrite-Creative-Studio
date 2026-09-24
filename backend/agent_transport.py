@@ -27,7 +27,7 @@ def request_body(service, system, messages, tools):
         body.update(system=system, messages=messages, max_tokens=maximum,
                     tools=[dict(name=t['name'], description=t['description'], input_schema=t['parameters']) for t in tools])
     if service.get('temperature') is not None: body['temperature'] = service['temperature']
-    choice=service.get('_tool_choice','required')
+    choice=providers.tool_choice(service)
     body['tool_choice']={'type':'any' if choice=='required' else choice} if protocol=='anthropic' else choice
     return path, body
 
@@ -59,7 +59,7 @@ def diagnostic(service,data,status=200):
         finish_reason=reason if isinstance(reason,str) and reason in allowed else 'unknown',
         text_chars=sum(len(t) for t in texts if isinstance(t,str)),tool_count=len(calls) if isinstance(calls,list) else 0,
         refusal=bool(refused or reason in ('refusal','content_filter')),
-        parameters=dict(max_tokens=service.get('max_tokens',8000),temperature=service.get('temperature'),tool_choice=service.get('_tool_choice','required')))
+        parameters=dict(max_tokens=service.get('max_tokens',8000),temperature=service.get('temperature'),tool_choice=providers.tool_choice(service)))
     return value
 
 

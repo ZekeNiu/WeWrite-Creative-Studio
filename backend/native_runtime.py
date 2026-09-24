@@ -8,7 +8,7 @@ import re
 import sys
 from pathlib import Path
 import yaml
-from . import store, providers, account_memory, native_skills, native_projection, agent_transport
+from . import store, providers, account_memory, native_skills, native_projection, agent_transport, search_policy
 
 STAGES={'topic','sources','outline','write','review','edit','revise','visual','layout_advice'}
 
@@ -58,7 +58,7 @@ class Session:
         self.state={};self.used=None;self.finished=False;self.result=None;self.reads=[];self.sources=copy.deepcopy(article['sources'])
         self.limits={**providers.settings().get('execution',{}),**(request.get('execution_limits') or {})}
         self.search_config={**providers.settings()['search'],**(article.get('research_limits') or {}),**(request.get('research_limits') or {})}
-        self.disabled=set();self.command_count=0;self.evaluations=[];self.rewrite_versions={}
+        self.disabled=set();self.free_search_only=store.job(job_id).get('free_search_only',False);self.search_error=None;self.command_count=0;self.evaluations=[];self.rewrite_versions={}
 
     def path(self,name,write=False):
         name=str(name).replace('\\','/')
@@ -248,39 +248,49 @@ class Session:
         from .service_errors import ServiceFailure
         from .execution_budget import BudgetExceeded
         if not self.search_config['enabled']:raise ValueError('联网搜索已关闭，继续使用当前材料')
-        self.take_read('search')
         if channel!='auto':
             if not self.search_config['academic_enabled'] or channel=='pubmed' and not self.search_config['pubmed_enabled'] or channel=='arxiv' and not self.search_config['arxiv_enabled']:raise ValueError('此学术渠道未启用')
+            self.take_read('search')
             return await (search_tools.pubmed(query) if channel=='pubmed' else getattr(academic,channel)(query))
-        if 'native' not in self.disabled:
+        for group in search_policy.web_order(self.search_config):
+            if group in self.disabled or self.free_search_only and group in ('native','tavily'):continue
+            if group=='browser':
+                if not self.search_config.get('browser_enabled'):continue
+                for engine in search_policy.BROWSERS:
+                    self.take_read('search')
+                    try:rows=await browser_search.search(query,engine)
+                    except ValueError:continue
+                    if rows:return rows
+                continue
+            if group=='tavily' and not (self.search_config.get('tavily_enabled') and self.search_config.get('key_set')):continue
             record=None
             try:
-                service=dict(providers.effective_service('search'),_job_id=self.job_id)
-                if service['protocol']=='chat':raise ValueError('此协议未接入原生搜索')
-                record=self.reserve(service,query,2000,service.get('search_price'))
-                rows,meta=await search_tools.native(service,query,1)
-                u=meta.get('usage',{});inp=u.get('input_tokens',u.get('prompt_tokens'));out=u.get('output_tokens',u.get('completion_tokens'))
-                price=service.get('search_price');cost=None
-                if inp is not None and out is not None and price is not None and all(service.get(k) is not None for k in ('input_price','output_price')):cost=(inp*service['input_price']+out*service['output_price'])/1_000_000+price*meta['calls']
-                self.charge(record,dict(status='completed',input_tokens=inp,output_tokens=out,estimated_cost=cost))
-                return rows
+                if group=='native':
+                    service=dict(providers.effective_service('search'),_job_id=self.job_id)
+                    if service['protocol']=='chat':raise ValueError('此协议未接入原生搜索')
+                    self.take_read('search')
+                    record=self.reserve(service,query,2000,service.get('search_price'))
+                    rows,meta=await search_tools.native(service,query,1)
+                    from .execution_budget import search_usage
+                    self.charge(record,search_usage(service,meta))
+                else:
+                    from .execution_budget import reserve
+                    self.take_read('search');price=self.search_config.get('tavily_price')
+                    record=reserve(self.job_id,dict(model='tavily',name='tavily'),fixed=price,execution_id=self.id,limits_override=self.limits)
+                    rows=await providers.search(query)
+                    self.charge(record,dict(status='completed',estimated_cost=price))
+                if rows:return rows
             except BaseException as exc:
                 if record:self.charge(record,getattr(exc,'usage',None) or dict(status='unknown',estimated_cost=None))
-                if isinstance(exc,(ServiceFailure,BudgetExceeded,asyncio.CancelledError)) or not isinstance(exc,Exception):raise
-                self.disabled.add('native')
+                if hasattr(exc,'details'):exc.details['operation']='search'
+                if isinstance(exc,(BudgetExceeded,asyncio.CancelledError)) or not isinstance(exc,Exception):raise
+                if isinstance(exc,ServiceFailure):
+                    if not search_policy.free_fallback(exc,self.search_config):raise
+                    self.free_search_only=True;self.search_error=exc
+                    search_policy.record_fallback(self.job_id,exc)
+                self.disabled.add(group)
                 if not self.search_config['allow_fallback']:raise
-        if self.search_config.get('browser_enabled'):
-            try:return await browser_search.search(query,'bing')
-            except ValueError:pass
-        if self.search_config.get('tavily_enabled') and self.search_config.get('key_set') and 'tavily' not in self.disabled:
-            from .execution_budget import reserve
-            price=self.search_config.get('tavily_price')
-            record=reserve(self.job_id,dict(model='tavily',name='tavily'),fixed=price,execution_id=self.id,limits_override=self.limits)
-            try:
-                rows=await providers.search(query)
-                self.charge(record,dict(status='completed',estimated_cost=price));return rows
-            except BaseException:
-                self.charge(record,dict(status='unknown',estimated_cost=None));self.disabled.add('tavily');raise
+        if self.search_error:raise self.search_error
         raise ValueError('联网渠道未完成；原文未补充，不把模型记忆当检索结果')
 
     async def execute(self,name,args):

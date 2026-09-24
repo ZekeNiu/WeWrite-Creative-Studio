@@ -45,10 +45,22 @@ def search_result(s,rows,meta,limit,http_status,blocks,tool_calls):
         tool_id_fingerprints=meta.get('tool_id_fingerprints',[]),
         provider_queries=meta['calls'] if s['protocol']=='gemini' else None,requested_limit=limit,
         limit_status='provider_managed' if managed else 'exceeded' if meta['calls']>limit else 'within_limit',warnings=warnings,
-        request_sent=True,response_received=True,http_status=http_status,service=service_identity(s),usage=usage)
+        request_sent=True,response_received=True,http_status=http_status,service=service_identity(s),usage=usage,
+        finish_reason=meta.get('finish_reason','unknown'),tool_errors=meta.get('tool_errors',[]),max_tokens=2000)
     meta['search_diagnostic']=diagnostic
     record_search(s,diagnostic)
-    if not meta['calls'] or not rows:
+    category=meta.get('failure_category')
+    if category:
+        message={'output_truncated':'搜索输出达到 2000 Token 上限而截断；已保留用量，本任务不重发该请求',
+                 'search_incomplete':'搜索服务尚未完成本轮；已保留诊断，本任务不自动续发付费请求',
+                 'refusal':'搜索服务拒绝了本次请求，已停止',
+                 'rate_limit':'搜索工具返回限流；已保留诊断',
+                 'search_unavailable':'搜索工具暂时不可用；已保留诊断',
+                 'search_tool_error':'搜索工具返回错误；请查看错误码后调整配置'}[category]
+        exc=bind(ServiceFailure(message,category=category,request_sent=True,response_received=True,http_status=http_status,
+            finish_reason=diagnostic['finish_reason'],provider_code=next(iter(diagnostic['tool_errors']),''),parameters={'max_tokens':2000}),s)
+        exc.usage=usage
+    elif not meta['calls'] or not rows:
         exc=SearchEvidenceMissing('接口已响应，但未取得真实搜索工具记录及有效来源；当前服务的联网接入未验证',usage)
     elif not managed and meta['calls']>limit:
         exc=bind(ServiceFailure(f'{s.get("name") or "当前服务"} 返回 {meta["calls"]} 次搜索工具调用，超过本次上限 {limit}；已保留诊断，本次调用未通过次数限制校验',category='search_limit_exceeded',request_sent=True,response_received=True,http_status=http_status),s)
@@ -56,6 +68,20 @@ def search_result(s,rows,meta,limit,http_status,blocks,tool_calls):
     else:return rows,meta
     exc.details.update(http_status=http_status,search_diagnostic=diagnostic)
     raise exc
+
+
+def outcome(reason,errors=()):
+    allowed={'completed','end_turn','stop','STOP','max_tokens','max_output_tokens','MAX_TOKENS','pause_turn','incomplete','failed','refusal','SAFETY','RECITATION','BLOCKLIST','PROHIBITED_CONTENT','SPII'}
+    reason=reason if reason in allowed else 'unknown'
+    codes={'too_many_requests','unavailable','max_uses_exceeded','invalid_tool_input','query_too_long','request_too_large'}
+    errors=list(dict.fromkeys(x if isinstance(x,str) and x in codes else 'unknown_tool_error' for x in errors))
+    category=''
+    if reason in ('max_tokens','max_output_tokens','MAX_TOKENS'):category='output_truncated'
+    elif reason in ('refusal','SAFETY','RECITATION','BLOCKLIST','PROHIBITED_CONTENT','SPII'):category='refusal'
+    elif reason in ('pause_turn','incomplete','failed'):category='search_incomplete'
+    elif errors:
+        category='rate_limit' if set(errors)=={'too_many_requests'} else 'search_unavailable' if set(errors)=={'unavailable'} else 'search_tool_error'
+    return dict(finish_reason=reason,tool_errors=errors,failure_category=category)
 
 
 async def native(s,query,limit=1):
@@ -70,6 +96,7 @@ async def native(s,query,limit=1):
             exc.usage=search_usage(s,dict(calls=0,usage=safe_usage(trace['usage'])))
             if s.get('search_price')!=0:exc.usage['estimated_cost']=None
         details=getattr(exc,'details',{})
+        if hasattr(exc,'details'):exc.details['operation']='search'
         if 'search_diagnostic' not in details:
             diagnostic=dict(request_count=int(trace['request_sent']),tool_calls=None,result_blocks=None,source_count=None,requested_limit=limit,
                 limit_status='unknown',warnings=[],service=service_identity(s),
@@ -112,6 +139,7 @@ async def _native(s,query,limit,trace):
                         if event.get('type')=='content_block_start': blocks.append(event.get('content_block',{}))
                         if event.get('type')=='message_delta':
                             result.setdefault('usage',{}).update(event.get('usage',{}));trace['usage']=result['usage']
+                            if event.get('delta',{}).get('stop_reason'):result['stop_reason']=event['delta']['stop_reason']
                         if event.get('type')=='message_stop': completed=True
                     if not completed: raise bind(ServiceFailure('搜索流中断，未收到完成信号；本任务不自动重复该付费请求',category='malformed_response',request_sent=True,response_received=True,http_status=response.status_code),s)
                     if blocks: result['content']=blocks
@@ -122,7 +150,7 @@ async def _native(s,query,limit,trace):
     except json.JSONDecodeError:raise bind(ServiceFailure('搜索接口响应不是有效 JSON；当前接入未验证',category='malformed_response',request_sent=True,response_received=True,http_status=response.status_code),s) from None
     if not isinstance(result,dict):raise bind(ServiceFailure('搜索接口响应结构异常；当前接入未验证',category='malformed_response',request_sent=True,response_received=True,http_status=200),s)
     trace['usage']=safe_usage(result.get('usage'))
-    rows=[]; used=set(); blocks=0
+    rows=[]; used=set(); blocks=0;errors=[]
     if s['protocol']=='responses':
         for index,item in enumerate(result.get('output',[])):
             if item.get('type')=='web_search_call' and item.get('status')=='completed':
@@ -143,11 +171,15 @@ async def _native(s,query,limit,trace):
             if b.get('type')!='web_search_tool_result':continue
             blocks+=1
             if b.get('tool_use_id') not in used: continue
+            if isinstance(b.get('content'),dict):
+                errors.append(b['content'].get('error_code'));continue
             if not isinstance(b.get('content'),list): continue
             for c in b['content']:
                 if c.get('type')=='web_search_result' and c.get('url'):
                     rows.append({'url':c['url'],'title':c.get('title') or c['url'],'content':'','provider':'native','published_date':c.get('page_age','')})
-    meta=dict(calls=len(used),seconds=round(time.monotonic()-started,2),usage=trace['usage'])
+    reason=result.get('stop_reason') or result.get('status')
+    if (result.get('incomplete_details') or {}).get('reason')=='max_output_tokens':reason='max_output_tokens'
+    meta=dict(calls=len(used),seconds=round(time.monotonic()-started,2),usage=trace['usage'],**outcome(reason,errors))
     # Fingerprints allow comparing repeated IDs without storing arbitrary provider text.
     meta['tool_id_fingerprints']=sorted(hashlib.sha256(str(x).encode()).hexdigest()[:16] for x in used)
     return search_result(s,rows,meta,limit,response.status_code,blocks,len(used))
@@ -183,8 +215,11 @@ async def gemini(s,query,limit=1,trace=None):
                 excerpts=[x.get('segment',{}).get('text','') for x in ground.get('groundingSupports',[]) if index in x.get('groundingChunkIndices',[])]
                 rows.append(dict(url=web['uri'],title=web.get('title') or web['uri'],content=' '.join(excerpts),provider='native',snippet_kind='grounded_summary',status='excerpt_only'))
     # Gemini can expand a request into several queries; record actual queries separately.
+    reasons=[c.get('finishReason') for c in data.get('candidates',[])]
+    reason=next((x for x in reasons if x and x!='STOP'),next(iter(reasons),None))
+    if data.get('promptFeedback',{}).get('blockReason'):reason='SAFETY'
     return search_result(s,rows,dict(calls=len(set(queries)),queries=queries,seconds=round(time.monotonic()-started,2),
-        usage=trace['usage']),limit,r.status_code,len(rows),None)
+        usage=trace['usage'],**outcome(reason)),limit,r.status_code,len(rows),None)
 
 
 _ncbi_last=0.0

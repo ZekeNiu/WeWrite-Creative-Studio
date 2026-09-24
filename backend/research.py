@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from datetime import date
 from urllib.parse import urlsplit,urlunsplit,parse_qsl,urlencode
-from . import store,providers,materials,search_tools,browser_search,academic,flow_state,evidence_state,creative
+from . import store,providers,materials,search_tools,browser_search,academic,flow_state,evidence_state,creative,search_policy
 from .models import ResearchPlan,ResearchNotes,SearchSelection,IssueScope,EvidenceJudgements,EvidenceScopeAudit,CoverageAudit,AnswerScopeAudit,EvidenceAdditions
 from .structured_output import parse as parse_structured
 from . import source_context,research_contract,search_plan,source_notebook,evidence_scope,coverage_scope
@@ -246,6 +246,7 @@ class Research:
         if not prior and resume: prior=store.job(resume).get('research',{})
         self.calls=prior.get('stats',{}).get('search_requests',prior.get('calls',0));self.pages=prior.get('pages',0);self.rounds=prior.get('rounds',0)
         self.log=list(prior.get('log',[]));self.disabled=set(prior.get('disabled_channels',[]))
+        self.free_search_only=prior.get('free_search_only',False) or job.get('free_search_only',False)
         self.query_ledger=copy.deepcopy(prior.get('query_ledger',[]))
         self.seen_queries={digest(search_plan.query(x)) for x in self.query_ledger if x.get('purpose')!='citation_graph' and x.get('status') in ('exhausted','covered','skipped_covered')}
         # Legacy logs have only strings; retain their identity when continuing older jobs.
@@ -290,7 +291,7 @@ class Research:
             'log':self.log,'blocked_urls':self.blocked,'sources':self.added,'notes':self.notes,'telemetry':self.telemetry,'strategy':self.strategy(),
             'stats':self.stats,'plan':self.plan,'coverage':self.coverage,'stop_reason':self.stop_reason,'stop_code':self.stop_code,'candidates':list(self.candidates.values()),
             'query_ledger':self.query_ledger,'deferred_candidates':self.deferred,'disabled_channels':sorted(self.disabled),'citation_expanded':sorted(self.citation_expanded),
-            'limits':{k:self.cfg[k] for k in ('max_calls','max_pages','max_rounds')}})
+            'free_search_only':self.free_search_only,'limits':{k:self.cfg[k] for k in ('max_calls','max_pages','max_rounds')}})
         store.event(self.job_id,'research',message=message,calls=self.calls,pages=self.pages)
 
     def strategy(self):
@@ -298,6 +299,7 @@ class Research:
             attempted=self.attempted,used=self.used,issue=self.policy_issue)
 
     def unavailable(self,group):
+        if self.free_search_only and group in ('native','tavily'):return '本任务的付费搜索已停止，继续使用免费后备渠道'
         if group=='native':
             s=self.search_model
             if not s: return '尚未配置联网模型'
@@ -309,11 +311,11 @@ class Research:
         return ''
 
     def web_order(self):
-        return ['native','tavily','browser'] if self.cfg.get('allow_fallback',True) else ['native']
+        return search_policy.web_order(self.cfg)
 
     async def channel(self,channel,query):
         self.channel_status[channel]='unavailable' if channel in self.disabled else 'budget_exhausted'
-        if channel in self.disabled or self.calls>=self.cfg['max_calls']: return []
+        if channel in self.disabled or self.calls>=self.cfg['max_calls'] or self.free_search_only and channel in ('native','tavily'): return []
         s=self.search_model
         if channel=='native':
             if not s or s['protocol']=='chat': return []
@@ -331,12 +333,12 @@ class Research:
             if cached and channel not in self.used: self.used.append(channel)
             self.update('正在复用 '+CHANNEL_NAMES.get(channel,channel)+' 的检索结果',channel=channel,cached=True);return cached
         if channel not in self.attempted: self.attempted.append(channel)
-        self.calls+=1;self.update('正在使用 '+CHANNEL_NAMES.get(channel,channel)+' 查找资料',channel=channel,query=query)
-        self.stats['search_requests']+=1
         from . import execution_budget
         paid=channel in ('native','tavily')
         record=execution_budget.reserve(self.job_id,s,query,2000,price) if channel=='native' else execution_budget.reserve(self.job_id,dict(model='tavily',name='tavily'),fixed=price) if paid else store.add_usage(self.a['id'],stage='search',job_id=self.job_id,model=channel,service=channel,reserved_cost=price,estimated_cost=None,currency='CNY',status='reserved')
         if paid:store.update_usage(record['id'],stage='search')
+        self.calls+=1;self.stats['search_requests']+=1
+        self.update('正在使用 '+CHANNEL_NAMES.get(channel,channel)+' 查找资料',channel=channel,query=query)
         def charged(**usage):
             if paid:execution_budget.charge(record,usage)
             else:store.update_usage(record['id'],**usage)
@@ -366,9 +368,14 @@ class Research:
             charged(status='unknown',estimated_cost=None);raise
         except Exception as exc:
             # Unknown paid requests are not replayed. Free indexes may retry on another query.
-            charged(**(getattr(exc,'usage',None) or dict(status='unknown',estimated_cost=0 if price==0 else None,seconds=round(time.monotonic()-started,2))))
+            charged(**(getattr(exc,'usage',None) or dict(status='unknown',estimated_cost=0 if not paid and price==0 else None,seconds=round(time.monotonic()-started,2))))
             from .service_errors import ServiceFailure
-            if isinstance(exc,(ServiceFailure,execution_budget.BudgetExceeded)):raise
+            if hasattr(exc,'details') and paid:exc.details['operation']='search'
+            if isinstance(exc,execution_budget.BudgetExceeded):raise
+            if isinstance(exc,ServiceFailure):
+                if not search_policy.free_fallback(exc,self.cfg):raise
+                self.free_search_only=True
+                self.update(search_policy.record_fallback(self.job_id,exc),channel=channel)
             self.channel_failures[channel]=self.channel_failures.get(channel,0)+1
             if channel in ('native','tavily') or self.channel_failures[channel]>=2:self.disabled.add(channel)
             detail=str(exc).lower()

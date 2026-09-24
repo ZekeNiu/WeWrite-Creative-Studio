@@ -42,14 +42,22 @@ CAPABILITY_VERSION='2.3.2'
 
 
 def capability_version(kind):
-    return '2.3.3' if kind=='search' else CAPABILITY_VERSION
+    return '2.3.4' if kind=='search' else CAPABILITY_VERSION
+
+
+def tool_choice(s):
+    choice=s.get('_tool_choice','required')
+    # DeepSeek Chat thinking is enabled by default and rejects forced tools.
+    # Preserve thinking and the existing one-correction/runtime validation.
+    if choice=='required' and s['protocol']=='chat' and (deepseek_official(s.get('base_url','')) or s.get('model','').lower().startswith('deepseek-')):return 'auto'
+    return choice
 
 
 def test_parameters(s,kind):
     if kind=='image':return dict(size='1024x1024')
     return dict(max_tokens=256 if kind=='text' else 2000 if kind=='search' else s.get('max_tokens',8000),
                 temperature=s.get('temperature') if kind!='search' else None,
-                **({'tool_choice':'required → auto'} if kind=='tools' else {}))
+                **({'tool_choice':tool_choice(s)+' → auto'} if kind=='tools' else {}))
 
 
 def fingerprint(s,kind):

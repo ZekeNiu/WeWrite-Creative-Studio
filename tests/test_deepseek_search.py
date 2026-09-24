@@ -118,7 +118,7 @@ def test_capability_accepts_internal_searches_without_changing_routes(client,mon
     r=client.post('/api/services/s/capability-tests',headers=H,json={'model':'deepseek-flash','kind':'search','protocol':'anthropic'})
     assert r.status_code==200,r.text
     value=r.json()
-    assert value['status']=='tested' and value['search_diagnostic']['tool_calls']==2 and value['test_version']=='2.3.3'
+    assert value['status']=='tested' and value['search_diagnostic']['tool_calls']==2 and value['test_version']=='2.3.4'
     assert len(seen)==1 and len(value['sources'])==2
     after=providers.settings()
     assert before['routes']==after['routes'] and before['search']==after['search'] and before['services']==after['services']

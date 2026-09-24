@@ -1,6 +1,7 @@
 """Channel-aware queries and bounded fair scheduling; legacy strings remain valid."""
 import re
 from .models import ResearchQuery
+from . import search_policy
 
 
 def query(value):
@@ -46,5 +47,6 @@ def channels(worker,item):
         if computing and worker.cfg['arxiv_enabled']:result.append('arxiv')
         # A nonempty but irrelevant index result must never veto the other index.
         result += ['crossref','openalex'] if item['purpose']=='known_source' else ['openalex','crossref']
-    if worker.cfg.get('allow_fallback',True):result += ['tavily','google','bing','baidu','duckduckgo']
+    for group in search_policy.web_order(worker.cfg)[1:]:
+        result += list(search_policy.BROWSERS) if group=='browser' else [group]
     return result
