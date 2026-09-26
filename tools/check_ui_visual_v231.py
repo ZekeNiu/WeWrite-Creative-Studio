@@ -121,8 +121,7 @@ async def main():
       await expect(page.get_by_title('公众号排版预览',exact=True)).to_be_visible()
      await shot(f'{label}-{width}')
     await nav('选题')
-    await page.get_by_text('配置来源',exact=True).click()
-    await expect(page.locator('.service-origin')).to_contain_text('共享默认服务')
+    await expect(page.get_by_text('配置来源',exact=True)).to_have_count(0)
     await page.get_by_role('button',name='调整选题服务',exact=True).click()
     settings=page.get_by_role('dialog',name='AI 服务与偏好',exact=True)
     await expect(settings.locator('#route-topic')).to_be_visible();await fits();await shot(f'settings-routes-{width}')
@@ -145,10 +144,20 @@ async def main():
    for width in (1440,390):
     await page.set_viewport_size(dict(width=width,height=1000))
     for state in ('running','failed'):
-     jobs=[dict(old_job,id='visual-task',status=state,message='正在对照写作要求，梳理候选角度。' if state=='running' else '连接中断，请检查当前选题服务。',activity='正在梳理候选角度',execution_usage=dict(requests=3),last_progress_at=stamp,service=dict(name='离线验收',model='synthetic'),failure=dict(category='connection',http_status=None,service=dict(name='离线验收',model='synthetic')) if state=='failed' else None)]
+     jobs=[dict(old_job,id='visual-task',status=state,message='正在对照写作要求，梳理候选角度。' if state=='running' else '连接中断，请检查当前选题服务。',activity='正在梳理候选角度',execution_usage=dict(requests=3,unknown=2),active_request_started_at=stamp,active_request_label='模型调用',last_progress_at=stamp,service=dict(name='离线验收',model='synthetic'),failure=dict(category='connection',http_status=None,service=dict(name='离线验收',model='synthetic')) if state=='failed' else None)]
      await page.reload(wait_until='networkidle');await nav('选题')
      await expect(page.locator('.task-status')).to_be_visible();await fits();await shot(f'topic-{state}-{width}')
+     await expect(page.locator('.task-status')).not_to_contain_text('费用未知')
+     if state=='running':
+      await expect(page.locator('.task-status')).to_contain_text('本次模型调用已进行')
+      assert await page.locator('.task-status').evaluate('(el)=>getComputedStyle(el).borderTopWidth')=='1px'
      await nav('素材');await expect(page.locator('.task-status')).to_have_count(0);await expect(page.locator('.task-brief')).to_be_visible()
+   jobs=[dict(old_job,id='completed-action',status='running',message='正在整理结果',execution_usage=dict(requests=1,unknown=2),last_completed_at=stamp,last_completed_label='模型回复已收到',native=dict(id='synthetic',run_id='synthetic-run',upstream_revision='abcdef123456',reads=[]),search_diagnostic=dict(request_count=1,tool_calls=1,result_blocks=1,source_count=1,warnings=['DeepSeek 官方内部检索次数由服务端决定；实际检索可能产生额外费用。','搜索回复不完整；来源仍需核实。']))]
+   await page.reload(wait_until='networkidle');await nav('选题')
+   await expect(page.locator('.task-status')).to_contain_text('最近完成：模型回复已收到')
+   await expect(page.locator('.search-diagnostic')).to_contain_text('搜索回复不完整')
+   await expect(page.locator('.search-diagnostic')).not_to_contain_text('DeepSeek 官方内部检索次数')
+   await expect(page.locator('.task-history')).not_to_contain_text('费用未知')
    jobs=[old_job]
    a['brief']['topic']='';a['stages']['topic']='needs_input'
    await page.reload(wait_until='networkidle');await nav('选题')

@@ -69,14 +69,14 @@ def test_capability_error_retains_http_details_and_routes(client,monkeypatch):
     assert after['routes']==before['routes'] and after['search']==before['search']
 
 
-def test_optional_research_propagates_paid_service_failure(client,monkeypatch):
+def test_optional_research_uses_free_fallback_after_paid_service_failure(client,monkeypatch):
     import asyncio
-    import pytest
     from backend import store,research
-    from backend.service_errors import http_failure,ServiceFailure
+    from backend.service_errors import http_failure
     a=store.create_article({'topic':'模拟研究'});j=store.create_job(a['id'],{'stage':'research'})
     w=research.Research(a,j['id'],'sources');seen=[]
     async def unavailable(*args):seen.append('native');raise http_failure(503)
     monkeypatch.setattr(capabilities.search_tools,'native',unavailable)
-    with pytest.raises(ServiceFailure):asyncio.run(w.channel('native','synthetic question'))
+    assert asyncio.run(w.channel('native','synthetic question'))==[]
     assert seen==['native'] and store.job(j['id'])['execution_usage']['requests']==1
+    assert w.free_search_only and 'native' in w.disabled

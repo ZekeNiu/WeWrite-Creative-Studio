@@ -79,7 +79,7 @@ def test_official_multiple_searches_keep_sources_usage_and_diagnostic(monkeypatc
     rows,meta=asyncio.run(search_tools.native(dict(service(),_job_id=job['id']),'q'))
     assert len(seen)==1 and len(rows)==2 and meta['calls']==2
     d=meta['search_diagnostic']
-    assert 'requested_limit' not in d and 'limit_status' not in d and d['warnings']
+    assert 'requested_limit' not in d and 'limit_status' not in d and d['warnings']==[]
     assert store.job(job['id'])['search_diagnostic']==d
     assert d['usage']['input_tokens']==100 and 'fixture-secret' not in json.dumps(d)
 

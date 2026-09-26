@@ -5,7 +5,7 @@ import re
 import time
 from PIL import Image
 from pydantic import ValidationError
-from . import store, providers, prompts, materials, rendering, research, creative,editorial,account_memory,native_runtime,native_workflow
+from . import store, providers, prompts, materials, rendering, research, creative,editorial,account_memory,native_runtime,native_workflow,task_progress
 from .models import STAGES, LABELS, SCHEMAS
 from .structured_output import parse as parse_structured
 
@@ -199,7 +199,8 @@ async def generate_image(a,job_id,plan):
     reservation=reserve(job_id,dict(s,input_price=None,output_price=None),fixed=price)
     store.update_job(job_id,service=service_identity(s),activity='等待图片服务返回',message='正在生成图片；连接中断时不会自动重复请求')
     try:
-        blob=await providers.image_generate(s,plan['prompt'],a['visual']['size'])
+        async with task_progress.request(job_id,'图片生成请求','图片服务已返回'):
+            blob=await providers.image_generate(s,plan['prompt'],a['visual']['size'])
         image=Image.open(io.BytesIO(blob)); image.load()
         if image.width*image.height>40_000_000: raise ValueError('图片尺寸过大')
         filename=store.uid()+'.png'; p=store.article_dir(a['id'])/'assets'; p.mkdir(exist_ok=True)
@@ -210,6 +211,7 @@ async def generate_image(a,job_id,plan):
     charge(reservation,dict(status='completed',estimated_cost=price))
     item=dict(plan,plan_id=plan['id'],filename=filename,selected=True,created=store.now(),id=store.uid())
     store.update_job(job_id,result={'image':item})
+    task_progress.completed(job_id,'图片已保存')
     try:
         return store.save_article(a['id'],a['revision'],lambda v:v['images'].append(item),'生成图片',invalidate='visual')
     except store.Conflict:
@@ -227,7 +229,7 @@ async def run(job_id):
         store.update_job(job_id,status='running')
         while True:
             prerequisites(stage,a)
-            store.update_job(job_id,stage=stage,target_stage=j['request']['stage'],message='正在'+LABELS.get(stage,{'revise':'修改选段','image':'生成图片','layout_advice':'分析阅读与结构'}.get(stage,stage)),partial='',result=None,failure=None,last_progress_at=store.now())
+            store.update_job(job_id,stage=stage,target_stage=j['request']['stage'],message='正在'+LABELS.get(stage,{'revise':'修改选段','image':'生成图片','layout_advice':'分析阅读与结构'}.get(stage,stage)),activity=None,partial='',result=None,failure=None,last_progress_at=store.now(),active_request_started_at=None,active_request_label=None,last_completed_at=None,last_completed_label=None)
             store.event(job_id,'stage',stage=stage)
             # Draft review owns its independent factual audit. Re-running the
             # research pipeline here repeats notes and coverage checks before

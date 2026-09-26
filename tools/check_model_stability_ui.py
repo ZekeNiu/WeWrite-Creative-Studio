@@ -37,13 +37,13 @@ async def main():
    labels=await dialog.get_by_label('文本与工具接口',exact=True).locator('option').all_text_contents()
    assert labels==['OpenAI 兼容对话（Chat Completions）','OpenAI 响应（Responses）','Anthropic 消息（Messages）']
    await dialog.get_by_text('高级设置：输出参数与价格',exact=True).click()
-   await dialog.get_by_label('单次回复上限（Token）',exact=True).fill('48000')
+   await dialog.get_by_label('单次回复输出参数（Token）',exact=True).fill('48000')
    await save_settings()
    await expect(dialog.get_by_text('设置已保存',exact=True).first).to_be_visible()
    cfg=await (await page.request.get(BASE+'/api/settings')).json()
    assert cfg['services'][0]['max_tokens']==48000
    assert cfg['routes']==original['routes'] and cfg['search']==original['search']
-   await expect(dialog.get_by_text('单次回复上限限制一次响应',exact=False)).to_be_visible()
+   await expect(dialog.get_by_text('用于文本生成和联网搜索的单次响应',exact=False)).to_be_visible()
    await dialog.screenshot(path=str(OUT/'settings-desktop.png'))
    await dialog.get_by_role('button',name='能力测试',exact=True).click()
    await expect(dialog.get_by_text('基础测试通过不代表完整选题流程已通过。',exact=False)).to_be_visible()

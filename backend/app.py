@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse,FileResponse,Response,StreamingRespon
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import ValidationError
-from . import store,providers,security,materials,rendering,workflow,prompts,search_tools,browser_search,search_check,bibliography,outputs,capabilities
+from . import store,providers,security,materials,rendering,workflow,prompts,search_tools,browser_search,search_check,bibliography,outputs,capabilities,power_awake
 from . import flow_state,issue_actions,source_imports,account_memory
 from .models import IssueAction,Settings,Brief,Layout,VisualSettings,ArticlePatch,JobRequest,STAGES,OutlineResult,ImagePlan,CapabilityTest
 
@@ -25,9 +25,14 @@ APP_VERSION=json.loads((store.ROOT/'package.json').read_text('utf-8'))['version'
 async def lifespan(app):
     store.init()
     providers.migrate_settings()
-    yield
-    for t in list(workflow.TASKS.values()): t.cancel()
-    if workflow.TASKS: await asyncio.gather(*list(workflow.TASKS.values()),return_exceptions=True)
+    awake=asyncio.create_task(power_awake.maintain())
+    try:
+        yield
+    finally:
+        for t in list(workflow.TASKS.values()): t.cancel()
+        if workflow.TASKS: await asyncio.gather(*list(workflow.TASKS.values()),return_exceptions=True)
+        awake.cancel()
+        await asyncio.gather(awake,return_exceptions=True)
 
 
 app=FastAPI(title='WeWrite 本地工作台',lifespan=lifespan,docs_url=None,redoc_url=None)

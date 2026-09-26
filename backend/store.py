@@ -310,6 +310,11 @@ def jobs(article_id):
         return [refresh_external(json.loads(r[0])) for r in db.execute('SELECT data FROM jobs WHERE article_id=? ORDER BY rowid DESC LIMIT 20',(article_id,))]
 
 
+def active_job_count():
+    with connection() as db:
+        return db.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0]
+
+
 def event(job_id, kind, **payload):
     with connection() as db:
         db.execute('INSERT INTO events(job_id,data) VALUES(?,?)',(job_id,encode(dict(kind=kind,at=now(),**payload))))

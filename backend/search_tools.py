@@ -37,8 +37,6 @@ def search_result(s,rows,meta,http_status,blocks,tool_calls):
         except (ValueError,TypeError):continue
     rows=list({r['url']:r for r in valid}.values())
     warnings=[]
-    if s['protocol']=='anthropic' and providers.deepseek_official(s['base_url']):
-        warnings.append('DeepSeek 官方内部检索次数由服务端决定；实际检索可能产生额外费用。')
     category=meta.get('failure_category')
     partial=category=='output_truncated' and bool(meta['calls'] and rows and not meta.get('tool_errors'))
     if partial:

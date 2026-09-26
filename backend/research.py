@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from datetime import date
 from urllib.parse import urlsplit,urlunsplit,parse_qsl,urlencode
-from . import store,providers,materials,search_tools,browser_search,academic,flow_state,evidence_state,creative,search_policy
+from . import store,providers,materials,search_tools,browser_search,academic,flow_state,evidence_state,creative,search_policy,task_progress
 from .models import ResearchPlan,ResearchNotes,SearchSelection,IssueScope,EvidenceJudgements,EvidenceScopeAudit,CoverageAudit,AnswerScopeAudit,EvidenceAdditions
 from .structured_output import parse as parse_structured
 from . import source_context,research_contract,search_plan,source_notebook,evidence_scope,coverage_scope
@@ -342,21 +342,23 @@ class Research:
             else:store.update_usage(record['id'],**usage)
         started=time.monotonic()
         try:
-            if channel=='native':
-                rows,meta=await search_tools.native(dict(s,_job_id=self.job_id),query)
-                self.stats['provider_queries']+=meta['calls']
-                self.update('供应商已执行内部子查询',channel=channel,provider_queries=meta.get('queries',[]),provider_query_count=meta['calls'])
-                if rows: store.capability(providers.fingerprint(s,'search'),dict(status='tested',sources=rows,queries=meta.get('queries',[]),protocol=s['protocol'],test_version=providers.capability_version('search'),search_diagnostic=meta.get('search_diagnostic'),message='实际任务已取得联网工具记录'))
-                usage=meta.get('usage',{})
-                price=price*meta['calls'] if price is not None else None
-                inp=usage.get('input_tokens',usage.get('prompt_tokens'));out=usage.get('output_tokens',usage.get('completion_tokens'))
-                if price is not None and inp is not None and out is not None and all(s.get(k) is not None for k in ('input_price','output_price')):price+=(inp*s['input_price']+out*s['output_price'])/1_000_000
-                else:price=None
-                store.update_usage(record['id'],input_tokens=inp,output_tokens=out)
-            elif channel=='pubmed': rows=await search_tools.pubmed(query)
-            elif channel in ('openalex','crossref','arxiv'): rows=await getattr(academic,channel)(query)
-            elif channel=='tavily': rows=[dict(r,provider='tavily',status='excerpt_only') for r in await providers.search(query,days)]
-            else: rows=await browser_search.search(query,channel)
+            async with task_progress.request(self.job_id,'联网检索',None):
+                if channel=='native':
+                    rows,meta=await search_tools.native(dict(s,_job_id=self.job_id),query)
+                    self.stats['provider_queries']+=meta['calls']
+                    self.update('供应商已执行内部子查询',channel=channel,provider_queries=meta.get('queries',[]),provider_query_count=meta['calls'])
+                    if rows: store.capability(providers.fingerprint(s,'search'),dict(status='tested',sources=rows,queries=meta.get('queries',[]),protocol=s['protocol'],test_version=providers.capability_version('search'),search_diagnostic=meta.get('search_diagnostic'),message='实际任务已取得联网工具记录'))
+                    usage=meta.get('usage',{})
+                    price=price*meta['calls'] if price is not None else None
+                    inp=usage.get('input_tokens',usage.get('prompt_tokens'));out=usage.get('output_tokens',usage.get('completion_tokens'))
+                    if price is not None and inp is not None and out is not None and all(s.get(k) is not None for k in ('input_price','output_price')):price+=(inp*s['input_price']+out*s['output_price'])/1_000_000
+                    else:price=None
+                    store.update_usage(record['id'],input_tokens=inp,output_tokens=out)
+                elif channel=='pubmed': rows=await search_tools.pubmed(query)
+                elif channel in ('openalex','crossref','arxiv'): rows=await getattr(academic,channel)(query)
+                elif channel=='tavily': rows=[dict(r,provider='tavily',status='excerpt_only') for r in await providers.search(query,days)]
+                else: rows=await browser_search.search(query,channel)
+            task_progress.completed(self.job_id,'检索请求已返回')
             charged(reserved_cost=price,estimated_cost=price,status='completed',seconds=round(time.monotonic()-started,2))
             store.cache_put(key,rows,3600 if self.stage=='topic' else 86400)
             self.channel_status[channel]='candidates' if rows else 'no_results'
@@ -825,9 +827,12 @@ class Research:
         if self.a.get('diagnostic') and channel=='pubmed': rows=rows[:1]
         for r in rows:
             self.telemetry['phase']='reading'
-            src=await self.read(dict(r,query=query))
+            async with task_progress.request(self.job_id,'资料读取',None):
+                src=await self.read(dict(r,query=query))
             if r['url'] in self.candidates:self.candidates[r['url']].update(status=src['status'] if src else getattr(self,'read_status','unavailable'),source_id=src['id'] if src else '',read_reason=src.get('access_error','') if src else '')
             if src:
+                if src['status'] in ('retrieved','abstract_only'):
+                    task_progress.completed(self.job_id,'原文已读取' if src['status']=='retrieved' else '摘要已读取')
                 if not any(x['id']==src['id'] for x in self.a['sources']): self.a['sources'].append(src)
                 if not any(x['id']==src['id'] for x in self.added): self.added.append(src)
                 if src['status']=='retrieved': self.telemetry['fulltext']+=1

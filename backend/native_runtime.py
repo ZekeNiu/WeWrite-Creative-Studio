@@ -8,7 +8,7 @@ import re
 import sys
 from pathlib import Path
 import yaml
-from . import store, providers, account_memory, native_skills, native_projection, agent_transport, search_policy
+from . import store, providers, account_memory, native_skills, native_projection, agent_transport, search_policy, task_progress
 
 STAGES={'topic','sources','outline','write','review','edit','revise','visual','layout_advice'}
 
@@ -380,12 +380,14 @@ class Session:
             while not self.finished:
                 account_memory.guard(self.used)
                 record=self.reserve(service,system+json.dumps(messages,ensure_ascii=False)+json.dumps(TOOLS,ensure_ascii=False))
-                store.update_job(self.job_id,activity='等待模型响应',request_started_at=store.now())
-                try:response=await agent_transport.turn(service,system,messages,TOOLS)
+                store.update_job(self.job_id,activity='等待模型响应')
+                try:
+                    async with task_progress.request(self.job_id,'模型调用','模型回复已收到'):
+                        response=await agent_transport.turn(service,system,messages,TOOLS)
                 except BaseException as exc:
                     self.charge(record,getattr(exc,'usage',None) or dict(status='unknown',estimated_cost=None));raise
                 self.charge(record,response['usage']);messages.extend(response['wire'])
-                store.update_job(self.job_id,last_progress_at=store.now(),activity='处理模型结果')
+                store.update_job(self.job_id,activity='处理模型结果')
                 if response['text']:store.update_job(self.job_id,partial=response['text'])
                 # Persist even the terminal empty/text-only response before judging it.
                 (self.home/'conversation.json').write_text(json.dumps(messages,ensure_ascii=False),encoding='utf-8')
@@ -406,10 +408,17 @@ class Session:
                     store.update_job(self.job_id,native_tool_count=self.command_count)
                     args=json.loads(call['arguments']) if isinstance(call['arguments'],str) else call['arguments']
                     store.event(self.job_id,'native_tool',tool=call['name'],arguments=args,execution_id=self.id)
-                    store.update_job(self.job_id,activity={'Read':'读取创作资料','List':'查看可用资料','Find':'定位资料','Write':'保存生成内容','Edit':'更新生成内容','WebSearch':'检索资料','WebFetch':'读取网页','WeWrite':'执行创作工具','Finish':'校验并保存结果'}.get(call['name'],'处理创作资料'),last_progress_at=store.now())
-                    try:value=await self.execute(call['name'],args)
+                    activity={'Read':'读取创作资料','List':'查看可用资料','Find':'定位资料','Write':'保存生成内容','Edit':'更新生成内容','WebSearch':'检索资料','WebFetch':'读取网页','WeWrite':'执行创作工具','Finish':'校验并保存结果'}.get(call['name'],'处理创作资料')
+                    store.update_job(self.job_id,activity=activity)
+                    try:
+                        if call['name'] in ('WebSearch','WebFetch'):
+                            async with task_progress.request(self.job_id,'联网检索' if call['name']=='WebSearch' else '网页读取',None):
+                                value=await self.execute(call['name'],args)
+                        else:value=await self.execute(call['name'],args)
                     except ServiceFailure:raise
                     except (ValueError,KeyError,OSError,TypeError) as exc:value=dict(error=str(exc)[:1800])
+                    if not isinstance(value,dict) or not value.get('error'):
+                        task_progress.completed(self.job_id,activity+'完成')
                     results.append((call['id'],json.dumps(value,ensure_ascii=False)))
                     store.update_job(self.job_id,native=dict(id=self.id,run_id=self.state['run_id'],upstream_revision=(native_skills.ROOT/'UPSTREAM_REVISION').read_text().strip(),reads=self.reads))
                 agent_transport.append_results(service['protocol'],messages,results)

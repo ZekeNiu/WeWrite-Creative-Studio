@@ -1,6 +1,6 @@
 """A shared per-job meter for text, tool-internal searches and image requests."""
 from contextvars import ContextVar
-from . import store
+from . import store,task_progress
 
 ACTIVE=ContextVar('paid_request_job',default=None)
 
@@ -42,7 +42,9 @@ async def text_request(fn,service,system,prompt,emit=None):
     jid=ACTIVE.get()
     if not jid:return await fn(service,system,prompt,emit)
     record=reserve(jid,service,system+prompt)
-    try:text,usage=await fn(service,system,prompt,emit)
+    try:
+        async with task_progress.request(jid,'模型调用','模型回复已收到'):
+            text,usage=await fn(service,system,prompt,emit)
     except BaseException as exc:
         charge(record,dict(status='unknown',estimated_cost=None));exc._metered=True;raise
     charge(record,usage)
