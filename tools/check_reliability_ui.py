@@ -37,6 +37,24 @@ async def main():
         await page.get_by_role('dialog').get_by_role('button',name='创建文章',exact=True).click()
         await page.get_by_role('button',name='寻找选题灵感',exact=True).click()
         await expect(page.locator('.topic-card')).to_have_count(6)
+        first_batch=(await article())['topics']
+        await page.get_by_label('这次想怎样探索（可选）',exact=True).fill('从具体问题继续探索')
+        await page.get_by_role('button',name='换一批选题',exact=True).click()
+        await expect(page.locator('.topic-card h3').first).to_have_text('模拟选题 1（第 2 批）')
+        second=await article()
+        assert len(second['topics'])==6 and second['topics']!=first_batch
+        assert second['creative_intent']['batches'][-1]['feedback']=='从具体问题继续探索'
+        assert not second['brief']['topic']
+        await page.reload()
+        await expect(page.locator('.topic-card h3').first).to_have_text('模拟选题 1（第 2 批）')
+        await page.set_viewport_size({'width':390,'height':844})
+        await page.get_by_role('button',name='换一批选题',exact=True).click()
+        await expect(page.locator('.topic-card h3').first).to_have_text('模拟选题 1（第 3 批）')
+        await expect(page.locator('.topic-card')).to_have_count(6)
+        await page.evaluate('window.scrollTo(0,0)')
+        await page.screenshot(path=str(OUT/'topic-reroll-mobile.png'),full_page=True)
+        await page.set_viewport_size({'width':1440,'height':1000})
+        await page.screenshot(path=str(OUT/'topic-reroll-desktop.png'),full_page=True)
         await page.get_by_role('button',name='就写这个',exact=True).first.click()
         await wait_article(lambda a:bool(a['brief']['topic']))
         await nav('素材')

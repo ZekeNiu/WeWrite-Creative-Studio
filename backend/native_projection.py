@@ -5,7 +5,13 @@ from .models import SCHEMAS
 
 
 def mapping(path):
-    value=yaml.safe_load(path.read_text('utf-8'))
+    try:value=yaml.safe_load(path.read_text('utf-8'))
+    except yaml.YAMLError as exc:
+        # Artifact syntax errors belong to the existing tool correction loop.
+        # Do not abort the job or silently rewrite the model's article content.
+        mark=getattr(exc,'problem_mark',None)
+        location=f'（第 {mark.line+1} 行，第 {mark.column+1} 列）' if mark else ''
+        raise ValueError(f'{path.name} 的 YAML 格式有误{location}。请检查引号、缩进和字段格式，修正文件后再次调用 Finish；也可写入等价 JSON 对象。') from exc
     if not isinstance(value,dict):raise ValueError('上游产物不是有效对象：'+path.name)
     return value
 
