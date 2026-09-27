@@ -44,6 +44,7 @@ async def check(page,base,out):
         await page.set_viewport_size(dict(width=1440,height=1000))
 
     await page.goto(base+'/#'+a['id'])
+    await expect(page.locator('.header-center .truncate')).to_have_text(a['title'])
     await expect(page.get_by_role('button',name='扩展',exact=True)).to_have_count(0)
     await page.get_by_role('tab',name='写作设置',exact=True).click()
     await page.get_by_label('语气与表达偏好',exact=True).locator('xpath=ancestor::details').locator('summary').click()
@@ -135,6 +136,11 @@ async def check(page,base,out):
         else:await route.continue_()
     await page.route('**/api/extensions/jobs?*',delayed)
     await account.get_by_label('关联文章',exact=True).select_option(b['id'])
+    await account.get_by_label('搜索历史主题、角度或结论',exact=True).fill('没有匹配结果的模拟筛选')
+    await expect(account.get_by_label('关联文章',exact=True).locator('option:checked')).to_have_text('已选择文章（不在当前筛选中）')
+    await expect(account.get_by_label('关联文章',exact=True)).to_have_value(b['id'])
+    await account.get_by_label('搜索历史主题、角度或结论',exact=True).fill('')
+    await expect(account.get_by_label('关联文章',exact=True).locator('option[value="'+a['id']+'"]')).to_have_count(1)
     await account.get_by_label('关联文章',exact=True).select_option(a['id'])
     await asyncio.wait_for(arrived.wait(),10)
     await account.get_by_label('关联文章',exact=True).select_option(b['id'])
@@ -188,9 +194,11 @@ async def check(page,base,out):
 async def check_preview_race(page,base):
     headers={'X-Studio-Request':'1'}
     a=await (await page.request.post(base+'/api/articles',headers=headers,data=dict(topic='模拟：预览等待时修改摘要'))).json()
-    response=await page.request.patch(base+'/api/articles/'+a['id'],headers=headers,data=dict(revision=a['revision'],stage='write',changes=dict(content='模拟正文。'*50,current_stage='layout')))
+    response=await page.request.patch(base+'/api/articles/'+a['id'],headers=headers,data=dict(revision=a['revision'],stage='write',changes=dict(title='模拟预览 '+a['id'][:8],content='模拟正文。'*50,current_stage='layout')))
     assert response.ok
+    a=await response.json()
     await page.goto(base+'/#'+a['id'])
+    await expect(page.locator('.header-center .truncate')).to_have_text(a['title'])
     await page.locator('.stage-nav').filter(has=page.locator('strong',has_text='排版导出')).click()
     await page.get_by_role('button',name='推送微信草稿',exact=True).click()
     dialog=page.get_by_role('dialog',name='推送微信草稿',exact=True)
@@ -223,10 +231,12 @@ async def main():
         page=await context.new_page();page.set_default_timeout(30000);errors=[]
         page.on('pageerror',lambda e:errors.append(str(e)))
         try:
-            if '--preview-race' in sys.argv:await check_preview_race(page,base)
+            if '--preview-race' in sys.argv:
+                await check_preview_race(page,base)
+                await check_preview_race(page,base)
             else:await check(page,base,out)
             assert not errors,errors
-            print(json.dumps(dict(passed=True,contextual_entries=True,task_recovery=True,article_isolation=True,connection_return=True,preview_invalidation=True,desktop=True,mobile=True,errors=errors)))
+            print(json.dumps(dict(passed=True,check='preview_race' if '--preview-race' in sys.argv else 'contextual_tools',errors=errors)))
         except BaseException:
             await page.screenshot(path=str(out/'failure.png'),full_page=True)
             (out/'failure.txt').write_text(await page.locator('body').inner_text(),'utf-8');raise
