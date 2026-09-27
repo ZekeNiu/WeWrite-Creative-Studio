@@ -31,7 +31,8 @@ async def generate(s,system,prompt,emit=None):
     if schema=='StyleResult':r=dict(rules=[dict(category='rhythm',text='长短段落交替，结尾留给读者一个具体问题')])
     elif schema in ('ArgumentSynthesis','FactAudit','EditedDraft'):r=editorial_reply(schema,ctx)
     elif schema=='TopicsResult':
-        batch=len(ctx.get('creative_intent',{}).get('batches',[]))+1
+        job=store.job(s['_job_id'])
+        batch=len(store.get_article(job['article_id']).get('creative_intent',{}).get('batches',[]))+1
         r=dict(topics=[dict(id='T'+str(i),title='模拟选题 '+str(i)+(f'（第 {batch} 批）' if batch>1 else ''),angle='保留研究适用条件',reason='回答具体问题',reader_question='如何理解证据',novelty='解释范围',takeaway='不外推',source_ids=[]) for i in range(1,7)])
     elif schema=='ResearchPlan':r=dict(needed=False,academic=False,queries=[],questions=[],reason='核对用户已提供资料')
     elif schema=='CoverageAudit':

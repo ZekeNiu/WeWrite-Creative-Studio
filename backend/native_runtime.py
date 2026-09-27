@@ -8,7 +8,7 @@ import re
 import sys
 from pathlib import Path
 import yaml
-from . import store, providers, account_memory, native_skills, native_projection, agent_transport, search_policy, task_progress
+from . import store, providers, account_memory, native_skills, native_projection, agent_transport, search_policy, task_progress, creative
 
 STAGES={'topic','sources','outline','write','review','edit','revise','visual','layout_advice'}
 
@@ -35,7 +35,7 @@ OUTPUTS={
     'rewrite':'执行 wewrite-rewrite，目标平台见 request.json platforms。源稿为运行目录/source.md，不能覆盖。按完整平台规范保存 xiaohongshu.md / douyin.md，使用 score 和 similarity 检查，最多重试两次；Finish 会保存实际质量结果。不得调用发布或生图。',
     'stats':'执行 wewrite-stats 的数据复盘，使用 history.yaml 和 account-reference.yaml 已有实际数据。线上拉取由独立动作完成，此处不要编造或重复抓取。保存运行目录/effect-review.md；无数据时如实说明，不能用零替代未知。',
     'learn':'执行 wewrite-learn 的人工改稿学习。learning-task.json 指向明确的原稿、人工定稿和上游已生成的 diff 记录；读取两份全文，在该 lesson 填写 typed patterns，运行 learn-edits --summarize --json 并更新 playbook.md；不代替用户确认长期偏好。',
-    'topic':'完成 wewrite-topic。候选保存为运行目录/topics.yaml，格式 topics: [{title, angle, reason, score, framework, source_ids, reader_question, novelty, takeaway}]；可写入等价 JSON 对象，文本中的引号、冒号与换行必须正确转义。保留上游10个候选与排序。用户未选时不自行改写主题。',
+    'topic':'完成 wewrite-topic，生成10个候选并按评分排序。响应 request.json 中的本次反馈；creative_intent.batches 是最近三批历史，仅用于参考和避免重复，不是要保留或重新输出的候选。换批应探索新的具体问题与角度，不能只改编号、顺序、标题标点或说明。候选保存为运行目录/topics.yaml，格式 topics: [{title, angle, reason, score, framework, source_ids, reader_question, novelty, takeaway}]；可写入等价 JSON 对象，文本中的引号、冒号与换行必须正确转义。用户未选时不自行改写主题。',
     'sources':'执行 wewrite-write 的任务书、原文阅读、主张和内容增强准备；保存完整 brief.yaml、claims.yaml 和来源账本，在初稿前暂停供用户查看。claims.yaml 可附 summary/gaps。',
     'outline':'执行 wewrite-write 的框架与内容增强，完善 brief.yaml。sections 每项额外保存稳定 id、可读 title、points，供界面编辑；目的和 claim_ids 遵循上游。此处暂停，不写初稿。',
     'write':'执行 wewrite-write 的初稿流程，保存 draft.md；已有用户确认的任务书和框架是本篇输入。完成自读修正后结束本环节，不执行审稿或发布。',
@@ -173,7 +173,7 @@ class Session:
         for example in reference['examples']:example.pop('text',None)
         dump(self.home/'account-reference.yaml',reference)
         dump(self.home/'request.json',dict(stage=self.stage,instruction=self.request.get('instruction',''),selected_text=self.request.get('selected_text',''),
-            section_id=self.request.get('section_id',''),platforms=self.request.get('platforms',[]),brief=b,creative_intent=self.article.get('creative_intent',{}),issue_decisions=self.article.get('research_decisions',{})))
+            section_id=self.request.get('section_id',''),platforms=self.request.get('platforms',[]),brief=b,creative_intent=creative.context(self.article),issue_decisions=self.article.get('research_decisions',{})))
         dump(self.directory/'brief.yaml',native_projection.brief_from_article(self.article))
         dump(self.directory/'claims.yaml',{'version':1,'claims':[],**self.article.get('evidence',{})})
         if self.article['content']:

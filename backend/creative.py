@@ -1,5 +1,6 @@
 """Article intent persists across stages; exploration never establishes a fact."""
 import copy
+import unicodedata
 from . import store
 
 
@@ -10,9 +11,28 @@ def intent(a):
         batches=[], feedback=[]))
 
 
+def batches(a):
+    history=(a.get('creative_intent') or {}).get('batches',[])
+    if history:return history
+    if a.get('topics'):
+        return [dict(id='legacy-'+a['id'],at='',feedback='',topics=a['topics'])]
+    return []
+
+
+def validate_candidates(a, rows):
+    def title_key(title):
+        return ''.join(c for c in unicodedata.normalize('NFKC',title).casefold()
+                       if not c.isspace() and not unicodedata.category(c).startswith('P'))
+    previous={title_key(t['title']) for batch in batches(a)[-3:] for t in batch['topics']}
+    if rows and previous and all(title_key(t['title']) in previous for t in rows):
+        raise ValueError('本批标题与最近三批全部重复。请根据本次反馈生成新的选题，不能只改编号、顺序或说明；重写 topics.yaml 后再次调用 Finish。')
+
+
 def adopt(a, title, topic_id=''):
     candidate=next((t for t in a['topics'] if (t.get('id')==topic_id if topic_id else t['title']==title)),None)
-    if topic_id and not candidate: raise ValueError('候选选题已更新，请重新选择')
+    if topic_id and not candidate:
+        candidate=next((t for batch in batches(a) for t in batch['topics'] if t.get('id')==topic_id),None)
+    if topic_id and not candidate: raise ValueError('此选题不在当前文章的已保存批次中，请刷新后重新选择')
     plan=copy.deepcopy(candidate or dict(title=title,angle='',evidence_status='待调查'))
     plan['id']=plan.get('id') or 'T'+store.uid()[:12]
     current=intent(a)
@@ -34,17 +54,18 @@ def adopt(a, title, topic_id=''):
 
 def candidates(a, rows, feedback=''):
     current=intent(a)
+    history=current.get('batches') or copy.deepcopy(batches(a))
     if not current.get('original_request'):
         current['original_request']=feedback or '围绕'+(a['brief'].get('domain') or a['brief']['column'])+'寻找选题'
     for row in rows:
         row['id']='T'+store.uid()[:12]
         row['evidence_status']='待调查；已有相关资料' if row.get('source_ids') else '待调查；尚需资料'
-    current['batches']=(current.get('batches',[])+[dict(id=store.uid(),at=store.now(),feedback=feedback,topics=copy.deepcopy(rows))])[-3:]
+    current['batches']=history+[dict(id=store.uid(),at=store.now(),feedback=feedback,topics=copy.deepcopy(rows))]
     if feedback: current['feedback']=(current.get('feedback',[])+[feedback])[-12:]
     a['creative_intent']=current;a['topics']=rows
 
 
 def context(a):
-    value=intent(a)
-    # History is useful for exploration; selected intent is authoritative downstream.
-    return value
+    value=a.get('creative_intent') or intent(a)
+    # Full history belongs to the UI; model context only needs recent exploration.
+    return copy.deepcopy({**value,'batches':batches(a)[-3:]})

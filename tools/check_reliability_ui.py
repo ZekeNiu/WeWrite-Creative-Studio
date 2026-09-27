@@ -51,6 +51,8 @@ async def main():
         await page.get_by_role('button',name='换一批选题',exact=True).click()
         await expect(page.locator('.topic-card h3').first).to_have_text('模拟选题 1（第 3 批）')
         await expect(page.locator('.topic-card')).to_have_count(6)
+        from check_topic_batches_ui import check as check_topic_batches
+        await check_topic_batches(page,BASE,OUT)
         await page.evaluate('window.scrollTo(0,0)')
         await page.screenshot(path=str(OUT/'topic-reroll-mobile.png'),full_page=True)
         await page.set_viewport_size({'width':1440,'height':1000})

@@ -132,6 +132,8 @@ summary:only-child{margin-bottom:0}
 .library-task.library-failure{color:var(--danger)}
 .library-failure .status-dot{background:var(--danger)}
 .topic-input .row>.field{flex:1;min-width:0;margin-bottom:0}
+.topic-batches{flex-wrap:wrap;gap:12px;scroll-margin-top:90px}.topic-batches h3{white-space:nowrap}.topic-pagination{display:flex;align-items:center;gap:8px;min-width:0}.topic-pagination select{width:auto;min-width:0;background:#fff;border:1px solid var(--line);border-radius:6px;padding:9px;color:var(--ink);font:inherit}.topic-pagination .button{white-space:nowrap;padding:9px 12px}
+@media(max-width:760px){.topic-batches{align-items:flex-start;flex-direction:column}.topic-pagination{width:100%;gap:6px}.topic-pagination select{flex:1;width:0;padding:9px 6px}.topic-pagination .button{padding:9px 10px}}
 .topic-input .row{align-items:flex-end}
 .topic-input .topic-adoption{font-size:14px;margin:12px 0 0;line-height:1.7}
 .topic-explore{margin-top:24px;padding-top:24px;border-top:1px solid #dce6d5}

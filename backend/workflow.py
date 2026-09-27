@@ -22,6 +22,7 @@ def parse(stage,text):
 
 def validate_result(stage,result,a):
     sources={s['id']:s for s in a['sources'] if s['selected']}
+    if stage=='topic':creative.validate_candidates(a,result.get('topics',[]))
     if stage in ('topic','sources','review'):
         items=result.get({'topic':'topics','sources':'claims','review':'issues'}[stage],[])
         ids=[]

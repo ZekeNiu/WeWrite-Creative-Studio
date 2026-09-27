@@ -3,7 +3,7 @@ import ReviewChecks from './ReviewChecks';
 import {useEffect,useRef,useState} from 'react';
 import {BookOpen,Search,Upload,Link as LinkIcon,Plus,Check,ArrowRight,RefreshCw,FileText,ExternalLink,GripVertical,Trash2,ImagePlus,Sparkles,MessageSquare,CheckCheck,AlertCircle,Lightbulb,Scissors} from 'lucide-react';
 import {api} from './api';
-import {type Article,type Save,type Job} from './types';
+import {type Article,type Save,type Job,type Topic,type TopicBatch} from './types';
 import {Field,Select,Toggle,Empty,Tag,Modal,Busy} from './ui';
 
 export type Action=(fn:()=>Promise<void>)=>Promise<void>;
@@ -12,6 +12,27 @@ export type Common={prepare:()=>Promise<Article>;navigate:(stage:import('./types
 
 export function Topics({a,act,update,run,busy,prepare,save}:Common){
  const [hot,setHot]=useState<any>(null);const [loading,setLoading]=useState(false);
+ const batches:TopicBatch[]=a.creative_intent?.batches?.length?a.creative_intent.batches:a.topics.length?[{id:'legacy-'+a.id,at:'',feedback:'',topics:a.topics}]:[];
+ const latest=batches.at(-1)?.id||'';
+ const [selection,setSelection]=useState({articleId:a.id,batchId:latest});
+ const observed=useRef({articleId:a.id,latest,count:batches.length});
+ const candidatesRef=useRef<HTMLDivElement>(null);
+ useEffect(()=>{
+  const previous=observed.current;
+  observed.current={articleId:a.id,latest,count:batches.length};
+  if(previous.articleId!==a.id||previous.latest!==latest){
+   setSelection({articleId:a.id,batchId:latest});
+   if(previous.articleId===a.id&&batches.length>previous.count){
+    const frame=requestAnimationFrame(()=>candidatesRef.current?.scrollIntoView({block:'start'}));
+    return()=>cancelAnimationFrame(frame);
+   }
+  }
+ },[a.id,latest,batches.length]);
+ const selectedIndex=selection.articleId===a.id?batches.findIndex(b=>b.id===selection.batchId):-1;
+ const page=selectedIndex<0?batches.length-1:selectedIndex;
+ const topics=batches[page]?.topics||[];
+ const showBatch=(index:number)=>{if(batches[index])setSelection({articleId:a.id,batchId:batches[index].id})};
+ const adopted=(t:Topic)=>a.creative_intent?.selected?.id?a.creative_intent.selected.id===t.id:a.brief.topic===t.title;
  const topic=a.input_drafts?.topic??a.brief.topic;
  const draft=(key:string,value:string)=>save(current=>({input_drafts:{...current.input_drafts,[key]:value}}));
  const generate=()=>run('topic');
@@ -19,8 +40,13 @@ export function Topics({a,act,update,run,busy,prepare,save}:Common){
  return <><div className="topic-input"><div><span className="eyebrow">从一个好问题开始</span><h2>今天，想写点什么？</h2><p>探索新的角度，或带着一个确定的主题出发。</p></div><div className="row"><Field autoSave label="指定文章主题" placeholder="直接输入主题，例如：力量训练如何帮助跑者？" value={topic} onCommit={v=>draft("topic",v)}/><button className="button secondary" disabled={busy} onClick={()=>void act(async()=>{const current=await prepare();const title=current.input_drafts?.topic??current.brief.topic;if(!title.trim())throw new Error("请先输入主题");update(await api("/articles/"+current.id+"/topic","POST",{revision:current.revision,title}))})}>采用主题<ArrowRight size={15}/></button></div>
  <p className="muted topic-adoption">当前采用：{a.brief.topic||'尚未采用主题'}。输入草稿会保存，点击“采用主题”后才用于后续创作。</p>
  <div className="topic-explore"><Field autoSave label="这次想怎样探索（可选）" multiline value={a.input_drafts?.topic_feedback||''} onCommit={v=>draft('topic_feedback',v)} placeholder="例如：这些角度太普通，深入某个机制；或继续细化第二个方向"/><div className="row between wrap"><span className="muted">先生成候选，再选择适合的主题。</span><button className="button primary" disabled={busy} onClick={()=>generate()}><Sparkles size={16}/>{a.topics.length?"换一批选题":"寻找选题灵感"}</button></div></div></div>
- <div className="row between section-label"><h3>候选选题 <span className="count">{a.topics.length||'—'}</span></h3></div>
- {!a.topics.length?<Empty icon={<Lightbulb size={30}/>} title="你的下一个选题，从这里开始" description={`基于「${a.brief.domain||a.brief.column}」寻找角度。可在侧栏的写作设置中补充领域、读者和偏好。`}></Empty>:<div className="topics-grid">{a.topics.map((t,i)=><article key={t.id||i} className={'topic-card '+(a.brief.topic===t.title?'selected':'')}><div className="row between"><span className="topic-number">{String(i+1).padStart(2,'0')}</span>{i===0&&<Tag tone="green">优先推荐</Tag>}</div><h3>{t.title}</h3><p>{t.angle}</p><div className="topic-reason">{t.novelty||t.reason}</div><details><summary>拟讨论的问题与依据状态</summary><p>{t.reader_question}</p>{t.questions?.map((q:string,i:number)=><p key={i}>{q}</p>)}<p>预期交付：{t.takeaway||t.reason}</p><p className="muted">{t.evidence_status||'待调查'}；关联资料不等于主张已核实。</p></details>{t.audience&&<small className="muted">适合：{t.audience}</small>}<div className="row between"><span className="muted">{t.source_ids?.length?`${t.source_ids.length} 条关联资料`:'需要补充资料'}</span><button className={'button '+(a.brief.topic===t.title?'secondary':'ghost')} disabled={busy} onClick={()=>choose(t.title,t.id)}>{a.brief.topic===t.title?<><Check size={14}/>已采用</>:<>就写这个<ArrowRight size={14}/></>}</button></div></article>)}</div>}
+ <div className="row between section-label topic-batches" ref={candidatesRef}><h3>候选选题 <span className="count">{topics.length||'—'}</span></h3>
+ {!!batches.length&&<div className="topic-pagination" role="group" aria-label="候选选题批次">
+ <button className="button secondary" disabled={page<=0} onClick={()=>showBatch(page-1)}>上一批</button>
+ <select aria-label="选题批次" value={batches[page]?.id||''} onChange={e=>setSelection({articleId:a.id,batchId:e.target.value})}>{batches.map((b,i)=><option key={b.id} value={b.id}>第 {i+1} 批 / 共 {batches.length} 批</option>)}</select>
+ <button className="button secondary" disabled={page>=batches.length-1} onClick={()=>showBatch(page+1)}>下一批</button>
+ </div>}</div>
+ {!topics.length?<Empty icon={<Lightbulb size={30}/>} title="你的下一个选题，从这里开始" description={`基于「${a.brief.domain||a.brief.column}」寻找角度。可在侧栏的写作设置中补充领域、读者和偏好。`}></Empty>:<div className="topics-grid" key={batches[page]?.id}>{topics.map((t,i)=><article key={t.id||i} className={'topic-card '+(adopted(t)?'selected':'')}><div className="row between"><span className="topic-number">{String(i+1).padStart(2,'0')}</span>{i===0&&<Tag tone="green">优先推荐</Tag>}</div><h3>{t.title}</h3><p>{t.angle}</p><div className="topic-reason">{t.novelty||t.reason}</div><details><summary>拟讨论的问题与依据状态</summary><p>{t.reader_question}</p>{t.questions?.map((q:string,i:number)=><p key={i}>{q}</p>)}<p>预期交付：{t.takeaway||t.reason}</p><p className="muted">{t.evidence_status||'待调查'}；关联资料不等于主张已核实。</p></details>{t.audience&&<small className="muted">适合：{t.audience}</small>}<div className="row between"><span className="muted">{t.source_ids?.length?`${t.source_ids.length} 条关联资料`:'需要补充资料'}</span><button className={'button '+(adopted(t)?'secondary':'ghost')} disabled={busy} onClick={()=>choose(t.title,t.id)}>{adopted(t)?<><Check size={14}/>已采用</>:<>就写这个<ArrowRight size={14}/></>}</button></div></article>)}</div>}
  <details className="hotspots"><summary>看看公开热点</summary><p className="muted">热点提供灵感，不代表事实已核实，也不等同于你所在领域的阅读需求。</p><button className="button secondary" disabled={loading} onClick={()=>{setLoading(true);void act(async()=>setHot(await api('/hotspots'))).finally(()=>setLoading(false))}}>{loading?<Busy text="正在读取热点"/>:'读取公开热点'}</button>{hot&&(hot.items?.length?<div className="hotspot-list">{hot.items.map((h:any,i:number)=><button key={i} onClick={()=>void act(async()=>{await draft("topic",h.title)})}><span>{i+1}</span>{h.title}<small>{h.source}</small></button>)}</div>:<p className="muted">暂未读取到公开热点，可手动填写主题或生成常青选题。</p>)}</details></>
 }
 

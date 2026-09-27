@@ -76,7 +76,7 @@ def test_topic_plan_history_adoption_and_feedback_context(client,model):
     a=new(client)
     for n in range(4):
         a=store.save_article(a['id'],a['revision'],lambda v:creative.candidates(v,[dict(title='候选'+str(n),angle='读者痛点',reason='新增价值',reader_question='为什么实验室表现不能外推赛场',takeaway='判断条件',key_claims=['待证实假设'],source_ids=[])],'太普通，深入机制'),'candidate')
-    assert len(a['creative_intent']['batches'])==3
+    assert len(a['creative_intent']['batches'])==4
     candidate=a['topics'][0]
     a=client.post('/api/articles/'+a['id']+'/topic',headers=H,json=dict(revision=a['revision'],title=candidate['title'],topic_id=candidate['id'])).json()
     assert a['creative_intent']['selected']==candidate and not store.jobs(a['id'])
