@@ -82,8 +82,8 @@ def test_no_tavily_automatic_research_and_cache(client,network,column):
     done=wait(client,j);assert done['status']=='completed',done
     a=client.get('/api/articles/'+a['id']).json()
     assert a['research']['summary'] and a['sources'][0]['evidence_spans'][0]['verification']=='quote_matched'
-    assert a['sources'][0]['status']=='retrieved' and network==['google','google']
-    # Both planned questions receive their first turn before one combined audit.
+    assert a['sources'][0]['status']=='retrieved' and network==['google']
+    # Once all required answers are independently checked, remaining searches stop.
     searched=list(network)
     assert providers.service_for('research')['model']=='analysis'
     j=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json={'stage':'research','revision':a['revision'],'chain':False}).json()
@@ -262,7 +262,7 @@ def test_irrelevant_search_results_not_adopted(client,network,monkeypatch):
         return await original(s,system,prompt,emit)
     monkeypatch.setattr(providers,'generate',reject)
     a=article(client);j=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json={'stage':'research','revision':a['revision']}).json()
-    assert wait(client,j)['status']=='completed'
+    assert wait(client,j)['status']=='needs_input'
     a=client.get('/api/articles/'+a['id']).json()
     assert a['sources']==[] and a['research']['pending'] and a['research']['gaps']
 

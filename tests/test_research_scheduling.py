@@ -6,7 +6,7 @@ from tests.test_quality_discovery import worker
 
 
 @pytest.mark.parametrize('legacy_limit',[6,2])
-def test_questions_share_one_assessment_before_another_search_turn(monkeypatch,legacy_limit):
+def test_coverage_is_checked_before_starting_another_question(monkeypatch,legacy_limit):
     w=worker();w.cfg['max_calls']=legacy_limit;events=[];complete=False
     monkeypatch.setattr(research.search_plan,'channels',lambda *args:['native','tavily'])
     monkeypatch.setattr(w,'sufficient',lambda:complete)
@@ -19,8 +19,8 @@ def test_questions_share_one_assessment_before_another_search_turn(monkeypatch,l
         events.append(('assess',w.pages));complete=True
     monkeypatch.setattr(w,'channel',channel);monkeypatch.setattr(w,'collect',collect);monkeypatch.setattr(w,'assess',assess)
     asyncio.run(w.discover(['one','two','three']))
-    assert [event for event in events if event[0]=='assess']==[('assess',3)]
-    assert w.calls==3 and events[-1][0]=='assess'
+    assert [event for event in events if event[0]=='assess']==[('assess',1)]
+    assert w.calls==1 and events[-1][0]=='assess'
 
 
 @pytest.mark.parametrize('legacy_limit',[5,3])
@@ -31,6 +31,9 @@ def test_deferred_reads_assess_in_pairs_without_legacy_page_cap(monkeypatch,lega
     async def assess():checks.append(w.pages)
     monkeypatch.setattr(w,'collect',collect);monkeypatch.setattr(w,'assess',assess)
     monkeypatch.setattr(w,'sufficient',lambda:False)
+    # Every assessed batch resolves another required part, so useful work may
+    # continue beyond a legacy page setting. The no-gain case is separate.
+    monkeypatch.setattr(w,'progress_key',lambda:str(len(checks)))
     asyncio.run(w.drain_candidates())
     assert checks==[2,4,5] and not w.deferred
 

@@ -17,7 +17,7 @@ def objective(a):
 
 
 def source_key(s):
-    return digest({k:s.get(k) for k in ('id','selected','text','use','personal_material','bibliography')+SOURCE_IDENTITY_FIELDS})
+    return digest({k:s.get(k) for k in ('id','selected','text','status','use','personal_material','bibliography')+SOURCE_IDENTITY_FIELDS})
 
 
 def selected(a):
@@ -130,7 +130,7 @@ def merge_issues(a, notes, requested=()):
     return issues(dict(a,research=dict(a.get('research',{}),issues=list(rows.values()))))
 
 
-def merge_claims(a, spans, requested=()):
+def merge_claims(a, spans, requested=(),include_related=False):
     claims=copy.deepcopy(a.get('evidence',{}).get('claims',[]));lookup={c['id']:c for c in claims}
     from .flow_state import issues
     target_claims={q.get('claim_id') for q in issues(a) if q['id'] in requested}
@@ -141,13 +141,13 @@ def merge_claims(a, spans, requested=()):
             c.update(evidence=[],source_ids=[],status='unsupported',boundary='')
     touched=set()
     for e in spans:
-        if requested and not discovery and e.get('claim_id') not in target_claims and normal(e.get('claim','')) not in target_texts:
+        if requested and not include_related and not discovery and e.get('claim_id') not in target_claims and normal(e.get('claim','')) not in target_texts:
             continue
         cid=e.get('claim_id')
         if cid not in lookup:
             same=next((c for c in claims if normal(c['text'])==normal(e['claim'])),None)
             cid=same['id'] if same else 'C'+digest(e['claim'])[:12]
-        if requested and cid in lookup and cid not in target_claims and normal(lookup[cid]['text']) not in target_texts:
+        if requested and not include_related and cid in lookup and cid not in target_claims and normal(lookup[cid]['text']) not in target_texts:
             continue
         if cid not in touched:
             old=lookup.get(cid,{})

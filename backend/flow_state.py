@@ -108,4 +108,6 @@ def retry_request(job,revision):
                 'revise':('instruction','selected_text'),'image':('image_id',),'visual':('instruction',),
                 'edit':('instruction',),'layout_advice':('instruction',)}.get(stage,())
         request.update({k:original[k] for k in fields if original.get(k) is not None})
+    if stage=='research' and job.get('research',{}).get('analysis_state') and job['status'] in ('failed','cancelled','interrupted'):
+        request.update(research_parent_id=job['id'],chain=False)
     return request

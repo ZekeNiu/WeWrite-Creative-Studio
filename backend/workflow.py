@@ -64,7 +64,10 @@ def start(article_id,request):
             return existing
     if request.research_parent_id:
         parent=store.job(request.research_parent_id)
-        if request.stage!='research' or parent['article_id']!=article_id or parent['status'] in ('running','queued') or not parent.get('research') or a.get('research',{}).get('job_id')!=parent['id']:
+        latest=next((j for j in store.jobs(article_id) if j['stage']=='research'),None)
+        checkpoint=parent.get('research',{}).get('analysis_state',{})
+        recoverable=latest and latest['id']==parent['id'] and checkpoint.get('objective')==research.research_contract.objective(a)
+        if request.stage!='research' or parent['article_id']!=article_id or parent['status'] in ('running','queued') or not parent.get('research') or (a.get('research',{}).get('job_id')!=parent['id'] and not recoverable):
             raise ValueError('原检索任务已被替代，不能继续；请查看当前整理结果')
     if request.continuation_job_id:
         original=store.job(request.continuation_job_id)
@@ -236,11 +239,9 @@ async def run(job_id):
             # auditing the same draft; missing facts remain review findings.
             if stage=='research':
                 a,pending=await research.gather(a,job_id,stage,req.get('instruction',''))
-                if pending and stage in ('sources','research'):
-                    if stage in ('sources','research'):
-                        if stage=='research' or not (req.get('chain') and a['auto'].get('sources')):
-                            store.update_job(job_id,status='completed',ended=store.now(),message='本次核实已完成，仍有建议待处理，可带限定继续',waiting_for_materials=stage=='sources',result={'materials_state':a.get('materials_state')})
-                            return
+                if pending:
+                    store.update_job(job_id,status='needs_input',ended=store.now(),message='已保存核实成果和未解决问题，请补充材料或决定后续处理',waiting_for_materials=True,result={'materials_state':a.get('materials_state')})
+                    return
             if stage=='research':
                 if req.get('continuation_job_id'):
                     original=store.job(req['continuation_job_id']);target=original['stage']

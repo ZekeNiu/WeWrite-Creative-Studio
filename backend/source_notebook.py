@@ -82,6 +82,4 @@ def request_reads(article,requests):
         if not section:continue
         ranges=source.setdefault('_requested_sections',[])
         if section not in ranges:ranges.append(section);changed=True
-        elif section not in ranges[-2:]:
-            ranges.remove(section);ranges.append(section);changed=True
     return changed

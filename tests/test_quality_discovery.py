@@ -253,10 +253,13 @@ def test_parallel_identity_lookups_are_bounded_and_never_drop_failed_candidates(
 
 def test_questions_get_turns_before_one_query_exhausts_engines(monkeypatch):
     w=worker();seen=[]
+    from backend import research_contract
+    w.a['brief']['topic']='question one; question two; question three'
+    research_contract.anchor_requirements(w.a,[dict(request_quote=q,question=q) for q in ('question one','question two','question three')])
     async def channel(name,query):
         w.calls+=1;seen.append((name,query));return []
     monkeypatch.setattr(w,'channel',channel)
-    asyncio.run(w.discover(['question one','question two','question three']))
+    asyncio.run(w.discover([dict(query=q,request_quote=q) for q in ('question one','question two','question three')]))
     assert [q for _,q in seen[:3]]==['question one','question two','question three']
     assert any(c=='pubmed' for c,_ in seen)
 

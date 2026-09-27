@@ -193,6 +193,9 @@ class SearchConfig(BaseModel):
 class ResearchQuery(BaseModel):
     query: str
     question: str = ''
+    question_ids: list[str] = Field(default_factory=list,max_length=16)
+    request_quote: str = ''
+    expected_gain: str = ''
     purpose: Literal['known_source','explore','counterevidence','updates'] = 'explore'
     source_type: Literal['academic','official','general','auto'] = 'auto'
     time_scope: Literal['all','recent'] = 'all'
@@ -216,6 +219,7 @@ class ResearchPlan(BaseModel):
 class EvidenceSpan(BaseModel):
     question_ids: list[str] = Field(default_factory=list,max_length=12)
     claim_id: str = ''
+    replaces_evidence_id: str = ''
     type: Literal['fact', 'inference', 'opinion', 'user_experience'] = 'fact'
     source_id: str
     quote: str

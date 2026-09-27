@@ -40,6 +40,8 @@ jobs:
             if (-not $ready) { throw 'QA server did not start' }
             python tools/check_reliability_ui.py
             if ($LASTEXITCODE -ne 0) { throw 'Browser acceptance failed' }
+            python tools/check_research_convergence_ui.py
+            if ($LASTEXITCODE -ne 0) { throw 'Research convergence acceptance failed' }
             python tools/check_ui_reliability_v230.py
             if ($LASTEXITCODE -ne 0) { throw 'UI reliability acceptance failed' }
             python tools/check_ui_visual_v231.py
@@ -58,5 +60,6 @@ jobs:
             output/playwright/reliability/
             output/playwright/v231/
             output/playwright/v232/
+            output/playwright/v237/
             output/diagnostics/qa-server*.txt
           if-no-files-found: ignore

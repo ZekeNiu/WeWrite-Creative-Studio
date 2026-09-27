@@ -40,7 +40,7 @@ def test_actual_audit_request_preserves_reader_provenance(monkeypatch, schema):
     if schema in (models.CoverageAudit, models.AnswerScopeAudit):
         question = contract['questions'][0]
         candidates = [dict(coverage=[dict(question_id=question['id'], question=question['text'],
-                                         required=True, candidate_evidence_ids=[])])]
+                                         required=True, candidate_evidence_ids=[], source_ids=[source['id']])])]
     asyncio.run(research.structured(article, 'sources', 'Synthetic audit', schema, job['id'], candidates))
     supplied = sent[0]['context']['sources'][0]
     for key in ('url', 'original_url', 'read_url', 'access_scope', 'identity_verified',

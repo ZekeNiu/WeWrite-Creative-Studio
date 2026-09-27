@@ -96,8 +96,11 @@ def test_finished_outline_has_no_old_continuation(client):
     assert not a['research'].get('resume_job_id') and issue_actions.parent(a) is None
 
 
-def test_existing_upload_checked_before_search_and_single_evidence_model(client,monkeypatch):
-    a=seeded(client);j=store.create_job(a['id'],dict(stage='research',revision=a['revision'],issue_ids=['Q1']))
+@pytest.mark.parametrize('remaining_gap',[False,True])
+def test_existing_upload_checked_before_search_and_single_evidence_model(client,monkeypatch,remaining_gap):
+    a=seeded(client)
+    if remaining_gap:a=store.save_article(a['id'],a['revision'],lambda v:v['research']['issues'][1].update(status='open'),'Synthetic unresolved requirement')
+    j=store.create_job(a['id'],dict(stage='research',revision=a['revision'],issue_ids=['Q1']))
     called=[]
     async def structured(a,stage,instruction,schema,job,candidates=None,questions=()):
         called.append(schema.__name__)
@@ -112,7 +115,9 @@ def test_existing_upload_checked_before_search_and_single_evidence_model(client,
     async def forbid(*args): raise AssertionError('已足够的上传材料不得先联网')
     monkeypatch.setattr(research,'structured',structured);monkeypatch.setattr(research.Research,'discover',forbid)
     saved,pending=asyncio.run(research.gather(a,j['id'],'research','只核实问题一'))
-    assert not pending and called==['ResearchPlan','ResearchNotes','EvidenceJudgements','EvidenceScopeAudit','CoverageAudit','AnswerScopeAudit']
+    assert pending is remaining_gap
+    assert saved['research']['convergence']['state']==('needs_material' if remaining_gap else 'ready')
+    assert called==['ResearchPlan','ResearchNotes','EvidenceJudgements','EvidenceScopeAudit','CoverageAudit','AnswerScopeAudit']
     assert len(saved['evidence']['claims'])==2 and saved['evidence']['claims'][0]['type']=='inference'
 
 
