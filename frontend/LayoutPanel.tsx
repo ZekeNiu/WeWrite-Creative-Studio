@@ -7,7 +7,7 @@ import {Field,Select,Busy} from './ui';
 import {type Action,type Run} from './Panels';
 
 type Preview={html:string;body:string;plaintext:string;references:any[];compatibility:{rule:string;level:string;message:string}[]};
-export default function LayoutPanel({a,save,act,run,busy,meta,prepareExport}:{a:Article;save:Save;act:Action;run:Run;busy:boolean;meta:Meta;prepareExport:(open?:boolean)=>Promise<any>}){
+export default function LayoutPanel({a,save,act,run,busy,meta,prepareExport,onTool}:{a:Article;save:Save;act:Action;run:Run;busy:boolean;meta:Meta;prepareExport:(open?:boolean)=>Promise<any>;onTool:(kind:'theme'|'rewrite'|'publish')=>void}){
  const [preview,setPreview]=useState<{key:string;data:Preview}|null>(null),[loading,setLoading]=useState(false),[copied,setCopied]=useState(false);
  const [saving,setSaving]=useState(0),[layout,setLayout]=useState(a.layout);
  const [retry,setRetry]=useState(0);
@@ -41,6 +41,7 @@ export default function LayoutPanel({a,save,act,run,busy,meta,prepareExport}:{a:
  return <div className="layout-workspace"><div className="layout-controls">
   <span className="eyebrow">文章的最后一公里</span><h3>让好内容，读起来更舒服</h3>
   <Select label="排版主题" value={layout.theme} onChange={v=>{const t=meta.themes.find(t=>t.id===v);if(t)return choose(t)}}>{meta.themes.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</Select>
+  <button className="text-button" onClick={()=>onTool('theme')}>从文章学习排版</button>
   <div className="theme-swatches">{meta.themes.slice(0,12).map(t=><button title={t.name} aria-label={t.name} key={t.id} style={{background:t.colors.primary||'#243e38'}} className={layout.theme===t.id?'selected':''} onClick={()=>void choose(t).catch(()=>{})}/>)}</div>
   <div className="form-grid"><Field label="正文字号" type="number" min={12} max={24} value={layout.font_size} onCommit={v=>change('font_size',Number(v))}/><Field label="行距倍数" type="number" min={1.2} max={3} value={layout.line_height} onCommit={v=>change('line_height',Number(v))}/></div>
   <Field label="段落间距 / px" type="number" min={4} max={40} value={layout.paragraph_gap} onCommit={v=>change('paragraph_gap',Number(v))}/>
@@ -48,6 +49,7 @@ export default function LayoutPanel({a,save,act,run,busy,meta,prepareExport}:{a:
   <Field label="署名" value={layout.author} placeholder="可选" onCommit={v=>change('author',v)}/>
   <details className="reading-advice"><summary>阅读与结构建议（AI，可选）</summary><p className="muted small-text">只针对段落、层级与图片位置给建议，不会应用主题或修改正文。</p><button className="button secondary full" disabled={busy||saving>0||!a.content} onClick={()=>run('layout_advice',{chain:false})}><Sparkles size={15}/>获取阅读与结构建议</button>{a.layout_advice&&<div className="layout-advice">{a.layout_advice}</div>}</details>
   <div className="export-group"><button className="button primary full" disabled={!ready||busy} onClick={()=>act(copy)}>{copied?<Check size={16}/>:<Copy size={16}/>} {copied?'已复制':'复制公众号排版'}</button><button className="button secondary full" disabled={busy||saving>0||!a.content} onClick={()=>act(()=>download('zip'))}><Download size={16}/>下载文章分享包</button><div className="row"><button className="text-button" disabled={busy||saving>0||!a.content} onClick={()=>act(()=>download('md'))}>Markdown</button><span className="muted">·</span><button className="text-button" disabled={busy||saving>0||!a.content} onClick={()=>act(()=>download('html'))}>HTML</button></div></div>
+  <div className="context-tools"><button className="button secondary full" onClick={()=>onTool('rewrite')}>多平台改写</button><button className="button secondary full" onClick={()=>onTool('publish')}>推送微信草稿</button></div>
   {archive&&<div className="small-text"><p style={{overflowWrap:'anywhere'}}>已归档 r{archive.revision}：{archive.path}</p><button className="text-button" disabled={busy} onClick={()=>act(async()=>setArchive(await prepareExport(true)))}>打开归档文件夹</button></div>}
   <p className="muted small-text">ZIP 仅含文章、采用图片和实际引用的文献信息，不含素材全文及内部备注，不是创作数据备份。复制到公众号后，本地图片需在微信编辑器中上传。</p>
   {ready&&preview&&<details><summary>公众号排版校验</summary>{preview.data.compatibility?.length?preview.data.compatibility.map(i=><p key={i.rule}>{i.level}：{i.message}</p>):<p>通过上游兼容性校验；已应用复制粘贴加固。封面独立保留在分享包中。</p>}</details>}

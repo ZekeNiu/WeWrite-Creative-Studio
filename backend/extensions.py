@@ -12,12 +12,14 @@ from pathlib import Path
 from typing import Literal
 from bs4 import BeautifulSoup
 import yaml
-from fastapi import APIRouter
+from fastapi import APIRouter,Query
 from pydantic import BaseModel,Field
 from . import account_memory,store,security,native_catalog,native_skills,native_runtime,rendering,materials,workflow
 
 router=APIRouter(prefix='/api/extensions')
 SECRET='wewrite:wechat'
+ActionName=Literal['theme','rewrite','publish','image_post','stats','stats_review','draft_read']
+ACTION_LABELS=dict(theme='学习排版',rewrite='多平台改写',publish='微信草稿推送',image_post='图片帖草稿推送',stats='在线效果',stats_review='效果复盘',draft_read='读取草稿副本')
 
 
 def credentials():
@@ -51,6 +53,25 @@ def save_credentials(value:dict):
     return config()
 
 
+@router.get('/jobs')
+def action_jobs(action:list[ActionName]=Query(...,min_length=1),article_id:str|None=None,
+                page:int=Query(1,ge=1),page_size:int=Query(20,ge=1,le=100)):
+    # Filter before pagination, including old theme jobs stored under an article.
+    from .flow_state import job_view
+    filters=["json_extract(data,'$.request.action') IN ("+','.join('?' for _ in action)+')']
+    values=list(action)
+    if article_id is not None:
+        filters.append('article_id=?');values.append(article_id)
+    where=' AND '.join(filters)
+    with store.connection() as db:
+        total=db.execute('SELECT count(*) FROM jobs WHERE '+where,values).fetchone()[0]
+        rows=db.execute('SELECT data FROM jobs WHERE '+where+' ORDER BY rowid DESC LIMIT ? OFFSET ?',
+                        [*values,page_size,(page-1)*page_size]).fetchall()
+        active=db.execute("SELECT data FROM jobs WHERE "+where+" AND status IN ('queued','running') ORDER BY rowid DESC",values).fetchall()
+    def view(row):return job_view(store.refresh_external(json.loads(row[0])))
+    return dict(items=[view(r) for r in rows],active=[view(r) for r in active],total=total,page=page,page_size=page_size)
+
+
 @router.post('/personas')
 def save_persona(value:dict):
     native_catalog.save_persona(value);return overview()
@@ -69,7 +90,7 @@ def save_binding(value:dict):
 
 
 class Action(BaseModel):
-    action:Literal['theme','rewrite','publish','image_post','stats','stats_review','draft_read']
+    action:ActionName
     article_id:str=''
     revision:int=0
     account_revision:int
@@ -125,7 +146,7 @@ async def start(value:Action):
             existing=json.loads(old[0])
             if existing['request'].get('action')!=value.action or existing['request'].get('article_id','')!=value.article_id:raise ValueError('动作编号已用于其他请求')
             return existing
-        if value.account_revision!=account_memory.get()['revision']:raise store.Conflict('账号参考已更新，请刷新扩展面板')
+        if value.account_revision!=account_memory.get()['revision']:raise store.Conflict('账号参考已更新，请刷新当前功能后重试')
         if value.action=='theme':native_catalog.identifier(value.name)
         else:
             a=store.get_article(value.article_id)
@@ -215,7 +236,7 @@ async def run(jid):
         j=store.job(jid);value=j['request'];action=value['action']
         account_memory.guard(dict(revision=value['account_revision']))
         if value['article_id'] and store.get_article(value['article_id'])['revision']!=value['revision']:raise store.Conflict('文章已更新，本次未执行')
-        store.update_job(jid,status='running',message='正在执行独立扩展动作')
+        store.update_job(jid,status='running',message='正在执行'+ACTION_LABELS[action])
         if action=='theme':await learn_theme(jid,value)
         elif action in ('rewrite','stats_review'):
             a=store.get_article(j['article_id']);stage='stats' if action=='stats_review' else 'rewrite'
@@ -258,7 +279,7 @@ async def run(jid):
                 except store.Conflict:
                     store.update_job(jid,status='needs_input',ended=store.now(),message='微信已创建草稿，但本地正文已有更新；回执保留在任务中，请勿重复推送');return
             account_memory.finish_use(session.used,'returned')
-        store.update_job(jid,status='completed',ended=store.now(),message='扩展动作完成，本地成果与回执已保留')
+        store.update_job(jid,status='completed',ended=store.now(),message=ACTION_LABELS[action]+'已完成，成果与回执已保留')
     except asyncio.CancelledError:store.update_job(jid,status='cancelled',ended=store.now(),message='已停止；已发送微信请求请查看保留回执')
     except Exception as exc:store.update_job(jid,status='needs_input' if isinstance(exc,store.Conflict) else 'failed',ended=store.now(),message=str(exc))
     finally:

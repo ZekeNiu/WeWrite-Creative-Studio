@@ -132,10 +132,10 @@ async def main():
      await page.locator('.mobile-menu').get_by_role('button',name='账号与学习',exact=True).click()
     else:await page.locator('.desktop-extras').get_by_role('button',name='账号与学习',exact=True).click()
     await expect(page.get_by_label('账号受众',exact=True)).to_be_visible();await fits();await shot(f'account-{width}');await page.keyboard.press('Escape')
-    if width==390:
-     await page.get_by_text('更多',exact=True).click();await page.locator('.mobile-menu').get_by_role('button',name='扩展',exact=True).click()
-    else:await page.locator('.desktop-extras').get_by_role('button',name='扩展',exact=True).click()
-    await expect(page.get_by_role('button',name='生成独立平台稿',exact=True)).to_be_visible();await fits();await shot(f'extensions-{width}');await page.keyboard.press('Escape')
+    await nav('排版导出')
+    await page.get_by_role('button',name='多平台改写',exact=True).click()
+    await expect(page.get_by_role('button',name='生成独立平台稿',exact=True)).to_be_visible();await fits();await shot(f'rewrite-{width}');await page.keyboard.press('Escape')
+    await nav('选题')
     if width<1200:
      await page.get_by_role('button',name='展开侧栏',exact=True).click()
      await expect(page.get_by_role('button',name='关闭侧栏',exact=True)).to_be_focused();await shot(f'drawer-{width}')

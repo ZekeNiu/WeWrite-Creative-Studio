@@ -174,3 +174,12 @@ summary:only-child{margin-bottom:0}
 .source-card,.research-summary,.image-plan,.service-card{padding:16px}.source-actions .button{flex:1 1 auto}.image-plan h3{font-size:18px}.form-grid.three{grid-template-columns:1fr}.modal-footer>.row{flex-wrap:wrap}.modal-head{gap:12px}.route-highlight{padding:12px 8px}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}.spin{animation:none}}
+
+/* Contextual tools retain the existing writing and phone-preview layout. */
+.context-tools{display:grid;gap:8px;margin:14px 0}
+.online-effects{border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:20px}
+.wechat-connection{margin-top:20px}
+.action-task-view{overflow-wrap:anywhere}
+.action-task-view .notice{margin-top:16px}
+.action-history{margin-top:16px}
+.action-history>details{margin:10px 0}

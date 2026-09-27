@@ -28,6 +28,52 @@ def connect(c):
     return response.json()
 
 
+def test_action_history_filters_before_paging_and_keeps_legacy_themes(client):
+    a=new(client);b=new(client)
+    def saved(aid,action):
+        j=store.create_job(aid,dict(stage=action,**({'action':action} if action!='write' else {})))
+        store.update_job(j['id'],status='completed',result=dict(content='synthetic '+action))
+        return j['id']
+    legacy=saved(a['id'],'theme');global_theme=saved('__extensions__','theme')
+    wanted=[saved(a['id'],'rewrite') for _ in range(23)]
+    for _ in range(23):saved(a['id'],'write')
+    other=saved(b['id'],'rewrite');publish=saved(a['id'],'publish')
+    result=client.get('/api/extensions/jobs',params=dict(action='rewrite',article_id=a['id'],page_size=20)).json()
+    assert result['total']==23 and [j['id'] for j in result['items']]==wanted[::-1][:20]
+    second=client.get('/api/extensions/jobs',params=dict(action='rewrite',article_id=a['id'],page=2,page_size=20)).json()
+    assert [j['id'] for j in second['items']]==wanted[::-1][20:]
+    assert not {other,publish,legacy}&{j['id'] for j in result['items']}
+    themes=client.get('/api/extensions/jobs?action=theme').json()
+    assert [j['id'] for j in themes['items']]==[global_theme,legacy]
+    assert client.get('/api/extensions/jobs?action=stats&article_id=').json()['total']==0
+    # This new read API leaves the existing overview and article endpoints unchanged.
+    assert 'jobs' in client.get('/api/extensions').json()
+    assert len(client.get('/api/articles/'+a['id']+'/jobs').json())==20
+
+
+def test_action_history_active_tasks_and_recovered_receipts_are_read_only(client):
+    a=new(client)
+    active=store.create_job('__extensions__',dict(stage='theme',action='theme'))
+    for _ in range(3):
+        j=store.create_job(a['id'],dict(stage='theme',action='theme'));store.update_job(j['id'],status='completed')
+    rows=client.get('/api/extensions/jobs?action=theme&page_size=1').json()
+    assert [j['id'] for j in rows['active']]==[active['id']]
+    assert rows['items'][0]['id']!=active['id']
+    home=store.DATA/'native'/store.uid();home.mkdir(parents=True)
+    (home/'external-receipt.json').write_text(json.dumps(dict(result=dict(media_id='recovered-synthetic'))),'utf-8')
+    j=store.create_job(a['id'],dict(stage='publish',action='publish'))
+    store.update_job(j['id'],status='interrupted',external_home=str(home))
+    with store.connection() as db:before=db.execute('SELECT data FROM jobs WHERE id=?',(j['id'],)).fetchone()[0]
+    rows=client.get('/api/extensions/jobs',params=[('action','publish'),('action','image_post'),('article_id',a['id'])]).json()
+    assert rows['items'][0]['result']['media_id']=='recovered-synthetic'
+    with store.connection() as db:assert db.execute('SELECT data FROM jobs WHERE id=?',(j['id'],)).fetchone()[0]==before
+
+
+@pytest.mark.parametrize('query',['','action=write','action=theme&page=0','action=theme&page_size=101'])
+def test_action_history_rejects_invalid_filters(client,query):
+    assert client.get('/api/extensions/jobs?'+query).status_code==422
+
+
 def test_custom_persona_full_native_projection_and_conflict(client):
     response=client.post('/api/extensions/personas',headers=H,json=dict(revision=0,id='user-reader',label='读书人',definition=dict(description='从读者问题展开',opening_style='从真实问题开始')))
     assert response.status_code==200,response.text
