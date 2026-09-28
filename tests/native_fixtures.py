@@ -13,6 +13,9 @@ def install(monkeypatch,responder=None):
     async def turn(service,system,messages,tools):
         task=json.loads(messages[0]['content']);run_id=task['run_id'];directory=task['run_dir']
         key=run_id;index=turns.get(key,0);turns[key]=index+1
+        # This fixture is a three-step script, not an agent that can repair a
+        # rejected artifact. Surface rejection instead of endlessly retrying Finish.
+        if index>2:raise ValueError('Synthetic artifact was rejected: '+json.dumps(messages[-1],ensure_ascii=False)[:1600])
         native=next(j for j in all_jobs() if j.get('native',{}).get('run_id')==run_id)
         req=native['request'];stage='learn' if req.get('kind')=='learn' else 'stats' if req.get('action')=='stats_review' else native['stage']
         a=store.get_article(req['article_id'] if stage=='learn' else native['article_id'])
@@ -52,6 +55,9 @@ def install(monkeypatch,responder=None):
         if index==0:
             for name in ('request.json','account-reference.yaml',directory+'/brief.yaml',directory+'/claims.yaml',directory+'/sources.yaml'):call('Read',path=name)
         elif index==1:
+            if stage=='outline':
+                a=copy.deepcopy(a)
+                a['evidence']=native_projection.claims_from_article(a)
             if responder:result=await responder(stage,a,req,service)
             else:
                 raw,usage=await providers.generate(service,system,prompts.prompt('review' if stage=='edit' else stage,a,req))

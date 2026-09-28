@@ -273,6 +273,9 @@ def test_source_change_keeps_warning_without_blocking_outline(client,model):
     assert a['stages']['sources']=='stale'
     r=client.post('/api/articles/'+a['id']+'/jobs',headers=H,json={'revision':a['revision'],'stage':'outline'})
     assert r.status_code==200 and wait(client,r.json())['status']=='completed'
+    a=client.get('/api/articles/'+a['id']).json()
+    assert not a['sources'][0]['selected'] and not a['evidence']['claims']
+    assert not any(section['claim_ids'] for section in a['outline']['sections'])
 
 
 def test_native_review_does_not_start_extra_editing_passes(client,model,monkeypatch):
