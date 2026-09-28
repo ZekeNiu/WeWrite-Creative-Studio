@@ -1,7 +1,7 @@
 """Task-focused excerpts; stored source text is never shortened or rewritten."""
 import re
 
-POLICY_VERSION = 37
+POLICY_VERSION = 38
 TEMPORAL_SCOPE_POLICY = ('时间和版本也是适用范围：用户问首次发布、某年或某版时，当前帮助页与后续更新不能证明当时已具备全部功能。'
     '区分首次记录、后续技术解释和当前行为，核对来源日期与所述功能的生效版本；没有当时依据的新增能力不得混入早期结论，scope必须unknown并保留缺口。')
 QUOTE_PROVENANCE_POLICY = ('verification=quote_matched表示系统已将该条quote逐字定位到对应来源的实际正文/摘要（bibliography另标为书目题名）。'
@@ -77,26 +77,26 @@ def excerpts(source, keywords, limit=12000):
     for note in source.get('notebook',{}).get('notes',[]):
         if text[note['start']:note['end']]==note['quote']:
             candidates.append((900,max(0,note['start']-250),min(len(text),note['end']+250)))
-    # Design/results/limitations are mandatory reading landmarks across languages.
+    # Landmarks orient the reader; they cannot crowd out the requested subject.
     headings=r'(?im)^\s*(?:\d+[.\s]+)?(?:methods?|methodology|results?|discussion|conclusions?|limitations?|weaknesses(?: of (?:the )?study)?|方法|结果|讨论|结论|局限性?)\s*[:：]?\s*$'
     for m in re.finditer(headings,text):
-        candidates.append((700,max(0,m.start()-80),min(len(text),m.end()+1600)))
-    candidates.append((650,max(0,len(text)-1800),len(text)))
+        candidates.append((250,max(0,m.start()-80),min(len(text),m.end()+1600)))
+    candidates.append((100,max(0,len(text)-1800),len(text)))
     for e in source.get('evidence_spans', []):
         quote = e.get('quote', '')
         start = e.get('offset', -1)
         if not isinstance(start,int) or text[start:start+len(quote)] != quote:
             start = text.find(quote) if quote else -1
         if start >= 0 and quote:
-            candidates.append((1000, max(0,start-350), min(len(text),start+len(quote)+350)))
+            candidates.append((1400, max(0,start-350), min(len(text),start+len(quote)+350)))
     # Scan the whole material, including the tail, instead of clipping its head.
     for start in range(0,len(text),1400):
         end = min(len(text),start+1800)
         chunk = text[start:end].lower()
         score = sum(min(chunk.count(k),3) for k in keywords)
-        candidates.append((score, start, end))
+        candidates.append((1100+min(score,99) if score else 0, start, end))
     # Include orientation, but evidence and task matches take precedence.
-    candidates.append((600,0,min(900,len(text))))
+    candidates.append((200,0,min(900,len(text))))
     chosen = []
     for _, start, end in sorted(candidates, key=lambda x:(-x[0],x[1])):
         merged = []

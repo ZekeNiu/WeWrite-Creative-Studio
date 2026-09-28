@@ -4,7 +4,7 @@ import re
 import time
 import unicodedata
 import xml.etree.ElementTree as ET
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlsplit, unquote
 import httpx
 from bs4 import BeautifulSoup
 from . import store, security
@@ -37,7 +37,14 @@ def identifiers(s):
     for key in ('doi','pmid','pmcid','arxiv_id'):
         v=s.get(key) or b.get(key)
         if v: result.add((key,normalized_doi(v) if key=='doi' else re.sub(r'v\d+$','',str(v))))
-    for value in (s.get('url',''),s.get('doi',''),b.get('doi','')):
+    for value in (s.get('url',''),s.get('read_url',''),s.get('original_url',''),s.get('doi',''),b.get('doi','')):
+        path=unquote(urlsplit(value).path)
+        doi=re.search(r'10\.\d{4,9}/[^\s?#]+',path,re.I)
+        if doi:result.add(('doi',normalized_doi(doi[0])))
+        pmid=re.search(r'pubmed\.ncbi\.nlm\.nih\.gov/(\d+)',value,re.I)
+        if pmid:result.add(('pmid',pmid[1]))
+        pmcid=re.search(r'/(PMC\d+)(?:/|$)',path,re.I)
+        if pmcid:result.add(('pmcid',pmcid[1].upper()))
         match=re.search(r'(?:arxiv\.|arxiv\.org/(?:abs|pdf|html)/)(\d{4}\.\d{4,5})(?:v\d+)?',value,re.I)
         if match: result.add(('arxiv_id',match[1]))
     return result

@@ -24,7 +24,7 @@ async def main():
             a=await (await page.request.post(BASE+'/api/articles',headers=H,data=dict(topic='模拟：证据能回答什么'))).json();aid=a['id']
             await page.goto(BASE+'/#'+aid)
             await page.locator('.stage-nav').filter(has=page.locator('strong',has_text='素材')).click()
-            await page.get_by_role('button',name='查找并整理资料',exact=True).click()
+            await page.get_by_role('button',name='深入核实',exact=True).click()
             panel=page.get_by_label('资料核实进展',exact=True)
             await expect(panel).to_contain_text('已保存核实成果，剩余问题待你处理')
             jobs=await (await page.request.get(BASE+'/api/articles/'+aid+'/jobs')).json()
@@ -45,7 +45,7 @@ async def main():
             await page.get_by_label('素材名称',exact=True).fill('模拟补充原文')
             await page.get_by_label('素材正文',exact=True).fill('研究只支持关联。')
             await page.get_by_role('button',name='添加素材',exact=True).click()
-            await page.get_by_role('button',name='核实这批资料',exact=True).click()
+            await page.get_by_role('button',name='深入核实',exact=True).click()
             await expect(panel).to_contain_text('本篇核心问题已回答，资料整理已收尾')
             current=await (await page.request.get(BASE+'/api/articles/'+aid)).json()
             assert not current['research']['pending'] and current['stages']['sources']=='done'

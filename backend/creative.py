@@ -69,3 +69,14 @@ def context(a):
     value=a.get('creative_intent') or intent(a)
     # Full history belongs to the UI; model context only needs recent exploration.
     return copy.deepcopy({**value,'batches':batches(a)[-3:]})
+
+
+def task_context(a,exploration=False):
+    value=context(a)
+    if exploration:return value
+    for key in ('batches','adopted_plan','direction_change','feedback'):value.pop(key,None)
+    selected=value.get('selected',{})
+    allowed={s['id'] for s in a['sources'] if s.get('selected')}
+    if set(selected.get('source_ids',[]))-allowed:
+        value['selected']={k:v for k,v in selected.items() if k in ('id','title','reader_question','evidence_status')}
+    return value

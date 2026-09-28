@@ -58,7 +58,7 @@ def analysis_signature():
 def context(a,stage,questions=()):
     from .prompts import clean_context
     sources=source_context.sources(a,questions)
-    return clean_context({'current_date':date.today().isoformat(),'creative_intent':creative.context(a),'research_contract':a.get('research_contract',{}),'brief':a['brief'],'stage':stage,'sources':sources,'outline':a['outline'],
+    return clean_context({'current_date':date.today().isoformat(),'creative_intent':creative.task_context(a,stage=='topic'),'research_contract':a.get('research_contract',{}),'brief':a['brief'],'stage':stage,'sources':sources,'outline':a['outline'],
             'article':a['content'] if stage=='review' else '', 'evidence':source_context.evidence(a),
             'issue_decisions':flow_state.issues(a)})
 
@@ -256,7 +256,7 @@ class Research:
         self.log=list(prior.get('log',[]));self.disabled=set(prior.get('disabled_channels',[]))
         self.free_search_only=prior.get('free_search_only',False) or job.get('free_search_only',False)
         self.query_ledger=copy.deepcopy(prior.get('query_ledger',[]))
-        self.seen_queries={digest(search_plan.query(x)) for x in self.query_ledger if x.get('purpose')!='citation_graph' and x.get('status') in ('exhausted','covered','skipped_covered')}
+        self.seen_queries={digest(search_plan.query(x)) for x in self.query_ledger if x.get('purpose')!='citation_graph' and x.get('status') in ('exhausted','covered','skipped_covered','no_new_leads')}
         # Legacy logs have only strings; retain their identity when continuing older jobs.
         if not self.query_ledger:
             self.seen_queries.update(digest(search_plan.query(x['query'])) for x in self.log if x.get('query'))
@@ -697,8 +697,8 @@ class Research:
                 ranges=[dict(start=e['offset'],end=e['offset']+len(e['quote'])) for e in unknown
                         if e['source_id']==src['id'] and e.get('quote_origin')=='source_text']
                 if ranges:source_notebook.save(src,[],signature,ranges)
-            # The two independent checks share context only within one source;
-            # each span still needs its own bound support and scope verdicts.
+            # One independent review of the extracted claims supplies both
+            # verdicts; both deterministic validators still have to pass.
             for batch in evidence_batches(unknown):
                 checked=await structured(self.a,self.stage,
                     '独立核查 candidates 的每条判断，不采信前一轮自评。逐条返回 evidence_id、support、reason、question_ids 和 checks。'
@@ -710,16 +710,22 @@ class Research:
                     'quote_origin=bibliography 的引文只位于书目题名，不是摘要或正文。只有纯文献身份确认才 identity_only=true 且 basis=not_applicable；不能由题名证明疗效、因果或实际研究结果，含此类主张必须 unsupported，身份之外的事实需要另外引用真实摘要/正文。普通正文证据 identity_only=false。'
                     '按来源身份规则填写source_origin，在reason中说明归属依据与正文支持；转述另一研究的结果必须basis=external_reference。'
                     'supported 仅限来源直接支持且无必要条件缺失；limited 必须有明确边界；contradicted 是原文否定该判断；其他为 unsupported。'
-                    'question_ids 只能列确实回答了任务书核心问题的ID，背景介绍不能算回答。reason 简述可核查理由，不输出思考过程。'+source_context.QUOTE_PROVENANCE_POLICY,
+                    'question_ids 只能列确实回答了任务书核心问题的ID，背景介绍不能算回答。reason 简述可核查理由，不输出思考过程。'
+                    '同时在每条的 scope_review 中保存本条条件核查（包括相同 evidence_id），不要留空。'+evidence_scope.INSTRUCTION+source_context.QUOTE_PROVENANCE_POLICY,
                     EvidenceJudgements,self.job_id,[{k:e.get(k) for k in ('evidence_id','source_id','quote','claim','boundary','location','source_status','quote_origin','verification')} for e in batch],questions=self.questions)
                 # Bind cached verdicts to both claim and exact source contents through evidence_id.
                 research_contract.apply_judgements(batch,checked['judgements'])
                 accepted=[e for e in batch if evidence_state.assessed(e)]
                 if accepted:
-                    self.update('正在逐项对照适用前提、例外和条件顺序')
-                    scoped=await structured(self.a,self.stage,evidence_scope.INSTRUCTION+source_context.QUOTE_PROVENANCE_POLICY,EvidenceScopeAudit,self.job_id,
-                        [{k:e.get(k) for k in ('evidence_id','source_id','quote','claim','boundary','location','source_status','quote_origin','verification')} for e in accepted],questions=self.questions)
-                    evidence_scope.apply(accepted,scoped['judgements'],{s['id'] for s in self.a['sources'] if s.get('pages')},audit_context_for_sources(self.a,self.stage,self.questions,accepted))
+                    scoped=[j['scope_review'] for j in checked['judgements'] if j.get('scope_review') and j['scope_review']['evidence_id']==j['evidence_id']]
+                    supplied={j['evidence_id'] for j in checked['judgements'] if j.get('scope_review')}
+                    missing=[e for e in accepted if e['evidence_id'] not in supplied]
+                    if missing:
+                        self.update('正在补全遗漏的条件核查')
+                        extra=await structured(self.a,self.stage,evidence_scope.INSTRUCTION+source_context.QUOTE_PROVENANCE_POLICY,EvidenceScopeAudit,self.job_id,
+                            [{k:e.get(k) for k in ('evidence_id','source_id','quote','claim','boundary','location','source_status','quote_origin','verification')} for e in missing],questions=self.questions)
+                        scoped.extend(extra['judgements'])
+                    evidence_scope.apply(accepted,scoped,{s['id'] for s in self.a['sources'] if s.get('pages')},audit_context_for_sources(self.a,self.stage,self.questions,accepted))
                 for e in batch:self.judgement_cache[e['evidence_id']]={k:e.get(k) for k in ('support','support_reason','support_checks','support_basis','support_identity_only','source_origin','question_ids','assessment_version','quality','type','boundary','scope_alignment')}
         for e in spans:
             if e['evidence_id'] in self.judgement_cache:e.update(self.judgement_cache[e['evidence_id']])
@@ -733,16 +739,24 @@ class Research:
             target_ids.update(r['question_id'] for r in self.coverage if set(r.get('source_ids',[]))&affected)
         audit_rows=research_contract.audit_candidates(self.a,[row for row in self.coverage if not target_ids or row['question_id'] in target_ids],spans)
         audit_context=dict(coverage=audit_rows,evidence=[e for e in spans if evidence_state.assessed(e)],
-            rejected_evidence=[{k:e.get(k) for k in ('evidence_id','claim','support','support_reason')} for e in spans if not evidence_state.assessed(e)],reported_limits={
+            rejected_evidence=[{k:e.get(k) for k in ('evidence_id','source_id','question_ids','claim','support','support_reason')} for e in spans if not evidence_state.assessed(e)],reported_limits={
             k:copy.deepcopy(self.notes.get(k)) for k in ('summary','gaps','conflicts','issues','direction_change')})
         coverage_source_ids={e['source_id'] for e in audit_context['evidence']}
         coverage_source_ids.update(sid for row in audit_rows for sid in row['source_ids'])
-        coverage_key=digest([self.a['research_contract'],audit_context,{sid:self.source_versions.get(sid) for sid in sorted(coverage_source_ids)}])
+        coverage_versions=research_progress.source_versions(self.a)
+        coverage_key=digest([self.a['research_contract'],audit_context,{sid:coverage_versions.get(sid) for sid in sorted(coverage_source_ids)}])
         if not any(row['candidate_evidence_ids'] for row in audit_rows):self.coverage_cache[coverage_key]=dict(coverage=[],judgements=[],read_requests=[])
         if coverage_key not in self.coverage_cache:
             self.update('正在独立核对各项必需条件是否真正得到回答')
             combined=dict(coverage=[],judgements=[],read_requests=[])
-            for audit_group in research_contract.audit_groups(audit_context):
+            pending=[];keys={}
+            for row in audit_rows:
+                key=research_contract.audit_key(self.a['research_contract'],row,audit_context,coverage_versions);keys[row['question_id']]=key
+                saved=self.coverage_cache.get(key) if not repair_round else None
+                if saved:
+                    for field in combined:combined[field].extend(saved[field])
+                else:pending.append(row)
+            for audit_group in research_contract.audit_groups(dict(audit_context,coverage=pending)):
                 audit=await structured(self.a,self.stage,
                     '独立核对候选中的每个 coverage 问题是否被整体回答；逐条返回 question_id、status、reason、evidence_ids。'
                     '与问题相关、回答其中一部分、若干背景材料拼在一起，均不代表充分覆盖。用户指定研究设计、场景、人群、时间、原始出处或数字时，必须全部对应；不同研究不能拼成一项并不存在的研究。'
@@ -752,10 +766,16 @@ class Research:
                     '仅验收用户原句和明确采用方案的条件。不能把检索规划自行扩展的机制、作者、后续实验设想变成新要求；解释证据边界不等于必须找到已经证明因果的实验。'
                     'candidate_evidence_ids 是已逐条独立核实、可供判读的证据池，不表示它们都回答了这个问题。逐个问题重新核对适用性，只选择真正回答该问题的候选编号作为 evidence_ids。之前 evidence_ids 或 question_ids 漏标不代表证据不存在。'
                     'requires_source_content 只有问题纯粹要求定位或核对文献身份时才为false；要求说明研究条件、核对数字、机制或研究结论时必须true，书目题名不能替代正文或摘要中的事实。'
-                    '具体说明用户原句中的哪项要求仍缺失；不能要求用户未指定的细分项目、对照实验或机制。书目身份以已核验元数据为准，不要求将题名作者拼成正文引文。'+source_context.COVERAGE_PROVENANCE_POLICY+'用户要求数字溯源且未完成时，相应问题必须 unresolved，不能标 supported 或 limited。'+source_context.COVERAGE_COMPLETENESS_POLICY,
+                    '具体说明用户原句中的哪项要求仍缺失；不能要求用户未指定的细分项目、对照实验或机制。书目身份以已核验元数据为准，不要求将题名作者拼成正文引文。'+source_context.COVERAGE_PROVENANCE_POLICY+'用户要求数字溯源且未完成时，相应问题必须 unresolved，不能标 supported 或 limited。'+source_context.COVERAGE_COMPLETENESS_POLICY+
+                    '同时在每条 coverage 的 answer_scope 中核对该问题的完整回答（包括相同 question_id），不要留空；需要回读时填写顶层 read_requests。'+coverage_scope.INSTRUCTION,
                     CoverageAudit,self.job_id,[audit_group],questions=self.questions)
-                self.update('正在逐项核对完整问题与所要求的条件清单')
-                scope=await structured(self.a,self.stage,coverage_scope.INSTRUCTION,AnswerScopeAudit,self.job_id,[audit_group],questions=self.questions)
+                scope=dict(judgements=[row['answer_scope'] for row in audit['coverage'] if row.get('answer_scope') and row['answer_scope']['question_id']==row['question_id']],read_requests=audit.get('read_requests',[]))
+                supplied={row['question_id'] for row in audit['coverage'] if row.get('answer_scope')}
+                missing=[row for row in audit_group['coverage'] if row['question_id'] not in supplied]
+                if missing:
+                    self.update('正在补全遗漏的问题覆盖核查')
+                    extra_scope=await structured(self.a,self.stage,coverage_scope.INSTRUCTION,AnswerScopeAudit,self.job_id,[dict(audit_group,coverage=missing)],questions=self.questions)
+                    scope['judgements'].extend(extra_scope['judgements']);scope['read_requests'].extend(extra_scope['read_requests'])
                 ids={row['question_id'] for row in audit_group['coverage']}
                 extra={row['question_id'] for row in audit['coverage']+scope['judgements']}-ids
                 if extra:self.update('正在核对回答与问题的对应关系',ignored_audit_question_ids=sorted(extra))
@@ -765,6 +785,9 @@ class Research:
                 combined['coverage'].extend(row for row in audit['coverage'] if row['question_id'] in ids)
                 combined['judgements'].extend(row for row in scope['judgements'] if row['question_id'] in ids)
                 combined['read_requests'].extend(scope['read_requests'])
+                for qid in ids:
+                    self.coverage_cache[keys[qid]]=dict(coverage=[row for row in audit['coverage'] if row['question_id']==qid],
+                        judgements=[row for row in scope['judgements'] if row['question_id']==qid],read_requests=scope['read_requests'])
             self.coverage_cache[coverage_key]=combined
         audit=self.coverage_cache[coverage_key]
         checked_rows=research_contract.audit_coverage(audit_rows,audit['coverage'],spans)
@@ -864,8 +887,11 @@ class Research:
         for raw in queries:
             item=search_plan.query(raw);key=digest(item)
             if key in self.seen_queries:continue
-            item=research_progress.bind_query(self.a,item,self.coverage,self.requested)
-            if item is None:continue
+            bound=research_progress.bind_query(self.a,item,self.coverage,self.requested)
+            if bound is None:
+                self.query_ledger.append(dict(**item,status='invalid_binding',attempts=[],reason='检索线索未对应本篇问题，未执行；原计划已保留。'))
+                continue
+            item=bound
             self.seen_queries.add(key)
             entry=dict(**item,status='planned',attempts=[])
             self.query_ledger.append(entry);tasks.append((item,search_plan.channels(self,item),entry))
@@ -873,7 +899,7 @@ class Research:
         counter_pending={id(entry) for item,_,entry in tasks if item['purpose']=='counterevidence'}
         for turn in range(max((len(channels) for _,channels,_ in tasks),default=0)):
             for item,channels,entry in tasks:
-                if turn>=len(channels):continue
+                if turn>=len(channels) or entry['status']=='no_new_leads':continue
                 answered={r['question_id'] for r in self.coverage if r['status']!='unresolved' and r.get('evidence_ids')}
                 blockers=[i for i in self.open_targets() if not i.get('question_id') or i['question_id'] in item['question_ids']]
                 if item['purpose']!='counterevidence' and not blockers and set(item['question_ids'])<=answered:
@@ -898,6 +924,9 @@ class Research:
                 self.actions.append(action)
                 self.decision('working',item['expected_gain'],item['question_ids'])
                 self.query_readable=set();rows=await self.channel(channel,query)
+                leads={digest(sorted(academic.identifiers(r))) if academic.identifiers(r) else canonical(r.get('url','')) for r in rows}-{''}
+                repeated=bool(leads) and leads<=set(entry.get('seen_leads',[]))
+                entry['seen_leads']=sorted(set(entry.get('seen_leads',[]))|leads)
                 counter_pending.discard(id(entry))
                 entry['status']='searched';attempt=dict(channel=channel,query=query,status=self.channel_status.get(channel,'candidates' if rows else 'no_results'),count=len(rows))
                 entry['attempts'].append(attempt)
@@ -906,6 +935,8 @@ class Research:
                     if not readable:attempt['status']='no_relevant_evidence'
                     await self.assess()
                 action['status']='advanced' if before!=self.progress_key() else 'no_gain'
+                if repeated and action['status']=='no_gain':
+                    entry.update(status='no_new_leads',reason='不同渠道返回了已检查的相同线索；此路径暂停，继续其他核心问题。')
                 self.update('本次取证已有进展' if action['status']=='advanced' else '本次取证未解决新的必需问题，检查其他具体路径')
                 if self.sufficient() and not counter_pending:break
             if self.sufficient() and not counter_pending:
@@ -916,7 +947,8 @@ class Research:
             if turn==1:
                 await self.trace_citations()
                 self.read_limit=2
-        for _,_,entry in tasks:entry['status']='exhausted'
+        for _,_,entry in tasks:
+            if entry['status']!='no_new_leads':entry['status']='exhausted'
         self.read_limit=None
         await self.drain_candidates()
         if not self.cfg.get('allow_fallback',True) and not self.sufficient():
@@ -925,6 +957,8 @@ class Research:
     async def collect(self,rows,query,channel,selected=False):
         readable=0
         self.telemetry['phase']='retrieval'
+        excluded=[s for s in self.a['sources'] if not s.get('selected')]+self.a.get('excluded_sources',[])
+        rows=[r for r in rows if not any(academic.same(r,s) for s in excluded)]
         if not selected:
             fresh=[]
             for row in rows:

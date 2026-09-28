@@ -11,8 +11,8 @@ import ReferenceDetails from './ReferenceDetails';
 
 export default function Sources({a,save,act,update,run,busy,onJob,job,focusRequest,onFocusHandled,onContext,prepare,navigate}:Common&{job:Job|null;focusRequest?:IssueFocus;onFocusHandled?:()=>void;onContext?:(id:string,explicit?:boolean)=>void}){
  const viewKey='materials-tab:'+a.id;
- const [tab,setTab]=useState(()=>readView(viewKey,{tab:a.research?'results':'materials'}).tab);
- const [focus,setFocus]=useState<{token:number;id?:string}>({token:0}),[summaryOpen,setSummaryOpen]=useState(false);
+ const [tab,setTab]=useState(()=>readView(viewKey,{tab:a.research||a.evidence.summary||a.evidence.claims?.length?'results':'materials'}).tab);
+ const [focus,setFocus]=useState<{token:number;id?:string}>({token:0}),[summaryOpen,setSummaryOpen]=useState(false),[historyOpen,setHistoryOpen]=useState(false);
  const [attachmentIds,setAttachmentIds]=useState<string[]>([]),[mode,setMode]=useState(''),[url,setUrl]=useState(''),[title,setTitle]=useState(''),[text,setText]=useState('');
  const [error,setError]=useState(''),[localBusy,setLocalBusy]=useState(false),[receipt,setReceipt]=useState<any>(null),[inspect,setInspect]=useState<string|null>(null);
  const file=useRef<HTMLInputElement>(null),retry=useRef<(()=>Promise<void>)|null>(null),handled=useRef(''),mounted=useRef(true),cancelRequested=useRef(false);
@@ -23,7 +23,7 @@ export default function Sources({a,save,act,update,run,busy,onJob,job,focusReque
  const currentApplications=(a.research?.issues||[]).filter(x=>x.application?.job_id===job?.id);
  const changedApplications=job?.result?.applications&&currentApplications.length!==job.result.applications.length;
  const selectTab=(next:string)=>{void act(async()=>{await prepare();setTab(next);remember(viewKey,{tab:next})})};
- const locate=(id?:string)=>{setTab('results');remember(viewKey,{tab:'results'});setFocus({token:Date.now(),id})};
+ const locate=(id?:string)=>{setTab('results');remember(viewKey,{tab:'results'});setFocus({token:Date.now(),id});if(id&&a.research?.superseded_by)setHistoryOpen(true)};
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false}},[]);
  useEffect(()=>{if(focusRequest?.token){locate(focusRequest.id);onFocusHandled?.()}},[focusRequest?.token]);
  useEffect(()=>{const el=file.current;const cancel=()=>setAttachmentIds([]);el?.addEventListener('cancel',cancel);return()=>el?.removeEventListener('cancel',cancel)},[]);
@@ -44,11 +44,12 @@ export default function Sources({a,save,act,update,run,busy,onJob,job,focusReque
  }
  async function close(){cancelRequested.current=true;if(importing){await perform(async()=>{const next=await api<Job>('/jobs/'+currentImport!.id+'/cancel','POST');onJob(next);if(next.status==='completed')update(await api('/articles/'+a.id))})}setMode('');setAttachmentIds([]);setError('')}
  const openMode=(next:string,ids:string[]=[])=>{setAttachmentIds(ids);setError('');setReceipt(null);setMode(next)};
- async function verifyNew(){await run('research',{issue_ids:receipt?.issue_ids||[],chain:false});setReceipt(null)}
- const primary=()=>{locate();void run('research',{chain:false})};
+ async function verifyNew(){const ids=receipt?.issue_ids||a.sources.filter(s=>state?.new_source_ids.includes(s.id)).flatMap(s=>s.issue_ids||[]);await run(ids.length?'research':'sources',{issue_ids:ids,chain:false});setReceipt(null)}
+ const primary=()=>{locate();void run('sources',{chain:false})};
  const primaryLabel='查找并整理资料';
- const summary=a.research?.summary||a.evidence.summary;
- const convergence=executing?job?.research?.convergence:a.research?.stale||state?.new_source_ids.length?undefined:a.research?.convergence;
+ const archived=!!a.research?.superseded_by&&a.evidence.engine==='wewrite-native';
+ const summary=a.evidence.engine==='wewrite-native'?a.evidence.summary:a.research?.summary||a.evidence.summary;
+ const convergence=executing?job?.research?.convergence:archived?undefined:a.research?.stale||state?.new_source_ids.length?undefined:a.research?.convergence;
  return <>
   <section className="material-status" aria-label="资料状态" role="status"><div className="row between"><strong>{importing?currentImport!.message:state?.message||'先检查已有材料，再按需查找'}</strong></div>
    {!importing&&convergence&&<div aria-label="资料核实进展">
@@ -65,14 +66,16 @@ export default function Sources({a,save,act,update,run,busy,onJob,job,focusReque
   {(state?.new_source_ids?.length||0)>0&&!receipt&&<button className="button secondary" disabled={busy} onClick={()=>void verifyNew()}>核实新增资料</button>}
   {a.creative_intent?.direction_change&&<div className="notice amber"><span>原定方向需要核对：{a.creative_intent.direction_change}</span><button className="text-button" onClick={()=>navigate('topic')}>查看选题</button></div>}
   <div className="source-search"><Search size={18}/><Field autoSave label="补充检索要求" value={a.input_drafts?.source_query||""} onCommit={v=>save(current=>({input_drafts:{...current.input_drafts,source_query:v}}))} placeholder="可选：补充需要查证的问题…"/><button className="button primary" disabled={busy||localBusy||!a.brief.topic} onClick={primary}>{primaryLabel}</button></div>
-  <div className="row wrap source-actions"><button className="button secondary" disabled={busy||localBusy} onClick={()=>{setAttachmentIds([]);file.current?.click()}}><Upload size={15}/>上传文件</button><button className="button secondary" disabled={busy||localBusy} onClick={()=>openMode('url')}><LinkIcon size={15}/>添加链接</button><button className="button secondary" disabled={busy||localBusy} onClick={()=>openMode('text')}><Plus size={15}/>粘贴文字</button>{<button className="text-button" disabled={localBusy||a.workflow?.outline?.allowed===false} onClick={()=>navigate('outline')}>进入大纲</button>}<span className="muted">PDF / Word / Markdown / TXT / BibTeX / RIS · 20 MB 内</span></div>
+  <div className="row wrap source-actions"><button className="button secondary" disabled={busy||localBusy||!a.brief.topic} onClick={()=>{locate();void run('research',{chain:false})}}>深入核实</button><button className="button secondary" disabled={busy||localBusy} onClick={()=>{setAttachmentIds([]);file.current?.click()}}><Upload size={15}/>上传文件</button><button className="button secondary" disabled={busy||localBusy} onClick={()=>openMode('url')}><LinkIcon size={15}/>添加链接</button><button className="button secondary" disabled={busy||localBusy} onClick={()=>openMode('text')}><Plus size={15}/>粘贴文字</button>{<button className="text-button" disabled={localBusy||a.workflow?.outline?.allowed===false} onClick={()=>navigate('outline')}>进入大纲</button>}<span className="muted">PDF / Word / Markdown / TXT / BibTeX / RIS · 20 MB 内</span></div>
   <input ref={file} type="file" hidden accept=".pdf,.docx,.md,.txt,.bib,.ris" onChange={e=>{const f=e.target.files?.[0];if(f)void begin('file',f);e.target.value=''}}/>
   {receipt&&<div className="source-receipt" role="status"><strong>资料已添加，等待核实</strong>{receipt.sources?.map((s:any)=><p key={s.source_id}>{s.title} · {s.operation==='updated'?'已有素材已更新':'已加入'} · {s.scope==='fulltext'?'已取得全文':s.scope==='abstract'?'仅摘要':s.scope==='metadata'?'仅文献信息':'已有正文'}{s.identity_status==='pending'?' · 文献信息待补全':''}</p>)}<div className="row wrap"><button className="button primary" disabled={busy} onClick={()=>void verifyNew()}>核实这批资料</button>{receipt.issue_ids?.length>0&&<button className="text-button" onClick={()=>locate(receipt.issue_ids[0])}>查看对应建议</button>}</div></div>}
   {error&&!mode&&<p className="notice amber" role="alert">{error}</p>}
   <div className="material-tabs" role="tablist" aria-label="素材页面"><button role="tab" aria-selected={tab==='results'} onClick={()=>selectTab('results')}>整理结果</button><button role="tab" aria-selected={tab==='materials'} onClick={()=>selectTab('materials')}>本篇素材 · {a.sources.length}</button></div>
-  <div role="tabpanel" aria-label="整理结果" hidden={tab!=='results'}>{summary?<section className="research-summary"><div className="row between"><h3>当前结论</h3>{a.research?.stale&&<Tag tone="amber">相关依据待更新</Tag>}</div><p className={summaryOpen?'':'preview-clamp summary-preview'}>{summary}</p><button className="text-button" aria-expanded={summaryOpen} onClick={()=>setSummaryOpen(v=>!v)}>{summaryOpen?'收起整理总结':'展开完整整理总结'}</button></section>:<p className="muted">尚无整理结论，添加材料后可开始核实；也可以先构建大纲。</p>}
+  <div role="tabpanel" aria-label="整理结果" hidden={tab!=='results'}>{summary?<section className="research-summary"><div className="row between"><h3>当前结论</h3>{(a.stages.sources==='stale'||!archived&&a.research?.stale)&&<Tag tone="amber">相关依据待更新</Tag>}</div><p className={summaryOpen?'':'preview-clamp summary-preview'}>{summary}</p><button className="text-button" aria-expanded={summaryOpen} onClick={()=>setSummaryOpen(v=>!v)}>{summaryOpen?'收起整理总结':'展开完整整理总结'}</button></section>:<p className="muted">尚无整理结论，添加材料后可开始核实；也可以先构建大纲。</p>}
    {a.evidence.claims?.length>0&&<details className="evidence-details"><summary>主张与来源依据</summary>{a.evidence.claims.map((c:any)=><div className="claim" key={c.id}><Tag tone={c.status==='unsupported'||c.stale?'amber':''}>{c.stale?'依据待更新':c.assessment_pending?'适用性待复核':c.status==='unsupported'?'缺少支持':c.status==='bounded'?'适用范围有限':'已有支持记录'}</Tag><p>{c.text}</p><p className="muted">{c.boundary}</p>{c.source_ids.map((id:string)=><button className="text-button source-reference" key={id} onClick={()=>setInspect(id)}>{a.sources.find(s=>s.id===id)?.title||'来源已删除'}</button>)}</div>)}</details>}
-   {a.research&&<ResearchDetails a={a} busy={busy||localBusy} act={act} update={update} onJob={onJob} run={run} focus={focus} prepare={prepare} onInspect={setInspect} onSupply={ids=>openMode('supplement',ids)}/>}
+   {a.evidence.engine==='wewrite-native'&&a.evidence.gaps?.length>0&&<div className="notice amber">{a.evidence.gaps.map((g:string)=><p key={g}>{g}</p>)}</div>}
+   {archived&&<details className="research-history" open={historyOpen} onToggle={e=>setHistoryOpen(e.currentTarget.open)}><summary>此前深入核实记录</summary><p className="muted">当前整理结果已更新；以下保留此前的核实过程及处理决定。</p><ResearchDetails a={a} busy={busy||localBusy} act={act} update={update} onJob={onJob} run={run} focus={focus} prepare={prepare} onInspect={setInspect} onSupply={ids=>openMode('supplement',ids)}/></details>}
+   {a.research&&!archived&&<ResearchDetails a={a} busy={busy||localBusy} act={act} update={update} onJob={onJob} run={run} focus={focus} prepare={prepare} onInspect={setInspect} onSupply={ids=>openMode('supplement',ids)}/>}
   </div>
   <div role="tabpanel" aria-label="本篇素材" hidden={tab!=='materials'}><MaterialList key={a.id} a={a} save={save} busy={busy||localBusy} act={act} inspect={setInspect} onContext={onContext} prepare={prepare}/></div>
   {mode&&<Modal title={mode==='supplement'?'为建议补充资料':mode==='text'?'添加文字素材':mode==='import'?'导入资料':'添加网页资料'} onClose={()=>void close()}>

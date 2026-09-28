@@ -189,20 +189,27 @@ def material_view(a):
     from .flow_state import issues
     from .source_context import POLICY_VERSION
     r=a.get('research',{});rows=issues(a)
+    superseded=bool(r.get('superseded_by')) and a.get('evidence',{}).get('engine')=='wewrite-native'
+    if superseded:rows=[x for x in rows if x['id'] in a.get('research_decisions',{})]
     required=[x for x in rows if (x.get('kind')=='blocking' and x.get('status') in ('open','stale')) or x.get('application_state') in ('pending','partial')]
     boundaries=[x for x in rows if x.get('kind')=='limitation' and x.get('status') in ('open','stale') or x.get('status')=='bounded']
     new=r.get('unassessed_source_ids',[])
+    prepared=a.get('evidence',{}).get('prepared_sources')
+    if a.get('evidence',{}).get('engine')=='wewrite-native' and prepared is not None:
+        new=sorted(set(new)|(selected(a).keys()-prepared.keys()))
     claims=a.get('evidence',{}).get('claims',[])
     legacy_ready=not r.get('policy_version') and ((bool(r) and not r.get('pending')) or (a['stages']['sources']=='done' and bool(a.get('evidence'))))
     usable=bool(claims or r.get('evidence') or legacy_ready) and not r.get('stale')
     unassessed=sum(bool(c.get('assessment_pending')) for c in claims)
-    policy_changed=bool(r.get('policy_version') and r['policy_version']!=POLICY_VERSION)
+    policy_changed=not superseded and bool(r.get('policy_version') and r['policy_version']!=POLICY_VERSION)
+    native_gaps=a.get('evidence',{}).get('gaps',[]) if a.get('evidence',{}).get('engine')=='wewrite-native' else []
     if new: state='new_materials';message=f'{len(new)} 条新采用的材料尚未纳入判断';action='verify_new'
     elif r.get('stale'): state='changed';message='相关依据或文章目标已变化，需要更新对应判断';action='verify'
     elif required: state='gaps';message=f'{len(required)} 项建议或稿件改动待处理，可带限定继续创作';action='continue' if r.get('next_queries') and not r.get('exhausted') else 'supplement'
     elif unassessed: state='gaps';message=f'{unassessed} 项主张适用性待复核，可查找并整理资料或带限定继续创作';action='verify'
+    elif native_gaps: state='gaps';message=f'{len(native_gaps)} 项核心问题仍需补充依据或调整选题';action='supplement'
     elif policy_changed: state='gaps';message='这份核查使用了旧证据政策，可继续创作，关键依据需要复核';action='verify'
-    elif usable: state='ready';message='当前资料可进入大纲，请保留以下写作边界';action='outline'
+    elif usable: state='ready';message='资料已整理，可以进入大纲';action='outline'
     else: state='initial';message='先检查已有材料，再按缺口查找资料';action='collect'
     delta=r.get('delta')
     if not isinstance(delta,dict) or not all(isinstance(delta.get(k),int) for k in ('added_sources','resolved','remaining')):delta=None
@@ -211,7 +218,7 @@ def material_view(a):
     return dict(state=state,message=message,action=action,ready=usable,required=required,boundaries=boundaries,pending=pending,
         handled=[x for x in rows if x.get('status') in ('resolved','bounded','excluded','waived') and x not in application_pending],
         application_pending=application_pending,
-        new_source_ids=new,delta=delta,delta_job_id=r.get('job_id',''),stop_reason=r.get('stop_reason',''))
+        new_source_ids=new,delta=None if superseded else delta,delta_job_id=r.get('job_id',''),stop_reason='' if superseded else r.get('stop_reason',''))
 
 
 def sync(a):

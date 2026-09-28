@@ -59,6 +59,7 @@ def install(monkeypatch,responder=None):
             if stage=='topic':write('topics.yaml',result)
             elif stage=='sources':write('claims.yaml',dict(version=1,**result))
             elif stage=='outline':
+                write('claims.yaml',native_projection.claims_from_article(a))
                 brief=native_projection.brief_from_article(a)
                 brief['thesis'].update(statement=result['thesis'],boundary=result.get('boundary',''),counterpoint=result.get('counterpoint',''))
                 brief['audience']['question']=result['reader_question'];brief['goal']['takeaway']=result['takeaway'];brief['sections']=result['sections'];write('brief.yaml',brief)

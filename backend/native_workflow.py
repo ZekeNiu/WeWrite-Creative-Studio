@@ -14,19 +14,26 @@ def apply(article,stage,packet,request):
         if 'ledger' in packet:v['native_sources']=packet['ledger']
         v.setdefault('native_executions',[]).append(packet['native'])
         v['execution_engine']='wewrite-native'
+        if stage in ('sources','outline') and v.get('research'):
+            # Keep the detailed audit available as history. Its old backlog is
+            # not the current manuscript's task list after fresh preparation.
+            v['research'].update(superseded_by=packet['native']['id'],stale=False,unassessed_source_ids=[])
         target='write' if stage=='revise' else 'review' if stage=='edit' else stage
         v['current_stage']=target;v['stages'][target]='done'
         if stage=='topic':
             creative.candidates(v,result['topics'],request.get('instruction',''))
             if v['auto']['topic']:creative.adopt(v,result['topics'][0]['title'],result['topics'][0]['id'])
             else:v['stages']['topic']='needs_input'
-        elif stage=='sources':v['evidence']=dict(result,engine='wewrite-native')
+        elif stage=='sources':
+            v['evidence']=dict(result,engine='wewrite-native')
+            if result.get('gaps'):v['stages']['sources']='needs_input'
         elif stage=='outline':
             if request.get('section_id') and v.get('outline'):
                 section=next((s for s in result['sections'] if s['id']==request['section_id']),None)
                 if not section:raise ValueError('结果未包含指定章节；大纲保持不变')
                 v['outline']['sections']=[section if s['id']==section['id'] else s for s in v['outline']['sections']]
             else:v['outline']=result
+            if packet.get('claims',{}).get('gaps'):v['stages']['outline']='needs_input'
         elif stage=='write':
             v['content']=result;editorial.record_draft(v,'initial',result,origin='ai')
         elif stage=='revise':
@@ -56,5 +63,8 @@ def apply(article,stage,packet,request):
             else:v['stages']['review']='needs_input'
             v['review']=report
         elif stage=='visual':v['image_plans']=result['images'][:v['visual']['count']]
+        if stage in ('sources','outline'):
+            from . import evidence_state
+            v['evidence'].update(prepared_sources=evidence_state.selected(v),prepared_objective=evidence_state.digest(evidence_state.objective(v)))
     invalidate='review' if stage=='edit' else None if stage in ('revise','layout_advice') else stage
     return store.save_article(article['id'],article['revision'],change,'完成上游创作环节',invalidate=invalidate,account_use=used)

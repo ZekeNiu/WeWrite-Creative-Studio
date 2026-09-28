@@ -3,14 +3,15 @@ import copy
 import re
 from . import creative,evidence_state
 
-VERSION=7
+VERSION=8
 CHECKS=('population','design','quantity','outcome','causality','scope','time')
 
 
 def objective(a):
     selected=creative.intent(a).get('selected',{})
     return dict(brief={k:a['brief'].get(k,'') for k in ('topic','purpose','include','avoid','domain','column','audience')},
-                selected={k:selected.get(k,'') for k in ('id','angle','reader_question','novelty','takeaway','key_claims','questions')})
+                selected={k:selected.get(k,'') for k in ('id','angle','reader_question','novelty','takeaway','key_claims','questions')},
+                unavailable_dependencies=sorted(set(selected.get('source_ids',[]))-{s['id'] for s in a['sources'] if s.get('selected')}))
 
 
 def ensure(a,questions=()):
@@ -24,7 +25,12 @@ def ensure(a,questions=()):
     if adopted is None:
         candidates=[t for b in intent.get('batches',[]) for t in b.get('topics',[])]+a.get('topics',[])
         adopted=next((t for t in candidates if t.get('id') and t['id']==selected.get('id')), {})
-    texts += [(x,True) for x in [adopted.get('reader_question','')]+list(adopted.get('key_claims') or [])+list(adopted.get('questions') or [])]
+    if set(adopted.get('source_ids',[]))-{s['id'] for s in a['sources'] if s.get('selected')}:
+        adopted={k:v for k,v in adopted.items() if k in ('id','title','reader_question')}
+    texts += [(adopted.get('reader_question',''),True)]
+    # Choosing a topic adopts its reader question, not every proposed fact or
+    # optional experiment written by the topic generator.
+    texts += [(x,False) for x in list(adopted.get('key_claims') or [])+list(adopted.get('questions') or [])]
     texts += [(x,False) for x in questions]
     seen=set();rows=[]
     for text,required in texts:
@@ -32,7 +38,8 @@ def ensure(a,questions=()):
         if text and normal not in seen:
             seen.add(normal);rows.append(dict(id='Q'+evidence_state.digest(text)[:12],text=text,required=required))
     value=dict(version=VERSION,objective_key=key,original_request=original or intent.get('original_request',''),
-               reader_value=selected.get('takeaway') or selected.get('novelty',''),questions=rows[:16],source_targets=source_targets(original))
+               reader_value=adopted.get('reader_question') or a['brief'].get('purpose',''),questions=rows[:16],source_targets=source_targets(original),
+               research_clues=[str(adopted.get(k,'')) for k in ('angle','novelty','takeaway') if adopted.get(k)])
     a['research_contract']=value
     return value
 
@@ -56,8 +63,12 @@ def audit_candidates(a,rows,spans):
     """An omitted question label must not hide independently verified evidence from the auditor."""
     result=copy.deepcopy(rows)
     targets={x['id'] for x in ensure(a).get('source_targets',[])}
+    questions={q['id']:q['text'] for q in ensure(a)['questions']}
     for row in result:
         candidates=[e for e in spans if evidence_state.evaluated(e) and e.get('support') in ('supported','limited','contradicted')]
+        if row['question_id'] not in targets:
+            related={qid for qid,text in questions.items() if text in row['question'] or row['question'] in text}|{row['question_id']}
+            candidates=[e for e in candidates if not set(e.get('question_ids',[])).intersection(questions) or related.intersection(e['question_ids']) or e['evidence_id'] in row.get('evidence_ids',[])]
         if row['required'] and a['research_contract'].get('requires_primary'):
             candidates=[e for e in candidates if e.get('source_origin')=='primary' and e.get('support_basis')!='external_reference']
         if row['question_id'] in targets:
@@ -101,6 +112,18 @@ def audit_groups(value):
         if key:groups.setdefault(key,[]).append(row)
     return [dict(value,coverage=rows,evidence=[e for e in value['evidence'] if e['evidence_id'] in key])
             for key,rows in groups.items()]
+
+
+def audit_key(contract,row,value,source_versions):
+    """Only a question's evidence and unresolved warnings invalidate its review."""
+    ids=set(row['candidate_evidence_ids']);sources=set(row['source_ids'])
+    evidence=[e for e in value['evidence'] if e['evidence_id'] in ids]
+    sources.update(e['source_id'] for e in evidence)
+    limits=value['reported_limits']
+    issues=[i for i in limits.get('issues') or [] if not i.get('source_ids') or sources.intersection(i['source_ids'])]
+    return 'question:'+evidence_state.digest([contract['objective_key'],row['question_id'],row['question'],row['required'],
+        evidence,[e for e in value['rejected_evidence'] if e.get('source_id') in sources or row['question_id'] in e.get('question_ids',[])],
+        issues,limits.get('summary'),limits.get('gaps'),limits.get('conflicts'),limits.get('direction_change'),{s:source_versions.get(s) for s in sorted(sources)}])
 
 
 def source_targets(text):

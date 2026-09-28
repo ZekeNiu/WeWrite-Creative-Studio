@@ -20,18 +20,40 @@ def body(text):
     return re.sub(r'\A\s*# [^\n]+\n+', '', text).strip()
 
 
+def claims_from_article(a):
+    """Project manuscript fields, keeping audit history in the research record."""
+    selected={s['id'] for s in a['sources'] if s.get('selected')}
+    rows=[]
+    for claim in a.get('evidence',{}).get('claims',[]):
+        ids=claim.get('source_ids',[])
+        if set(ids)-selected:continue
+        item={k:claim.get(k,'' if k!='source_ids' else []) for k in ('id','text','type','source_ids','status','boundary')}
+        if claim.get('stale') or claim.get('assessment_pending'):item['status']='unsupported'
+        rows.append(item)
+    return dict(version=1,claims=rows)
+
+
+def materials_prepared(a):
+    from . import evidence_state
+    evidence=a.get('evidence',{})
+    return bool(evidence.get('engine')=='wewrite-native' and evidence.get('claims') and not evidence.get('gaps') and
+        evidence.get('prepared_sources')==evidence_state.selected(a) and
+        evidence.get('prepared_objective')==evidence_state.digest(evidence_state.objective(a)) and
+        not any(c.get('stale') or c.get('assessment_pending') for c in evidence['claims']))
+
+
 def brief_from_article(a):
     b=a['brief']; o=a.get('outline',{}); plan=a.get('creative_intent',{}).get('selected',{})
     native=a.get('native_brief',{})
     result=dict(version=1,audience=dict(who=b['audience'],context=b.get('purpose',''),question=o.get('reader_question') or plan.get('reader_question') or b['topic']),
-        goal=dict(takeaway=o.get('takeaway') or plan.get('takeaway',''),action=plan.get('takeaway','')),
-        thesis=dict(statement=o.get('thesis',b['topic']),novelty=plan.get('novelty',''),boundary=o.get('boundary',''),counterpoint=o.get('counterpoint','')),
+        goal=dict(takeaway=o.get('takeaway') or native.get('goal',{}).get('takeaway',''),action=native.get('goal',{}).get('action','')),
+        thesis=dict(statement=o.get('thesis',b['topic']),novelty=native.get('thesis',{}).get('novelty',''),boundary=o.get('boundary',''),counterpoint=o.get('counterpoint','')),
         personal_materials=dict(available=any(s.get('personal_material') and s.get('selected') for s in a['sources']),items=[s['id'] for s in a['sources'] if s.get('personal_material') and s.get('selected')]),
         framework=a.get('native_brief',{}).get('framework',''),sections=o.get('sections',[]),
         constraints=dict(desired_length=str(b['words'])+'字',must_include=[b['include']] if b.get('include') else [],must_avoid=[b['avoid']] if b.get('avoid') else []))
     # Keep native fields without letting them supersede later human edits.
     for key in ('audience','goal','thesis'):
-        result[key]={**native.get(key,{}),**{k:v for k,v in result[key].items() if v}}
+        result[key]={**result[key],**native.get(key,{}),**{k:v for k,v in result[key].items() if v}}
     result['sections']=o.get('sections') or native.get('sections',[])
     return {**native,**result}
 

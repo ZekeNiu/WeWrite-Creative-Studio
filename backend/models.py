@@ -285,10 +285,12 @@ class QuestionCoverage(BaseModel):
 class CoverageVerdict(QuestionCoverage):
     evidence_ids: list[str] = Field(default_factory=list,max_length=40)
     requires_source_content: bool = True
+    answer_scope: 'AnswerScope | None' = None
 
 
 class CoverageAudit(BaseModel):
     coverage: list[CoverageVerdict] = Field(max_length=32)
+    read_requests: list[SectionRead] = Field(default_factory=list,max_length=2)
 
 
 class EvidenceJudgement(BaseModel):
@@ -300,6 +302,7 @@ class EvidenceJudgement(BaseModel):
     identity_only: bool = False
     question_ids: list[str] = Field(default_factory=list,max_length=16)
     checks: dict[str,Literal['matched','mismatch','unknown','not_applicable']]
+    scope_review: 'EvidenceScopeJudgement | None' = None
 
     @field_validator('checks',mode='before')
     @classmethod

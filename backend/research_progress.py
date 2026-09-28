@@ -44,10 +44,14 @@ def bind_query(a,item,coverage,requested=()):
     if supplied and (set(supplied)-required.keys()):return None
     ids=list(dict.fromkeys(supplied))
     quote=item.get('request_quote','').strip()
-    if quote:
-        quoted=[qid for qid,text in required.items() if text==quote]
-        if not quoted:return None
-        ids=quoted
+    if quote and not ids:
+        quoted=[qid for qid,text in required.items() if quote in text]
+        if quoted:ids=quoted
+        else:
+            clues=contract.get('research_clues',[])+[q['text'] for q in contract['questions'] if not q['required']]
+            if not any(quote in text for text in clues):return None
+            # A known adopted clue may locate an answer to the reader question.
+            # It must not become a new mandatory fact or numerical promise.
     if not ids:ids=[qid for qid,text in required.items() if text==item.get('question')]
     if not ids:
         open_ids={r['question_id'] for r in coverage if r.get('required') and r['status']=='unresolved'}
