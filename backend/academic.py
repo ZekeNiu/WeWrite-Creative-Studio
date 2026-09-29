@@ -13,6 +13,10 @@ UA='WeWriteStudio/1.3 (local scholarly reference manager)'
 _last={}
 
 
+class AuthenticationError(ValueError):
+    """Changing query words cannot repair a rejected scholarly credential."""
+
+
 async def request(channel,url,params=None):
     now=time.monotonic();slot=max(now,_last.get(channel,0)+(3.1 if channel=='arxiv' else 1.0));_last[channel]=slot
     await asyncio.sleep(max(0,slot-now))
@@ -23,6 +27,8 @@ async def request(channel,url,params=None):
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             r=await client.get(url,params=params,headers=headers)
+            if channel=='openalex' and r.status_code in (401,403):
+                raise AuthenticationError(f'OpenAlex Key 或访问权限未通过验证（HTTP {r.status_code}），请在 AI 服务与设置中更新 Key；可继续使用其他已启用的检索渠道')
             if r.status_code==429: raise ValueError(channel+' 额度或速率受限，已切换渠道，不自动开通付费服务')
             r.raise_for_status();return r
     except httpx.HTTPError: raise ValueError(channel+' 暂时不可用，正在切换学术来源') from None

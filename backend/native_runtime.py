@@ -258,8 +258,11 @@ class Session:
         if not self.search_config['enabled']:raise ValueError('联网搜索已关闭，继续使用当前材料')
         if channel!='auto':
             if not self.search_config['academic_enabled'] or channel=='pubmed' and not self.search_config['pubmed_enabled'] or channel=='arxiv' and not self.search_config['arxiv_enabled']:raise ValueError('此学术渠道未启用')
+            if channel in self.disabled:raise ValueError(channel+' 本次任务已因凭证或权限问题停用，请使用其他已启用渠道；更新配置后可在新任务重试')
             self.take_read('search')
-            return await (search_tools.pubmed(query) if channel=='pubmed' else getattr(academic,channel)(query))
+            try:return await (search_tools.pubmed(query) if channel=='pubmed' else getattr(academic,channel)(query))
+            except academic.AuthenticationError:
+                self.disabled.add(channel);raise
         for group in search_policy.web_order(self.search_config):
             if group in self.disabled or self.free_search_only and group in ('native','tavily'):continue
             if group=='browser':

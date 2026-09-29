@@ -1,5 +1,6 @@
 """Synthetic regressions for retrieving evidence that fits the article question."""
 import asyncio
+import httpx
 import pytest
 
 from backend import academic, materials, research, research_contract, search_plan, source_reader
@@ -204,3 +205,28 @@ async def test_native_fetch_records_intended_use_without_promoting_it_to_a_claim
     changed=dict(fit,reason='Useful as context after reviewing the paper')
     reused=await s.execute('WebFetch',dict(url='https://example.org/background',retrieval_fit=changed))
     assert reused['reused'] and next(x for x in native_projection.mapping(s.directory/'sources.yaml')['sources'] if x['id']==result['source_id'])['retrieval_fit']==changed
+
+
+def test_rejected_openalex_key_is_actionable_and_not_retried_with_new_query(monkeypatch):
+    from tests.test_native_runtime import article,session
+    real=httpx.AsyncClient;requests=[]
+    def reply(request):
+        requests.append(request)
+        return httpx.Response(401,json={'error':'Invalid or missing API key','message':'API key not found'})
+    monkeypatch.setattr(httpx,'AsyncClient',lambda **kw:real(transport=httpx.MockTransport(reply),**kw))
+    s=session(article(),'sources')
+    with pytest.raises(academic.AuthenticationError,match='HTTP 401'):
+        asyncio.run(s.search('first question','openalex'))
+    with pytest.raises(ValueError,match='凭证或权限'):
+        asyncio.run(s.search('rephrased question','openalex'))
+    assert len(requests)==1
+
+
+def test_zero_academic_results_do_not_disable_a_different_query(monkeypatch):
+    from tests.test_native_runtime import article,session
+    s=session(article(),'sources');queries=[]
+    async def search(query):queries.append(query);return []
+    monkeypatch.setattr(academic,'openalex',search)
+    assert asyncio.run(s.search('too specific','openalex'))==[]
+    assert asyncio.run(s.search('broader query','openalex'))==[]
+    assert len(queries)==2 and 'openalex' not in s.disabled
