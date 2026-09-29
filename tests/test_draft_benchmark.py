@@ -3,6 +3,7 @@ import copy
 import pytest
 from backend import store,workflow
 from tools import draft_quality_benchmark as benchmark
+from types import SimpleNamespace
 from tests.test_studio import client,model
 
 
@@ -11,6 +12,20 @@ def test_output_cannot_overlap_production(tmp_path):
     for output in (root,root/'data',root/'data'/'run',tmp_path):
         with pytest.raises(ValueError):benchmark.isolated_output(output,root)
     assert benchmark.isolated_output(root/'output'/'comparison',root)==root/'output'/'comparison'
+
+
+def test_frozen_settings_do_not_allow_writing_into_code_workspace_data(tmp_path):
+    root=tmp_path/'studio';frozen=tmp_path/'snapshot'
+    args=SimpleNamespace(output=root/'data'/'run',settings_root=frozen,code_root=root)
+    with pytest.raises(ValueError):asyncio.run(benchmark.native_main(args))
+    assert not (root/'data').exists()
+
+
+@pytest.mark.parametrize('complete',[True,False])
+def test_native_completion_status_reaches_cli(monkeypatch,complete):
+    async def native(args):return complete
+    monkeypatch.setattr(benchmark,'native_main',native)
+    assert asyncio.run(benchmark.main(SimpleNamespace(engine='native'))) is complete
 
 
 @pytest.mark.parametrize('variant',['baseline','candidate'])

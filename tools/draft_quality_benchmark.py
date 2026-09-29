@@ -125,11 +125,12 @@ async def native_case(item,variant,output,timeout):
 
 async def native_main(args):
     output=isolated_output(args.output,args.settings_root);code=args.code_root.resolve()
+    isolated_output(output,code)
     output.mkdir(parents=True,exist_ok=True)
     os.environ['WEWRITE_STUDIO_DATA']=str(output/'data');os.environ['WEWRITE_HOME']=str(output/'upstream-home')
     sys.path.insert(0,str(code))
     from backend import store,native_runtime,native_skills
-    blob=args.bundle.read_bytes();bundle=json.loads(blob)
+    blob=args.bundle.read_bytes();bundle=json.loads(blob);runner=Path(__file__).read_bytes()
     with sqlite3.connect((args.settings_root.resolve()/'data/studio.sqlite').as_uri()+'?mode=ro',uri=True) as source:
         cfg=json.loads(source.execute('SELECT data FROM settings WHERE id=1').fetchone()[0])
         account=source.execute('SELECT data FROM account_memory WHERE id=1').fetchone()
@@ -137,13 +138,14 @@ async def native_main(args):
             code_root=str(code),code_sha256=hashlib.sha256(b''.join(p.read_bytes() for p in sorted((code/'backend').glob('*.py')))).hexdigest(),
             settings_sha256=hashlib.sha256(json.dumps(cfg,sort_keys=True).encode()).hexdigest(),
             account_sha256=hashlib.sha256((account[0] if account else '').encode()).hexdigest(),
-            upstream_revision=native_skills.verify(),runner_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
+            upstream_revision=native_skills.verify(),runner_sha256=hashlib.sha256(runner).hexdigest())
         path=output/'manifest.json'
         if path.exists() and json.loads(path.read_text('utf8'))!=manifest:raise ValueError('Inputs changed; use a new output folder')
         if not (store.DATA/'studio.sqlite').exists():
             store.DATA.mkdir(parents=True,exist_ok=True)
             with sqlite3.connect(store.DATA/'studio.sqlite') as target:source.backup(target)
     path.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf8')
+    (output/'runner.py').write_bytes(runner)
     store.init();cfg['search']['enabled']=False;store.set_settings(cfg)
     # Frozen inputs must not grow through WebFetch even when search is disabled.
     execute=native_runtime.Session.execute
@@ -154,15 +156,18 @@ async def native_main(args):
     native_runtime.Session.execute=frozen_execute
     semaphore=asyncio.Semaphore(args.concurrency)
     async def run(item):
-        if (output/(item['case']+'.json')).exists():return
-        async with semaphore:await native_case(item,args.variant,output,args.timeout)
-    try:await asyncio.gather(*(run(item) for item in bundle['cases'] if not args.ids or item['case'] in args.ids.split(',')))
+        saved=output/(item['case']+'.json')
+        if saved.exists():return json.loads(saved.read_text('utf-8'))
+        async with semaphore:return await native_case(item,args.variant,output,args.timeout)
+    try:results=await asyncio.gather(*(run(item) for item in bundle['cases'] if not args.ids or item['case'] in args.ids.split(',')))
     finally:native_runtime.Session.execute=execute
+    return bool(results) and all(result.get('status')=='completed' for result in results)
 
 
 async def main(args):
-    if args.engine=='native':await native_main(args)
+    if args.engine=='native':return await native_main(args)
     else:await legacy_main(args)
 
 
-if __name__=='__main__':asyncio.run(main(arguments()))
+if __name__=='__main__':
+    if asyncio.run(main(arguments())) is False:raise SystemExit(1)
