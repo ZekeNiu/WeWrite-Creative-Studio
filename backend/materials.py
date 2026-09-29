@@ -107,6 +107,17 @@ def from_dynamic(data,academic_hint=False):
     return s
 
 
+def article_body(soup):
+    """Prefer the article's own content over page navigation and unrelated dialogs."""
+    for node in soup.select('script,style,nav,footer,noscript,form,[role="dialog"],[aria-modal="true"]'):
+        node.decompose()
+    for selector in ('#js_content,[itemprop="articleBody"],.elementor-widget-theme-post-content',
+                     '.entry-content,.post-content,.article-content,.article-body','article,main'):
+        roots=[n for n in soup.select(selector) if len(n.get_text(strip=True))>=300]
+        if roots:return max(roots,key=lambda n:len(n.get_text()))
+    return soup.body or soup
+
+
 async def read_url(url):
     try: blob,final=await fetch_bytes(url)
     except httpx.HTTPError: raise ValueError('网页读取失败，可改为粘贴正文或上传文件') from None
@@ -117,20 +128,27 @@ async def read_url(url):
     title=soup.title.get_text(strip=True) if soup.title else urlsplit(final).hostname
     if blocked_page(title,soup.get_text(' ',strip=True)[:3000]):
         raise ValueError('网页需要验证，尚未取得正文')
-    citation_doi=soup.find('meta',attrs={'name':'citation_doi'})
     published=soup.find('meta',attrs={'property':'article:published_time'}) or soup.find('meta',attrs={'name':'citation_publication_date'})
+    metadata={}
+    for node in soup.select('meta[name][content]'):
+        metadata.setdefault(node['name'].lower(),[]).append(node['content'])
     def meta(name):
-        node=soup.find('meta',attrs={'name':name})
-        return node.get('content','') if node else ''
-    bib=dict(title=meta('citation_title') or title,authors=[n.get('content','') for n in soup.find_all('meta',attrs={'name':'citation_author'})],
+        return next(iter(metadata.get(name.lower(),[])),'')
+    doi=meta('citation_doi')
+    if not doi:
+        # Exact Dublin Core identifiers describe this item; reference-list DOIs do not.
+        for value in metadata.get('dc.identifier',[])+metadata.get('dc.relation',[]):
+            match=re.fullmatch(r'(?:https?://(?:dx\.)?doi\.org/|doi:\s*)?(10\.\d{4,9}/\S+)',value.strip(),re.I)
+            if match:doi=match[1];break
+    pdfs=[*metadata.get('citation_pdf_url',[]),*[n.get('href','') for n in soup.select('link[rel~="alternate"][type="application/pdf"]')]]
+    pdfs=list(dict.fromkeys(urljoin(final,u) for u in pdfs if u and urlsplit(urljoin(final,u)).scheme in ('http','https')))
+    bib=dict(title=meta('citation_title') or meta('dc.title') or title,authors=metadata.get('citation_author',[]),
         venue=meta('citation_journal_title') or meta('citation_conference_title'),volume=meta('citation_volume'),issue=meta('citation_issue'),
         pages=meta('citation_firstpage')+('-'+meta('citation_lastpage') if meta('citation_lastpage') else ''),
-        doi=meta('citation_doi'),published_date=meta('citation_publication_date'),year=meta('citation_publication_date')[:4],
+        doi=doi,publisher=meta('citation_publisher'),published_date=meta('citation_publication_date'),year=meta('citation_publication_date')[:4],
         document_type='J' if meta('citation_journal_title') else 'C' if meta('citation_conference_title') else 'EB',url=final,access_date=store.now()[:10])
     if urlsplit(final).hostname in ('arxiv.org','www.arxiv.org'): bib.update(document_type='PP',platform='arXiv')
-    for t in soup(['script','style','nav','footer','noscript','form']): t.decompose()
-    roots=soup.select('#js_content,article,main')
-    body=max(roots,key=lambda x:len(x.get_text()),default=soup.body or soup)
+    body=article_body(soup)
     text=body.get_text('\n',strip=True)
     if len(text)<300: raise ValueError('网页未返回足够正文，可能需要登录。请粘贴你可见的文章内容。')
     result=source(title,text[:200000],final,'web')
@@ -141,7 +159,8 @@ async def read_url(url):
         scope=BeautifulSoup(str(body),'html.parser')
         for abstract in scope.select('[id*="abstract" i],.abstract,abstract'):abstract.decompose()
         result['status']=access_status(final,text,bib,[h.get_text(' ',strip=True) for h in scope.select('h1,h2,h3,h4')])
-    result['doi']=citation_doi.get('content','') if citation_doi else ''
+    result['doi']=doi
+    result['fulltext_urls']=pdfs
     result['published_date']=published.get('content','') if published else ''
     result['bibliography']=bib
     result['metadata_provenance']=[{'provider':'page_meta','url':final,'retrieved_at':store.now()}]

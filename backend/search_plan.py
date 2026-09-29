@@ -1,5 +1,7 @@
 """Channel-aware queries and bounded fair scheduling; legacy strings remain valid."""
 import re
+import unicodedata
+from urllib.parse import unquote
 from .models import ResearchQuery
 from . import search_policy
 
@@ -10,6 +12,22 @@ def query(value):
 
 
 def text(value):return query(value)['query']
+
+
+def target_key(value):
+    """A different work or evidence need is not a paraphrase of an exhausted search."""
+    item=query(value)
+    normal=lambda v:re.sub(r'\s+',' ',unicodedata.normalize('NFKC',v).casefold()).strip()
+    if item['purpose']!='known_source':return normal(item['target'])
+    values=[item['target'],item['query'],*item['channel_queries'].values()]
+    dois={m.rstrip('.,;\"\'').lower() for v in values for m in re.findall(r'10\.\d{4,9}/[^\s<>?#\"]+',unquote(v),re.I)}
+    if dois:return 'doi:'+ '|'.join(sorted(dois))
+    pmids={m for v in values for m in re.findall(r'(?:PMID\s*:\s*|pubmed\.ncbi\.nlm\.nih\.gov/)(\d+)',v,re.I)}
+    pubmed=item['channel_queries'].get('pubmed','').strip()
+    if re.fullmatch(r'\d+(?:\[uid\])?',pubmed):pmids.add(pubmed.split('[')[0])
+    if pmids:return 'pmid:'+'|'.join(sorted(pmids))
+    # Explicit titles keep alternate query wording on the same retrieval target.
+    return normal(item['target'] or item['channel_queries'].get('crossref') or item['query'])
 
 
 def arxiv_query(value):

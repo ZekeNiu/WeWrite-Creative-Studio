@@ -196,6 +196,7 @@ class ResearchQuery(BaseModel):
     question_ids: list[str] = Field(default_factory=list,max_length=16)
     request_quote: str = ''
     expected_gain: str = ''
+    target: str = Field(default='',description='稳定取证目标：指定文献的 DOI/PMID/题名，或本次缺少的具体比较；同一目标换词保持不变')
     purpose: Literal['known_source','explore','counterevidence','updates'] = 'explore'
     source_type: Literal['academic','official','general','auto'] = 'auto'
     time_scope: Literal['all','recent'] = 'all'
@@ -387,7 +388,14 @@ class SearchSelection(BaseModel):
     decisions: list['CandidateDecision'] = Field(default_factory=list,max_length=32)
 
 
-class CandidateDecision(BaseModel):
+class RetrievalFit(BaseModel):
+    role: Literal['direct','counterevidence','background','unrelated','unassessed'] = 'unassessed'
+    question: str = ''
+    reason: str = ''
+    contribution: str = ''
+
+
+class CandidateDecision(RetrievalFit):
     url: str
     reason: str
 

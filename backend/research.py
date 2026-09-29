@@ -879,7 +879,7 @@ class Research:
     def action_key(self,item,channel):
         # Query wording cannot renew an exhausted evidence purpose. A changed
         # verified answer/required part can justify revisiting its search path.
-        return digest([item['question_ids'],item['purpose'],channel,
+        return digest([item['question_ids'],item['purpose'],search_plan.target_key(item),channel,
             research_progress.progress(self.a,self.coverage,self.issues(),item['question_ids'])])
 
     async def discover(self,queries):
@@ -920,7 +920,7 @@ class Research:
                 query=search_plan.compile_query(item,channel)
                 before=self.progress_key()
                 action=dict(key=action_key,kind='search',question_ids=item['question_ids'],purpose=item['purpose'],channel=channel,
-                    expected_gain=item['expected_gain'],query=query,status='started')
+                    expected_gain=item['expected_gain'],target=search_plan.target_key(item),query=query,status='started')
                 self.actions.append(action)
                 self.decision('working',item['expected_gain'],item['question_ids'])
                 self.query_readable=set();rows=await self.channel(channel,query)
@@ -979,37 +979,55 @@ class Research:
                 rows=await discovery_identity.normalize_many(rows)
             finally:
                 READ_BUDGET.reset(token);self.stats['metadata_requests']+=budget['metadata']
-            rows=academic.merge_records(rows)
+            rows=[r for r in academic.merge_records(rows) if not any(academic.same(r,s) for s in excluded)]
             self.telemetry['candidates']+=len(rows);self.telemetry['phase']='selection'
             self.update('正在分批比较候选来源，优先回答尚未解决的问题')
             chosen=[]
+            need=store.encode({k:self.current_query.get(k,'') for k in ('question','question_ids','target','expected_gain')})
+            selection_prompt=('围绕本篇要回答的具体问题筛选候选。查询：'+query+'。本次取证目标：'+need+
+                '。urls 最多8个且逐字使用候选网址。为每条候选填写 decisions：question 是对应的读者问题；role 为 direct（直接回答）、counterevidence（反证）、background（仅背景）、unrelated（无关）或 unassessed（信息不足，需原文判断）；'
+                'reason 说明研究对象、比较条件、设计与问题是否相符，contribution 说明预期能支撑哪一句内容。摘要未提供的条件不能猜测。'
+                '优先选直接回答与反证，其次为值得核实的未知候选；仅有前后变化不能替代所需的组间比较，背景和转载不能替代关键依据。')
             for offset in range(0,len(rows),24):
                 batch=rows[offset:offset+24]
                 selection=await structured(self.a,self.stage,
-                    '从 candidates 选择与问题直接相关的原始来源。查询：'+query+
-                    '。urls 必须逐字使用候选网址，最多8个；逐条 decisions 给出采用或暂不采用的原因，背景和转载不能替代关键依据；无关则返回空列表。',
+                    selection_prompt,
                     SearchSelection,self.job_id,[{**{k:r.get(k,'') for k in ('url','title','provider','bibliography','published_date')},'content':r.get('content','')[:1600]} for r in batch],questions=self.questions)
-                reasons={d['url']:d['reason'] for d in selection.get('decisions',[])}
+                decisions={d['url']:d for d in selection.get('decisions',[])}
                 order={url:i for i,url in enumerate(selection['urls'])}
                 for r in batch:
-                    adopted=r['url'] in order
+                    decision=decisions.get(r['url'],{})
+                    fit=dict(role=decision.get('role','unassessed'),question=decision.get('question') or self.current_query.get('question',''),
+                        reason=decision.get('reason') or selection.get('reason',''),contribution=decision.get('contribution',''))
+                    r['retrieval_fit']=fit
+                    adopted=r['url'] in order and fit['role'] not in ('background','unrelated')
+                    if not adopted:order.pop(r['url'],None)
                     self.candidates[r['url']]=dict(url=r['url'],title=r.get('title',''),channel=channel,query=query,
                         discovery_url=r.get('discovery_url',''),identity_status=r.get('identity_status','unassessed'),
-                        identity_error=r.get('identity_error',''),
-                        status='selected' if adopted else 'not_selected',reason=reasons.get(r['url']) or selection.get('reason') or '未进入本批优先阅读名单')
+                        identity_error=r.get('identity_error',''),retrieval_fit=fit,
+                        status='selected' if adopted else 'background' if fit['role']=='background' else 'not_selected',
+                        reason=fit['reason'] or '未进入本批优先阅读名单')
                 chosen += sorted([r for r in batch if r['url'] in order],key=lambda r:order[r['url']])
             if len(chosen)>8:
-                selection=await structured(self.a,self.stage,'对各批入选来源统一排序，选出最多8个最能填补核心缺口的原始来源。查询：'+query,
-                    SearchSelection,self.job_id,[{k:r.get(k,'') for k in ('url','title','content','bibliography')} for r in chosen],questions=self.questions)
+                selection=await structured(self.a,self.stage,selection_prompt+'对各批候选统一排序，最能填补当前缺口的来源排在前面。',
+                    SearchSelection,self.job_id,[{k:r.get(k,'') for k in ('url','title','content','bibliography','retrieval_fit')} for r in chosen],questions=self.questions)
                 order={url:i for i,url in enumerate(selection['urls'])}
+                decisions={d['url']:d for d in selection.get('decisions',[])}
+                for r in chosen:
+                    if r['url'] in decisions:
+                        r['retrieval_fit'].update({k:v for k,v in decisions[r['url']].items() if k!='url'})
+                        self.candidates[r['url']].update(retrieval_fit=r['retrieval_fit'],reason=r['retrieval_fit']['reason'])
+                    if r['retrieval_fit']['role'] in ('background','unrelated'):
+                        self.candidates[r['url']]['status']='background' if r['retrieval_fit']['role']=='background' else 'not_selected'
+                chosen=[r for r in chosen if r['retrieval_fit']['role'] not in ('background','unrelated')]
                 chosen=sorted(chosen,key=lambda r:order.get(r['url'],len(order)))
-            rows=chosen
+            rows=sorted(chosen,key=lambda r:r['retrieval_fit']['role']=='unassessed')
             self.telemetry['relevant']+=len(rows)
             if self.read_limit:
                 for r in rows[self.read_limit:]:
                     self.candidates[r['url']].update(status='deferred',reason='先给其他问题阅读机会')
                     if not any(academic.same(r,x) for x in self.deferred):self.deferred.append(dict(r,query=query,question=self.current_query.get('question',''),
-                        question_ids=self.current_query.get('question_ids',[]),purpose=self.current_query.get('purpose','explore')))
+                        question_ids=self.current_query.get('question_ids',[]),purpose=self.current_query.get('purpose','explore'),target=self.current_query.get('target','')))
                 rows=rows[:self.read_limit]
             if not rows:self.update('本批没有直接相关的来源，继续其他查询或渠道',channel=channel)
         if self.a.get('diagnostic') and channel=='pubmed': rows=rows[:1]
@@ -1019,6 +1037,7 @@ class Research:
                 src=await self.read(dict(r,query=query))
             if r['url'] in self.candidates:self.candidates[r['url']].update(status=src['status'] if src else getattr(self,'read_status','unavailable'),source_id=src['id'] if src else '',read_reason=src.get('access_error','') if src else '')
             if src:
+                if r.get('retrieval_fit'):src['retrieval_fit']=r['retrieval_fit']
                 if src['status'] in ('retrieved','abstract_only'):
                     task_progress.completed(self.job_id,'原文已读取' if src['status']=='retrieved' else '摘要已读取')
                 if not any(x['id']==src['id'] for x in self.a['sources']): self.a['sources'].append(src)
@@ -1035,7 +1054,7 @@ class Research:
         # A queue is an option, not an obligation to exhaust every candidate.
         while self.deferred and not self.sufficient():
             before=self.progress_key()
-            def goal(row):return digest([row.get('question_ids',[]),row.get('purpose','explore')])
+            def goal(row):return digest([row.get('question_ids',[]),row.get('purpose','explore'),row.get('target','')])
             available=[r for r in self.deferred if self.deferred_blocked.get(goal(r))!=before]
             if not available:break
             group=goal(available[0]);batch=[r for r in available if goal(r)==group][:2]
@@ -1095,6 +1114,7 @@ class Research:
             'queries 生成3至6个按问题划分的对象（必要时可少于3个），每个包含 query、question、purpose(known_source/explore/counterevidence/updates)、source_type(academic/official/general)、time_scope(all/recent)、channel_queries。学术对象为 pubmed、openalex、crossref、arxiv 分别写简洁适配查询，不把长串概念机械相与；PubMed用少量核心概念与同义词，arxiv保留ti:题名短语或all:概念。已知题名/DOI优先精确定位；盲发现不得编造题名。至少考虑反证和边界，但不虚构争议。只有近期动态使用recent，经典研究和指定文献使用all。英文专业词和中文语境各有所用。'
             'academic 表示是否需要研究论文依据；纯产品公告、即时新闻等无研究判断的问题设为 false，避免冗余论文检索。'
             '每个queries对象须填写question_ids（已有必需问题的ID）或request_quote（required_evidence中逐字摘录的用户原句），并填写expected_gain说明准备补上哪项依据。优先使用最具体的request_quote绑定问题。换措辞不算新的取证目的；已回答问题不再搜索，背景扩展只保留为可选线索。'
+            'target记录稳定的取证目标：known_source使用待找文献的DOI、PMID或完整题名；其他查询用简短语句描述本次缺少的具体比较或证据。同一目标换搜索词时保持target，不同论文或不同证据需求不能合并。'
             'required_evidence 把用户原始要求拆成可分别验收的必需问题，每项 request_quote 必须逐字摘自用户要求或已采用选题，question 保留原始出处、研究设计、数字分母等联合条件。只做原意拆解，不增加自定的数字、作者或场景。'
             '盲发现不能凭记忆把作者姓名、年份或具体方法加成检索必选条件。至少一条查询联合选题最有区分力的概念，避免拆成泛泛的背景关键词后丢失它们的联系。'
             '不要为追求数量重复检索。仅处理本轮指定的问题（为空则检查全文）：'+store.encode([x for x in self.issues() if x['id'] in self.requested])+ '。用户补充检索要求：'+query,ResearchPlan,self.job_id)
@@ -1136,7 +1156,7 @@ class Research:
             if self.sufficient() or self.stop_reason: break
             queries=[q for q in self.notes['followup_queries'] if digest(search_plan.query(q)) not in self.seen_queries]
             if not queries and self.open_targets():
-                targeted=await structured(self.a,self.stage,'仅针对这些尚未处理的核心证据缺口生成定向查询，不补查一般局限。每个查询填写question_ids（现有必需问题ID）和expected_gain（要补上什么依据）。同一目的换措辞不算新路径；没有可执行的新路径时needed=false且queries为空：'+json.dumps([x['text'] for x in self.open_targets()],ensure_ascii=False),ResearchPlan,self.job_id)
+                targeted=await structured(self.a,self.stage,'仅针对这些尚未处理的核心证据缺口生成定向查询，不补查一般局限。每个查询填写question_ids（现有必需问题ID）、expected_gain（要补上什么依据）、target（待找文献的DOI/PMID/题名或缺少的具体比较）。不同文献或比较是不同目标，同一目标换措辞保持target；没有可执行的新路径时needed=false且queries为空：'+json.dumps([x['text'] for x in self.open_targets()],ensure_ascii=False),ResearchPlan,self.job_id)
                 queries=[q for q in targeted['queries'] if digest(search_plan.query(q)) not in self.seen_queries]
             if not queries:
                 self.stop_code='no_queries'

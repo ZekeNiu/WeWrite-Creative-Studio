@@ -162,6 +162,22 @@ async def read_work(url,hint=None):
             progress('正在读取网页正文');take('pages')
             direct=await materials.read_url(url)
         except ValueError as exc: failure=str(exc)
+    attempted={url} if direct else set()
+    if direct and direct.get('fulltext_urls'):
+        identity=identity or (direct if direct.get('doi') else None)
+        if identity:
+            for address in direct['fulltext_urls']:
+                if address in attempted:continue
+                attempted.add(address)
+                try:
+                    progress('正在读取页面提供的全文');take('pages')
+                    full=await materials.read_url(address)
+                    if full['status']=='retrieved' and matches_copy(full,identity):
+                        full=academic.combine(full,identity)
+                        full.update(title=identity.get('bibliography',{}).get('title') or identity['title'],
+                            original_url=url,read_url=address,access_scope='fulltext',identity_verified=True)
+                        return full
+                except ValueError as exc:failure=str(exc)
     if direct and direct['status']=='retrieved':
         identifier=arxiv_identifier(direct.get('url',''))
         if identifier:
@@ -192,14 +208,17 @@ async def read_work(url,hint=None):
                 return src
             except (ValueError,ET.ParseError,httpx.HTTPError) as exc: failure=str(exc)
         if identity and identity.get('doi'):
-            copies=[url]+list(identity.get('fulltext_urls',[]))
+            copies=list((direct or {}).get('fulltext_urls',[]))+[url]+list(identity.get('fulltext_urls',[]))
             try:
                 take('metadata')
                 for row in await academic.openalex(identity['doi']):
                     if academic.same(row,identity) and not academic.distinct_versions(row,identity): copies.extend(row.get('fulltext_urls',[]))
             except ValueError:
                 pass
-            for address in dict.fromkeys(copies):
+            pending=list(dict.fromkeys(copies))
+            for address in pending:
+                if address in attempted:continue
+                attempted.add(address)
                 if direct and direct.get('read_url')==address: continue
                 try:
                     progress('正在读取公开全文副本');take('pages')
@@ -208,6 +227,8 @@ async def read_work(url,hint=None):
                         full=academic.combine(full,identity)
                         full.update(original_url=url,read_url=address,access_scope='fulltext',identity_verified=True)
                         return full
+                    if matches_copy(full,identity):
+                        pending.extend(u for u in full.get('fulltext_urls',[]) if u not in attempted and u not in pending)
                 except ValueError:
                     continue
     except (ValueError,ET.ParseError):

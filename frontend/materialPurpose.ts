@@ -12,6 +12,7 @@ export function materialPurpose(a:Article,s:Source){
  let purpose='';
  if(s.use?.trim())purpose='使用要求：'+short(s.use.trim());
  else if(current&&a.stages.sources!=='stale')purpose='用于说明：'+short(current.text);
+ else if(s.retrieval_fit?.contribution)purpose=(s.retrieval_fit.role==='background'?'检索时作为背景：':'检索时拟用于：')+short(s.retrieval_fit.contribution);
  else if(selected?.source_ids?.includes(s.id))purpose='当前选题的依据线索，具体结论待核实';
  else if(origin)purpose='选题探索时收集：'+short(origin.title,64);
  else if(claims.length)purpose='已有相关判断待核实：'+short(claims[0].text,76);
