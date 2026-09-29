@@ -92,6 +92,8 @@ async def test_tool_continuation_and_conflict(monkeypatch):
     store.update_job(s.job_id,native_tool_count=120)
     packet=await s.run()
     assert packet['result']=='新稿。' and len(turns)==2
+    from backend import writing_guidance
+    assert packet['native']['writing_guidance']==writing_guidance.metadata('write')
     assert store.job(s.job_id)['execution_usage']['requests']==2
     assert store.job(s.job_id)['native_tool_count']==122
     current=store.save_article(a['id'],a['revision'],lambda v:v.update(content='人工修改'),'human')

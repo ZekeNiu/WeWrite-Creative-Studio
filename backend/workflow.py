@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from . import store, providers, prompts, materials, rendering, research, creative,editorial,account_memory,native_runtime,native_workflow,task_progress
 from .models import STAGES, LABELS, SCHEMAS
 from .structured_output import parse as parse_structured
+from . import writing_guidance
 
 TASKS: dict[str,asyncio.Task]={}
 
@@ -113,6 +114,8 @@ async def call(job_id,stage,a,request):
         # Research already owns verified claim/evidence pairs. A second summary must not replace them.
         return dict(a['evidence'],intent=None,direction_change=a.get('creative_intent',{}).get('direction_change',''))
     store.update_job(job_id,current_step='generation',generation_revision=a['revision'],message='正在生成'+LABELS.get(stage,'当前环节'))
+    guidance=writing_guidance.metadata(stage)
+    if guidance:store.update_job(job_id,writing_guidance=guidance)
     s=providers.service_for(stage); text=''; last=0
     async def emit(delta):
         nonlocal text,last

@@ -7,7 +7,7 @@ import re
 import time
 from pydantic import BaseModel,Field,field_validator
 from typing import Literal
-from . import store,providers,source_context,research_contract,review_state
+from . import store,providers,source_context,research_contract,review_state,writing_guidance
 from .models import EvidenceJudgement
 from .structured_output import parse
 
@@ -94,7 +94,10 @@ async def generate(a,job_id,route,instruction,schema,extra=None):
     used=account_memory.capture(a,job_id,'edit') if schema is EditedDraft else None
     if used:context['account_reference']=used['context']
     prompt=json.dumps(dict(task=instruction,context=context,schema=schema.model_json_schema()),ensure_ascii=False)
-    try:raw,usage=await providers.generate(service,prompts.system(route,a['brief']),prompt,emit)
+    purpose='fact_audit' if schema is FactAudit else 'edit' if schema is EditedDraft else route
+    guidance=writing_guidance.metadata(purpose)
+    if guidance:store.update_job(job_id,writing_guidance=guidance)
+    try:raw,usage=await providers.generate(service,prompts.system(purpose,a['brief']),prompt,emit)
     except BaseException:
         account_memory.finish_use(used,'incomplete')
         from .execution_budget import ACTIVE
@@ -191,7 +194,7 @@ async def audit(a,job_id):
 async def edit(a,job_id,instruction=''):
     store.update_job(job_id,message='正在整体编辑结构、论证和表达，原稿保留',current_step='editing')
     return await generate(a,job_id,'write','生成完整编辑候选稿：检查开头是否聚焦、论证顺序、重复观点、段落篇幅、结尾所得，必要时重组整节。'
-        '按固定任务书保留用户选题、语气与论证主线，论证综合供参考；必要的限定融入句意，核查过程留在说明中，不把正文改成审查报告。保留用户人工决定，仅从提供原文核对事实，不能靠改句式掩盖无证据主张。'
+        '按固定任务书和共享编辑原则完成修改，论证综合供参考。保留用户人工决定，仅从提供原文核对事实。'
         'source IDs 保留，不手工重编号。中文篇幅以brief.words为目标（±15%）；引用跟随具体事实，避免每句机械加引文。'
         'content 返回完整Markdown正文，不含标题和参考文献表；说明结构变化与仍未解决的问题。用户补充要求：'+instruction,EditedDraft,dict(article=a['content'],review=a.get('review',{})))
 

@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 from . import store, providers, account_memory, native_skills, native_projection, agent_transport, search_policy, task_progress, creative
 from .models import RetrievalFit
+from . import writing_guidance
 
 STAGES={'topic','sources','outline','write','review','edit','revise','visual','layout_advice'}
 
@@ -404,10 +405,12 @@ class Session:
             'research-evidence.yaml 是已有取证记录，仅供形成主张与回查原文，不是文章结构或正文模板；选题中的描述是待核实方案。'
             '查找素材时先明确本篇要回答的具体问题及缺少的比较、案例或数据。WebFetch 的 retrieval_fit 记录该阅读目的；优先直接依据和反证。仅主题相近、研究对象或比较条件不符的资料保留为背景，不能代替核心依据。缺少摘要时先用学术索引核对，不能凭题名推断设计和结果。'
             'completed_work 记录前面环节已交接且依赖未变的成果；在其基础上完成当前环节，不从头重复素材研究。只对新增或改变的事实补查。互不依赖的 Read/Find 可以在同一轮并列调用。'
-            '保持读者问题，内部核查过程和未采用内容留在任务记录；只把影响读者理解或行动的限定融入主张。非核心缺据内容自行修正或删去；改变核心目的才请求用户决定。'
             'excluded_dependencies 表示选题原先引用的资料已被用户排除，不可再读取或使用；如其余来源不足，明确具体缺口，不能靠反复查找相近研究冒充该来源。'
             '失败时保留产物并说明，不能编造读取或成功记录。产物完成后必须调用 Finish。\n\n'
-            +'\n\n'.join('文件：'+d['path']+'\n'+d['content'] for d in docs))
+            +'\n\n'.join('文件：'+d['path']+'\n'+d['content'] for d in docs)
+            +'\n\n'+writing_guidance.instructions(self.stage))
+        guidance=writing_guidance.metadata(self.stage)
+        if guidance:store.update_job(self.job_id,writing_guidance=guidance)
         messages=[dict(role='user',content=json.dumps(dict(task=OUTPUTS[self.stage],home='.',run_id=self.state['run_id'],run_dir=self.directory.relative_to(self.home).as_posix(),
             request='request.json',style='style.yaml',account='account-reference.yaml',editor_notes='editor-notes.yaml',artifacts=self.state['artifacts']),ensure_ascii=False))]
         service=providers.service_for('research' if self.stage in ('learn','stats') else 'write' if self.stage=='rewrite' else 'review' if self.stage=='edit' else self.stage)
@@ -466,6 +469,7 @@ class Session:
             account_memory.finish_use(self.used,'returned');account_memory.guard(self.used)
             self.request['_account_use']=self.used
             native=dict(id=self.id,run_id=self.state['run_id'],upstream_revision=(native_skills.ROOT/'UPSTREAM_REVISION').read_text().strip(),reads=self.reads,editorial_rounds=len(self.evaluations))
+            if guidance:native['writing_guidance']=guidance
             store.update_job(self.job_id,result=self.result,native=native,native_sources=self.sources)
             return dict(result=self.result,native=native,sources=self.sources,brief=native_projection.mapping(self.directory/'brief.yaml'),
                 claims=native_projection.mapping(self.directory/'claims.yaml'),ledger=native_projection.mapping(self.directory/'sources.yaml')['sources'],account_use=self.used)

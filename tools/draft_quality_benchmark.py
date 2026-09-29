@@ -10,13 +10,14 @@ def arguments():
     p.add_argument('--bundle',type=Path,required=True)
     p.add_argument('--output',type=Path,required=True)
     p.add_argument('--variant',choices=('baseline','candidate'),required=True)
+    p.add_argument('--engine',choices=('native','legacy'),default='native')
     p.add_argument('--ids',default='')
     p.add_argument('--timeout',type=int,default=3600)
     p.add_argument('--concurrency',type=int,default=2)
     return p.parse_args()
 
 
-async def main(args):
+async def legacy_main(args):
     output=args.output.resolve();production=args.settings_root.resolve();code=args.code_root.resolve()
     if output==production or output==production/'data' or production/'data' in output.parents:
         raise ValueError('Evaluation output must be isolated from production')
@@ -72,6 +73,96 @@ async def main(args):
             store.update_job(j['id'],status='completed' if result['status']=='completed' else 'failed',ended=store.now())
             print(json.dumps({k:result.get(k) for k in ('case','variant','status','seconds','error')},ensure_ascii=False),flush=True)
     await asyncio.gather(*(run(x) for x in bundle['cases'] if not args.ids or x['case'] in args.ids.split(',')))
+
+
+def isolated_output(output, settings_root):
+    output=output.resolve(); settings_root=settings_root.resolve()
+    data=settings_root/'data'
+    if output==settings_root or output.is_relative_to(data) or settings_root.is_relative_to(output):
+        raise ValueError('Evaluation output must be isolated from production')
+    return output
+
+
+async def native_case(item,variant,output,timeout):
+    """Both variants use exactly the production stage runner and candidate handoff."""
+    from backend import store,workflow,models
+    original=item.get('article') or dict(brief=item['brief'],sources=item['sources'])
+    a=store.create_article(original['brief'],diagnostic=True)
+    def seed(v):
+        for key in ('title','sources','evidence','creative_intent','native_brief','research',
+                    'research_decisions','excluded_sources','argument_synthesis'):
+            if key in original:v[key]=copy.deepcopy(original[key])
+        v['native_brief']=dict(v.get('native_brief',{}),sections=[])
+        v['auto']={key:False for key in v['auto']}
+        v['stages'].update(topic='done',sources='done')
+    a=store.save_article(a['id'],a['revision'],seed,'Frozen evaluation inputs')
+    result=dict(case=item['case'],variant=variant,engine='native',article_id=a['id'],jobs=[])
+    started=time.monotonic()
+    print(json.dumps(dict(event='start',case=item['case'],variant=variant)),flush=True)
+    try:
+        async with asyncio.timeout(timeout):
+            for stage in ('outline','write','review'):
+                request=models.JobRequest(stage=stage,revision=a['revision'],chain=False).model_dump()
+                job=store.create_job(a['id'],request);result['jobs'].append(job['id'])
+                await workflow.run(job['id'])
+                job=store.job(job['id']);a=store.get_article(a['id'])
+                if job['status'] not in ('completed','needs_input') or (job['status']=='needs_input' and stage!='review'):
+                    raise ValueError(stage+': '+job.get('message',job['status']))
+                if stage=='write':result['initial_content']=a['content']
+            candidate=next((c for c in reversed(a.get('editorial_candidates',[])) if c.get('job_id')==job['id']),None)
+            result.update(status='completed',content=candidate['content'] if candidate else a['content'],
+                review=candidate['review'] if candidate else a['review'])
+    except Exception as exc:result.update(status='incomplete',error=type(exc).__name__+': '+str(exc))
+    finally:
+        a=store.get_article(a['id'])
+        result.update(seconds=round(time.monotonic()-started,1),outline=a.get('outline'),
+            native_executions=a.get('native_executions',[]),editorial_candidates=a.get('editorial_candidates',[]),
+            usage=store.usage(a['id']))
+        (output/(item['case']+'.json')).write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf8')
+        print(json.dumps({k:result.get(k) for k in ('case','variant','status','seconds','error')},ensure_ascii=False),flush=True)
+    return result
+
+
+async def native_main(args):
+    output=isolated_output(args.output,args.settings_root);code=args.code_root.resolve()
+    output.mkdir(parents=True,exist_ok=True)
+    os.environ['WEWRITE_STUDIO_DATA']=str(output/'data');os.environ['WEWRITE_HOME']=str(output/'upstream-home')
+    sys.path.insert(0,str(code))
+    from backend import store,native_runtime,native_skills
+    blob=args.bundle.read_bytes();bundle=json.loads(blob)
+    with sqlite3.connect((args.settings_root.resolve()/'data/studio.sqlite').as_uri()+'?mode=ro',uri=True) as source:
+        cfg=json.loads(source.execute('SELECT data FROM settings WHERE id=1').fetchone()[0])
+        account=source.execute('SELECT data FROM account_memory WHERE id=1').fetchone()
+        manifest=dict(engine='native',variant=args.variant,bundle_sha256=hashlib.sha256(blob).hexdigest(),
+            code_root=str(code),code_sha256=hashlib.sha256(b''.join(p.read_bytes() for p in sorted((code/'backend').glob('*.py')))).hexdigest(),
+            settings_sha256=hashlib.sha256(json.dumps(cfg,sort_keys=True).encode()).hexdigest(),
+            account_sha256=hashlib.sha256((account[0] if account else '').encode()).hexdigest(),
+            upstream_revision=native_skills.verify(),runner_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
+        path=output/'manifest.json'
+        if path.exists() and json.loads(path.read_text('utf8'))!=manifest:raise ValueError('Inputs changed; use a new output folder')
+        if not (store.DATA/'studio.sqlite').exists():
+            store.DATA.mkdir(parents=True,exist_ok=True)
+            with sqlite3.connect(store.DATA/'studio.sqlite') as target:source.backup(target)
+    path.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf8')
+    store.init();cfg['search']['enabled']=False;store.set_settings(cfg)
+    # Frozen inputs must not grow through WebFetch even when search is disabled.
+    execute=native_runtime.Session.execute
+    async def frozen_execute(session,name,arguments):
+        if name in ('WebSearch','WebFetch'):
+            raise ValueError('本次对照的资料已冻结，请用 Read/Find 阅读 source-texts 中已有原文，不补充外部资料。')
+        return await execute(session,name,arguments)
+    native_runtime.Session.execute=frozen_execute
+    semaphore=asyncio.Semaphore(args.concurrency)
+    async def run(item):
+        if (output/(item['case']+'.json')).exists():return
+        async with semaphore:await native_case(item,args.variant,output,args.timeout)
+    try:await asyncio.gather(*(run(item) for item in bundle['cases'] if not args.ids or item['case'] in args.ids.split(',')))
+    finally:native_runtime.Session.execute=execute
+
+
+async def main(args):
+    if args.engine=='native':await native_main(args)
+    else:await legacy_main(args)
 
 
 if __name__=='__main__':asyncio.run(main(arguments()))
