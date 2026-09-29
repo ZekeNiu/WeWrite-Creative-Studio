@@ -54,6 +54,33 @@ async def test_real_cli_isolation_reread_sources_and_permissions():
 
 
 @pytest.mark.anyio
+async def test_source_paths_relative_to_current_run_read_same_original_and_stay_readonly():
+    a=article();s=session(a,'review');await s.prepare()
+    sid=a['sources'][0]['id'];canonical='source-texts/'+sid+'.txt'
+    alias=s.directory.relative_to(s.home).as_posix()+'/'+canonical
+    found=await s.execute('Find',dict(path=alias,query='操作定义'))
+    read=await s.execute('Read',dict(path=alias,start=found[0]['match'],length=100))
+    assert read['path']==canonical and '450–1200ms' in read['text']
+    assert s.reads[-1]['path']==s.reads[-2]['path']==canonical
+    assert (await s.execute('Read',dict(path=canonical,start=read['start'],length=100)))['text']==read['text']
+    for name,args in [('Write',dict(path=alias,content='伪造原文')),('Edit',dict(path=alias,original='操作定义',replacement='伪造'))]:
+        with pytest.raises(ValueError,match='不能直接改写'):await s.execute(name,args)
+    assert (s.home/canonical).read_text('utf-8')==a['sources'][0]['text']
+    with pytest.raises(FileNotFoundError):await s.execute('Read',dict(path='runs/another-run/'+canonical))
+    with pytest.raises(ValueError):await s.execute('Read',dict(path='../'+canonical))
+
+
+@pytest.mark.anyio
+async def test_run_relative_source_alias_does_not_restore_excluded_source():
+    a=article();a['sources'][0]['selected']=False;s=session(a,'review');await s.prepare()
+    sid=a['sources'][0]['id'];canonical='source-texts/'+sid+'.txt'
+    alias=s.directory.relative_to(s.home).as_posix()+'/'+canonical
+    for path in (canonical,alias):
+        with pytest.raises(FileNotFoundError):await s.execute('Read',dict(path=path))
+    assert not any('source-texts/' in r['path'] for r in s.reads)
+
+
+@pytest.mark.anyio
 async def test_review_uses_real_report_minor_is_pass_and_preserves_original():
     a=article();s=session(a,'review');await s.prepare();d=s.directory.relative_to(s.home).as_posix()
     assessment=dict(decision='pass',pass_number=1,dimensions={k:4 for k in ('accuracy','viewpoint','usefulness','voice','readability')},blockers=[],major_issues=[],minor_issues=['可微调节奏'],notes='表达已改好')

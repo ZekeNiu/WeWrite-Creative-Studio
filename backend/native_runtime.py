@@ -69,6 +69,12 @@ class Session:
         else:
             p=(self.home/name).resolve();root=self.home
         if p==root and write or not p.is_relative_to(root):raise ValueError('路径必须位于当前任务目录')
+        # Sources are shared at home; agents also resolve ledger paths against
+        # the current run. Both spellings address the same read-only originals.
+        if self.state.get('run_id') and p.is_relative_to(self.directory/'source-texts'):
+            if write:raise ValueError('来源原文由程序管理，不能直接改写')
+            p=(self.home/'source-texts'/p.relative_to(self.directory/'source-texts')).resolve()
+            if not p.is_relative_to(self.home/'source-texts'):raise ValueError('路径必须位于来源原文目录')
         if write:
             if p.suffix.lower() not in ('.md','.yaml','.yml','.json','.txt','.html','.csv'):raise ValueError('只允许写作产物文件')
             if p.name in ('state.yaml','sources.yaml','config.yaml','request.json','session.json','learning-task.json','account-reference.yaml','history.yaml','style.yaml','source.md','research-evidence.yaml') or any(p.is_relative_to(self.home/folder) for folder in ('source-texts','account-inputs','personas','assets')):
@@ -80,6 +86,10 @@ class Session:
             if self.stage in ('review','edit') and p==self.directory/'draft.md':raise ValueError('原稿保留；修改请写 candidate.md，通过后写 article.md')
             if self.stage in ('visual','layout_advice') and p.name in ('article.md','draft.md','brief.yaml','claims.yaml'):raise ValueError('配图与阅读建议不能改写正文与任务书')
         return p
+
+    def read_path(self,name):
+        p=self.path(name)
+        return p,p.relative_to(self.home).as_posix() if p.is_relative_to(self.home/'source-texts') else name
 
     async def cli(self,args,bootstrap=False):
         allowed={'home','diagnose','run','sources','score','content-eval','learn-edits','exemplar','similarity','themes','validate','preview','hotspots','search-articles','seo'}
@@ -308,14 +318,14 @@ class Session:
     async def execute(self,name,args):
         if self.stage=='layout_advice' and name in ('WebSearch','WebFetch'):raise ValueError('阅读建议只使用当前稿和现有图片')
         if name=='Read':
-            p=self.path(args['path']);text=p.read_text('utf-8');start=max(0,args.get('start',0));length=min(30000,max(1,args.get('length',12000)))
+            p,path=self.read_path(args['path']);text=p.read_text('utf-8');start=max(0,args.get('start',0));length=min(30000,max(1,args.get('length',12000)))
             end=min(len(text),start+length)
-            self.reads.append(dict(path=args['path'],start=start,end=end,total=len(text),sha256=hashlib.sha256(text.encode()).hexdigest()))
-            return dict(path=args['path'],start=start,end=end,total=len(text),text=text[start:end])
+            self.reads.append(dict(path=path,start=start,end=end,total=len(text),sha256=hashlib.sha256(text.encode()).hexdigest()))
+            return dict(path=path,start=start,end=end,total=len(text),text=text[start:end])
         if name=='Find':
-            text=self.path(args['path']).read_text('utf-8');query=args['query']
+            p,path=self.read_path(args['path']);text=p.read_text('utf-8');query=args['query']
             if not query:raise ValueError('检索文字不能为空')
-            self.reads.append(dict(path=args['path'],query=query,total=len(text),operation='find'))
+            self.reads.append(dict(path=path,query=query,total=len(text),operation='find'))
             return [dict(start=max(0,m.start()-250),match=m.start(),text=text[max(0,m.start()-250):m.end()+750]) for m in list(re.finditer(re.escape(query),text,re.I))[:30]]
         if name=='List':return [p.name+('/' if p.is_dir() else '') for p in self.path(args.get('path','')).iterdir()][:300]
         if name in ('Write','Edit'):
